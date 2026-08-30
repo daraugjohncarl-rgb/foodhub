@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 import bcrypt
-from jose import jwt
+import jwt
 
 # JWT authentication configuration parameters
 # Defaults to a secure fallback token in development environments
