@@ -5,10 +5,12 @@ services:
     runtime: python
     region: singapore # or oregon / frankfurt
     plan: free
-    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
+    buildCommand: "export CARGO_HOME=/tmp/.cargo && pip install --upgrade pip setuptools wheel && pip install -r requirements.txt"
     startCommand: "cd fastapi && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
     healthCheckPath: "/test-db"
     envVars:
+      - key: CARGO_HOME
+        value: /tmp/.cargo
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: DATABASE_URL

@@ -5,6 +5,7 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app/fastapi \
+    CARGO_HOME=/tmp/.cargo \
     PORT=8000
 
 # Set work directory
