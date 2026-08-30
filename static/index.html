@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Blessie FoodHub - Login</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <style>
+    /* =========================================================
+           RESET
+        ========================================================= */
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+
+    /* =========================================================
+           BODY
+        ========================================================= */
+
+    body {
+      min-height: 100vh;
+
+      display: flex;
+      justify-content: center;
+      align-items: center;
+
+      padding: 25px;
+
+      font-family: "Inter", sans-serif;
+      color: #333;
+
+      background: white;
+
+      position: relative;
+      overflow: hidden;
+    }
+
+
+    /* =========================================================
+   BLURRED BACKGROUND LIGHTS
+========================================================= */
+
+    body::before {
+      content: "";
+
+      position: absolute;
+
+      inset: -12px;
+
+      background:
+        none;
+
+      filter: blur(10px);
+
+      z-index: 0;
+    }
+
+
+    body::after {
+      content: "";
+
+      position: absolute;
+
+      inset: 0;
+
+      background: rgba(0, 0, 0, 0.15);
+
+      z-index: 1;
+    }
+
+
+    /* =========================================================
+           LOGIN CONTAINER
+        ========================================================= */
+
+    .login-container {
+      width: 100%;
+      max-width: 430px;
+
+      padding: 45px 40px;
+
+      position: relative;
+
+      z-index: 2;
+
+      /* Glass effect */
+      background:
+        white;
+
+      backdrop-filter: blur(25px);
+      -webkit-backdrop-filter: blur(25px);
+
+      border:
+        1px solid rgba(255, 255, 255, 0.75);
+
+      border-radius: 28px;
+
+      box-shadow:
+        0 25px 70px rgba(180, 140, 50, 0.12),
+        0 8px 30px rgba(0, 0, 0, 0.05),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9);
+
+      animation: cardAppear 0.7s ease;
+    }
+
+
+    @keyframes cardAppear {
+
+      from {
+        opacity: 0;
+        transform: translateY(20px) scale(0.98);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+
+    /* =========================================================
+           LOGO
+        ========================================================= */
+
+    .logo-section {
+      display: flex;
+
+      justify-content: center;
+      align-items: center;
+
+      margin-bottom: 30px;
+    }
+
+
+    .logo-image {
+      width: 60%;
+      max-width: 250px;
+
+      height: auto;
+
+      object-fit: contain;
+
+      filter:
+        drop-shadow(0 8px 15px rgba(160, 120, 30, 0.12));
+
+      transition: transform 0.3s ease;
+    }
+
+
+    .logo-image:hover {
+      transform: scale(1.03);
+    }
+
+
+    /* =========================================================
+           WELCOME
+        ========================================================= */
+
+    .welcome-section {
+      text-align: center;
+
+      margin-bottom: 28px;
+    }
+
+
+    .welcome-section h1 {
+      font-size: 25px;
+
+      font-weight: 700;
+
+      color: #27231b;
+
+      margin-bottom: 7px;
+    }
+
+
+    .welcome-section p {
+      font-size: 13px;
+
+      color: #8c8578;
+
+      line-height: 1.5;
+    }
+
+
+    /* =========================================================
+           INPUT
+        ========================================================= */
+
+    .form-group {
+      margin-bottom: 14px;
+    }
+
+
+    .input-field {
+      position: relative;
+
+      display: flex;
+
+      align-items: center;
+    }
+
+
+    .input-field>i {
+      position: absolute;
+
+      left: 17px;
+
+      color: #b19a62;
+
+      font-size: 14px;
+
+      z-index: 2;
+
+      transition: color 0.3s ease;
+    }
+
+
+    .input-field input {
+      width: 100%;
+
+      height: 50px;
+
+      padding:
+        0 45px 0 45px;
+
+      border:
+        1px solid rgba(205, 190, 150, 0.45);
+
+      border-radius: 14px;
+
+      background:
+        rgba(255, 255, 255, 0.60);
+
+      backdrop-filter: blur(10px);
+
+      -webkit-backdrop-filter: blur(10px);
+
+      color: #333;
+
+      font-family: "Inter", sans-serif;
+
+      font-size: 13px;
+
+      outline: none;
+
+      box-shadow:
+        inset 0 1px 3px rgba(0, 0, 0, 0.025);
+
+      transition: all 0.3s ease;
+    }
+
+
+    .input-field input::placeholder {
+      color: #aaa397;
+    }
+
+
+    .input-field input:hover {
+      background:
+        rgba(255, 255, 255, 0.78);
+
+      border-color:
+        rgba(201, 162, 39, 0.45);
+    }
+
+
+    .input-field input:focus {
+      background:
+        rgba(255, 255, 255, 0.88);
+
+      border-color: #d2ac43;
+
+      box-shadow:
+        0 0 0 4px rgba(201, 162, 39, 0.10),
+        0 5px 15px rgba(201, 162, 39, 0.08);
+    }
+
+
+    .input-field:focus-within>i {
+      color: #c9a227;
+    }
+
+
+    /* =========================================================
+           PASSWORD TOGGLE
+        ========================================================= */
+
+    .password-toggle {
+      position: absolute;
+
+      right: 15px;
+
+      width: 25px;
+      height: 25px;
+
+      display: flex;
+
+      align-items: center;
+      justify-content: center;
+
+      border: none;
+
+      background: transparent;
+
+      color: #aaa;
+
+      cursor: pointer;
+
+      z-index: 3;
+
+      transition: color 0.3s ease;
+    }
+
+
+    .password-toggle:hover {
+      color: #c9a227;
+    }
+
+
+    /* =========================================================
+           FORM FOOTER
+        ========================================================= */
+
+    .form-footer {
+      display: flex;
+
+      justify-content: space-between;
+
+      align-items: center;
+
+      margin:
+        16px 0 22px;
+    }
+
+
+    .remember-me {
+      display: flex;
+
+      align-items: center;
+
+      gap: 7px;
+
+      font-size: 12px;
+
+      color: #777166;
+
+      cursor: pointer;
+
+      user-select: none;
+    }
+
+
+    .remember-me input {
+      width: 15px;
+      height: 15px;
+
+      cursor: pointer;
+
+      accent-color: #c9a227;
+    }
+
+
+    .forgot-password {
+      font-size: 12px;
+
+      color: #bd951e;
+
+      text-decoration: none;
+
+      font-weight: 600;
+
+      transition: color 0.3s ease;
+    }
+
+
+    .forgot-password:hover {
+      color: #987719;
+
+      text-decoration: underline;
+    }
+
+
+    /* =========================================================
+           SIGN IN BUTTON
+        ========================================================= */
+
+    .signin-btn {
+      width: 100%;
+
+      height: 50px;
+
+      border: none;
+
+      border-radius: 14px;
+
+      background:
+        linear-gradient(135deg,
+          #000000,
+          #252524);
+
+      color: #ffffff;
+
+      font-family: "Inter", sans-serif;
+
+      font-size: 14px;
+
+      font-weight: 600;
+
+      cursor: pointer;
+
+      display: flex;
+
+      align-items: center;
+      justify-content: center;
+
+      gap: 9px;
+
+      box-shadow:
+        0 8px 20px rgba(201, 162, 39, 0.22);
+
+      transition:
+        transform 0.3s ease,
+        box-shadow 0.3s ease,
+        filter 0.3s ease;
+    }
+
+
+    .signin-btn:hover {
+      transform: translateY(-2px);
+
+      filter: brightness(1.04);
+
+      box-shadow:
+        0 12px 25px rgba(201, 162, 39, 0.30);
+    }
+
+
+    .signin-btn:active {
+      transform: translateY(0);
+    }
+
+
+    .signin-btn i {
+      font-size: 13px;
+
+      transition: transform 0.3s ease;
+    }
+
+
+    .signin-btn:hover i {
+      transform: translateX(4px);
+    }
+
+
+    /* =========================================================
+           DIVIDER
+        ========================================================= */
+
+    .divider-line {
+      display: flex;
+
+      align-items: center;
+
+      gap: 12px;
+
+      margin: 25px 0;
+    }
+
+
+    .divider-line::before,
+    .divider-line::after {
+      content: "";
+
+      height: 1px;
+
+      flex: 1;
+
+      background:
+        rgba(190, 175, 140, 0.35);
+    }
+
+
+    .divider-line span {
+      font-size: 9px;
+
+      color: #a59d8d;
+
+      font-weight: 600;
+
+      letter-spacing: 0.7px;
+
+      white-space: nowrap;
+    }
+
+
+    /* =========================================================
+           SOCIAL BUTTONS
+        ========================================================= */
+
+    .social-buttons {
+      display: flex;
+
+      gap: 12px;
+
+      margin-bottom: 25px;
+    }
+
+
+    .social-btn {
+      flex: 1;
+
+      height: 45px;
+
+      display: flex;
+
+      align-items: center;
+      justify-content: center;
+
+      gap: 8px;
+
+      border:
+        1px solid rgba(210, 198, 168, 0.5);
+
+      border-radius: 13px;
+
+      background:
+        rgba(255, 255, 255, 0.48);
+
+      backdrop-filter: blur(10px);
+
+      -webkit-backdrop-filter: blur(10px);
+
+      color: #514d45;
+
+      font-family: "Inter", sans-serif;
+
+      font-size: 12px;
+
+      font-weight: 500;
+
+      cursor: pointer;
+
+      transition: all 0.3s ease;
+    }
+
+
+    .social-btn:hover {
+      background:
+        rgba(255, 255, 255, 0.82);
+
+      border-color:
+        rgba(201, 162, 39, 0.4);
+
+      transform: translateY(-2px);
+
+      box-shadow:
+        0 7px 18px rgba(180, 150, 80, 0.10);
+    }
+
+
+    .social-btn i {
+      font-size: 16px;
+    }
+
+
+    .google-btn i {
+      color: #4285f4;
+    }
+
+
+    .apple-btn i {
+      color: #333;
+    }
+
+
+    /* =========================================================
+           REGISTER
+        ========================================================= */
+
+    .register-section {
+      text-align: center;
+
+      color: #827b6e;
+
+      font-size: 12px;
+    }
+
+
+    .register-section a {
+      color: #bd951e;
+
+      text-decoration: none;
+
+      font-weight: 700;
+
+      margin-left: 4px;
+
+      transition: color 0.3s ease;
+    }
+
+
+    .register-section a:hover {
+      color: #967719;
+
+      text-decoration: underline;
+    }
+
+
+    /* =========================================================
+           RESPONSIVE
+        ========================================================= */
+
+    @media (max-width: 480px) {
+
+      body {
+        padding: 15px;
+      }
+
+
+      .login-container {
+        max-width: 100%;
+
+        padding: 36px 24px;
+
+        border-radius: 24px;
+      }
+
+
+      .logo-image {
+        max-width: 220px;
+      }
+
+
+      .welcome-section h1 {
+        font-size: 22px;
+      }
+
+
+      .welcome-section p {
+        font-size: 12px;
+      }
+
+
+      .input-field input {
+        height: 46px;
+
+        font-size: 12px;
+      }
+
+
+      .signin-btn {
+        height: 46px;
+
+        font-size: 13px;
+      }
+
+
+      .social-btn {
+        height: 42px;
+
+        font-size: 11px;
+      }
+    }
+
+
+    @media (max-width: 360px) {
+
+      .login-container {
+        padding: 30px 18px;
+
+        border-radius: 20px;
+      }
+
+
+      .logo-image {
+        max-width: 180px;
+      }
+
+
+      .welcome-section h1 {
+        font-size: 20px;
+      }
+
+
+      .form-footer {
+        flex-direction: column;
+
+        align-items: flex-start;
+
+        gap: 10px;
+      }
+
+
+      .input-field input {
+        height: 44px;
+      }
+
+
+      .signin-btn {
+        height: 44px;
+      }
+    }
+  </style>
+</head>
+
+
+<body>
+
+  <div class="login-container">
+
+    <!-- LOGO -->
+    <div class="logo-section">
+
+      <img src="static/images/blessie.png" alt="Blessie FoodHub Logo" class="logo-image">
+
+    </div>
+
+
+    <!-- WELCOME -->
+    <div class="welcome-section">
+
+      <h1>
+        Welcome Back
+      </h1>
+
+      <p>
+        Sign in to continue to Blessie FoodHub
+      </p>
+
+    </div>
+
+
+    <!-- ERROR BANNER -->
+    <div id="errorBanner" style="display:none; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.35); color:#ef4444; border-radius:12px; padding:10px 14px; font-size:12px; margin-bottom:16px; align-items:center; gap:8px;">
+      <i class="fas fa-exclamation-circle"></i>
+      <span id="errorMessage">Invalid username or password.</span>
+    </div>
+
+    <!-- LOGIN FORM -->
+    <form class="login-form" id="loginForm">
+
+      <!-- USERNAME / EMAIL -->
+      <div class="form-group">
+        <div class="input-field">
+          <i class="fas fa-user"></i>
+          <input type="text" id="usernameInput" placeholder="Username or Email" required autofocus>
+        </div>
+      </div>
+
+      <!-- PASSWORD -->
+      <div class="form-group">
+        <div class="input-field">
+          <i class="fas fa-lock"></i>
+          <input type="password" id="passwordInput" placeholder="Password" required>
+          <button type="button" class="password-toggle" onclick="togglePassword()" aria-label="Show or hide password">
+            <i class="fas fa-eye" id="toggleIcon"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- REMEMBER / FORGOT -->
+      <div class="form-footer">
+        <label class="remember-me">
+          <input type="checkbox" id="rememberMe" checked>
+          <span>Remember me</span>
+        </label>
+        <a href="#" class="forgot-password" onclick="alert('Please contact your administrator to reset credentials.')">
+          Forgot password?
+        </a>
+      </div>
+
+      <!-- SIGN IN -->
+      <button type="submit" class="signin-btn" id="signinBtn">
+        <span id="signinBtnText">Sign In</span>
+        <i class="fas fa-arrow-right" id="signinIcon"></i>
+      </button>
+    </form>
+
+  </div>
+
+  <!-- JAVASCRIPT -->
+  <script src="/static/assets/js/auth.js"></script>
+  <script>
+    function togglePassword() {
+      const input = document.getElementById("passwordInput");
+      const icon = document.getElementById("toggleIcon");
+      if (input.type === "password") {
+        input.type = "text";
+        icon.className = "fas fa-eye-slash";
+      } else {
+        input.type = "password";
+        icon.className = "fas fa-eye";
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      // If already logged in, redirect directly to user's assigned dashboard
+      if (typeof Auth !== "undefined" && Auth.isAuthenticated()) {
+        const role = Auth.getRole();
+        window.location.href = Auth.getDashboardUrl(role);
+      }
+    });
+
+    document.getElementById("loginForm").addEventListener("submit", async function (event) {
+      event.preventDefault();
+
+      const usernameInput = document.getElementById("usernameInput");
+      const passwordInput = document.getElementById("passwordInput");
+      const rememberMe = document.getElementById("rememberMe").checked;
+      const errorBanner = document.getElementById("errorBanner");
+      const errorMessage = document.getElementById("errorMessage");
+      const signinBtn = document.getElementById("signinBtn");
+      const signinBtnText = document.getElementById("signinBtnText");
+      const signinIcon = document.getElementById("signinIcon");
+
+      errorBanner.style.display = "none";
+      signinBtn.disabled = true;
+      signinBtnText.textContent = "Signing In...";
+      signinIcon.className = "fas fa-spinner fa-spin";
+
+      const username = usernameInput ? usernameInput.value.trim() : "";
+      const password = passwordInput ? passwordInput.value : "";
+
+      const res = await Auth.login(username, password, rememberMe);
+
+      signinBtn.disabled = false;
+      signinBtnText.textContent = "Sign In";
+      signinIcon.className = "fas fa-arrow-right";
+
+      if (res.success) {
+        window.location.href = Auth.getDashboardUrl(res.role);
+      } else {
+        errorMessage.textContent = res.message || "Invalid credentials.";
+        errorBanner.style.display = "flex";
+      }
+    });
+  </script>
+</body>
+</html>

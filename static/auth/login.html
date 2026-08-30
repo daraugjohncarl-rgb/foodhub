@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blessie FoodHub - Login</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Stylesheet -->
+    <link rel="stylesheet" href="/static/css/login.css">
+</head>
+<body>
+    <div class="login-container">
+        <!-- LOGO -->
+        <div class="logo-section">
+            <img src="/static/images/blessie.png" alt="Blessie FoodHub Logo" class="logo-image" onerror="this.style.display='none'; document.getElementById('logoFallback').style.display='flex';">
+            <div id="logoFallback" class="logo-text-fallback" style="display: none;">
+                <i class="fas fa-utensils"></i>
+                <span>Blessie FoodHub</span>
+            </div>
+        </div>
+
+        <!-- WELCOME -->
+        <div class="welcome-section">
+            <h1>Welcome Back</h1>
+            <p>Sign in to continue to Blessie FoodHub</p>
+        </div>
+
+        <!-- ERROR BANNER -->
+        <div id="errorBanner" class="error-banner">
+            <i class="fas fa-exclamation-circle"></i>
+            <span id="errorMessage">Incorrect credentials.</span>
+        </div>
+
+        <!-- LOGIN FORM -->
+        <form class="login-form" id="loginForm" autocomplete="off">
+            <!-- USERNAME / EMAIL -->
+            <div class="form-group">
+                <div class="input-field">
+                    <i class="fas fa-user"></i>
+                    <input type="text" id="usernameInput" placeholder="Username or Email" required autofocus>
+                </div>
+            </div>
+
+            <!-- PASSWORD -->
+            <div class="form-group">
+                <div class="input-field">
+                    <i class="fas fa-lock"></i>
+                    <input type="password" id="passwordInput" placeholder="Password" required>
+                    <button type="button" class="password-toggle" onclick="togglePassword()" aria-label="Show or hide password">
+                        <i class="fas fa-eye" id="toggleIcon"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- REMEMBER / FORGOT -->
+            <div class="form-footer">
+                <label class="remember-me">
+                    <input type="checkbox" id="rememberMe">
+                    <span>Remember me</span>
+                </label>
+                <a href="#" class="forgot-password" onclick="alert('Please contact your system administrator to reset credentials.')">Forgot password?</a>
+            </div>
+
+            <!-- SIGN IN -->
+            <button type="submit" class="signin-btn" id="signinBtn">
+                <span id="signinBtnText">Sign In</span>
+                <i class="fas fa-spinner spinner-icon" id="signinSpinner" style="display: none;"></i>
+                <i class="fas fa-arrow-right" id="signinIcon"></i>
+            </button>
+        </form>
+
+        <div class="demo-hint">
+            Default Superadmin: <code>superadmin</code> / <code>superadmin123</code>
+        </div>
+    </div>
+
+    <!-- Script -->
+    <script src="/static/js/login.js"></script>
+</body>
+</html>
