@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Lists — Blessie FoodHub Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/assets/css/style.css?v=3">
+    <style>
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 28px;
+        }
+        .stat-card {
+            padding: 20px 22px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            background: var(--card-bg, #ffffff);
+            border-radius: var(--radius-card, 16px);
+            border: 1px solid rgba(205, 190, 150, 0.35);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 30px rgba(180,140,50,0.10);
+        }
+        .stat-icon {
+            width: 50px; height: 50px; border-radius: 14px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 20px; flex-shrink: 0;
+        }
+        .stat-icon.gold   { background: rgba(201,162,39,0.12); color: #c9a227; }
+        .stat-icon.green  { background: rgba(16,185,129,0.12); color: #10b981; }
+        .stat-icon.orange { background: rgba(249,115,22,0.12); color: #f97316; }
+        .stat-icon.purple { background: rgba(123,31,162,0.12); color: #7b1fa2; }
+        .stat-icon.blue   { background: rgba(37,99,235,0.12); color: #2563eb; }
+
+        .stat-info { flex: 1; min-width: 0; }
+        .stat-info h3 {
+            font-size: 12px; color: var(--text-muted, #71717a); font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .stat-count { font-size: 24px; font-weight: 800; color: var(--text-main, #18181b); line-height: 1.2; }
+        .stat-trend { font-size: 11px; margin-top: 4px; font-weight: 500; display: flex; align-items: center; gap: 5px; }
+
+        .user-cell { display: flex; align-items: center; gap: 12px; min-width: 180px; }
+        .user-cell .user-avatar {
+            width: 38px; height: 38px; border-radius: 12px;
+            background: linear-gradient(135deg, #c9a227, #f3cf65);
+            color: #ffffff; font-weight: 700; font-size: 13px;
+            display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0; box-shadow: 0 4px 10px rgba(201, 162, 39, 0.25);
+        }
+        .user-info-name { font-weight: 700; font-size: 13px; color: var(--text-main, #18181b); line-height: 1.2; white-space: nowrap; }
+        .user-info-email { font-size: 11px; color: var(--text-muted, #71717a); margin-top: 2px; white-space: nowrap; }
+
+        @media (max-width: 1100px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 580px) { .stats-grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+<aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <img src="/static/images/blessie.png" alt="Blessie FoodHub" class="sidebar-logo-img" onerror="this.style.display='none'">
+        <button class="sidebar-toggle-btn" id="sidebarToggle" title="Toggle Sidebar"><i class="fas fa-bars"></i></button>
+    </div>
+    <nav>
+        <div class="nav-section-title">Administration</div>
+        <ul class="nav-menu">
+            <li class="nav-item"><a href="dashboard.html" class="nav-link" data-title="Dashboard"><i class="fas fa-chart-line"></i><span>Dashboard</span></a></li>
+            <li class="nav-item"><a href="users.html" class="nav-link active" data-title="User Lists"><i class="fas fa-users-cog"></i><span>User Management</span></a></li>
+            <li class="nav-item"><a href="create_user.html" class="nav-link" data-title="Create User"><i class="fas fa-user-plus"></i><span>Create User</span></a></li>
+            <li class="nav-item"><a href="/customer" target="_blank" class="nav-link" data-title="Customer Portal"><i class="fas fa-mobile-alt"></i><span>Customer Portal (QR)</span></a></li>
+            <li class="nav-item"><a href="reports.html" class="nav-link" data-title="Incident Reports"><i class="fas fa-flag"></i><span>System Reports</span></a></li>
+        </ul>
+        <div class="nav-section-title">Account</div>
+        <ul class="nav-menu">
+            <li class="nav-item"><a href="profile.html" class="nav-link" data-title="Profile"><i class="fas fa-user-circle"></i><span>Profile</span></a></li>
+            <li class="nav-item"><a href="settings.html" class="nav-link" data-title="Settings"><i class="fas fa-cog"></i><span>Settings</span></a></li>
+        </ul>
+    </nav>
+
+    <div class="sidebar-bottom">
+        <div class="nav-divider"></div>
+        <div class="sidebar-user">
+            <div class="avatar-fallback" id="sidebarAvatar" title="Super Admin">SA</div>
+            <div class="sidebar-user-info">
+                <strong id="sidebarName">Super Admin</strong>
+                <span style="font-size:11px; color:#c9a227; font-weight:700;">SUPER ADMIN</span>
+            </div>
+        </div>
+        <div style="padding: 0 16px 16px;">
+            <a href="#" class="logout-btn" id="logoutBtn" data-title="Logout">
+                <i class="fas fa-sign-out-alt"></i><span>Logout</span>
+            </a>
+        </div>
+    </div>
+</aside>
+
+<div class="main-content" id="mainContent">
+    <header class="top-header">
+        <div class="header-left">
+            <button class="mobile-menu-btn" id="mobileMenuBtn"><i class="fas fa-bars"></i></button>
+            <div class="header-title"><h1>Admin User Management</h1><p id="liveDate">Loading...</p></div>
+        </div>
+        <div class="header-actions">
+            <div class="live-clock-badge" id="liveClock">00:00:00</div>
+            <div style="position:relative;">
+                <button class="notif-btn" id="notifBell"><i class="fas fa-bell"></i><span class="notif-badge" id="notifBadge" style="display:none">0</span></button>
+                <div class="notif-dropdown" id="notifDropdown">
+                    <div class="notif-header"><h3>Notifications</h3><div class="notif-header-actions"><span class="notif-action-link" id="markAllRead">Mark all read</span><span class="notif-action-link" id="clearNotifs" style="color:var(--danger);">Clear</span></div></div>
+                    <div class="notif-list" id="notifList"></div>
+                </div>
+            </div>
+            <div class="avatar-fallback" id="headerAvatar" onclick="window.location.href='profile.html'" title="View Profile">SA</div>
+        </div>
+    </header>
+
+    <div class="page-wrapper">
+        <!-- Stats Summary Grid -->
+        <div class="stats-grid fade-up" id="userStatsGrid">
+            <div class="stat-card">
+                <div class="stat-icon gold"><i class="fas fa-users"></i></div>
+                <div class="stat-info">
+                    <h3>Total Users</h3>
+                    <div class="stat-count" id="statTotalUsers" style="color:#c9a227;">—</div>
+                    <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-id-badge"></i> All Accounts</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon purple"><i class="fas fa-user-shield"></i></div>
+                <div class="stat-info">
+                    <h3>Admins & Managers</h3>
+                    <div class="stat-count" id="statAdmins" style="color:#7b1fa2;">—</div>
+                    <div class="stat-trend" style="color:#7b1fa2;"><i class="fas fa-user-tie"></i> Branch Management</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon green"><i class="fas fa-cash-register"></i></div>
+                <div class="stat-info">
+                    <h3>Cashiers</h3>
+                    <div class="stat-count" id="statCashiers" style="color:#10b981;">—</div>
+                    <div class="stat-trend" style="color:#10b981;"><i class="fas fa-receipt"></i> POS Operations</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon orange"><i class="fas fa-utensils"></i></div>
+                <div class="stat-info">
+                    <h3>Kitchen & Inventory</h3>
+                    <div class="stat-count" id="statKitchenInv" style="color:#f97316;">—</div>
+                    <div class="stat-trend" style="color:#f97316;"><i class="fas fa-boxes"></i> Operations Staff</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="toolbar fade-up delay-1">
+            <div class="search-wrap">
+                <i class="fas fa-search"></i>
+                <input type="search" id="searchInput" name="users_filter_search_box" placeholder="Search users by name, email, role, phone…" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" readonly onfocus="this.removeAttribute('readonly');">
+            </div>
+            <select class="filter-select" id="roleFilter">
+                <option value="" selected>All Roles</option>
+                <option value="ADMIN">Branch Admin</option>
+                <option value="MANAGER">Manager</option>
+                <option value="CASHIER">Cashier</option>
+                <option value="KITCHEN">Kitchen Staff</option>
+                <option value="INVENTORY">Inventory Staff</option>
+                <option value="CUSTOMER">Customer</option>
+            </select>
+            <select class="filter-select" id="statusFilter">
+                <option value="">All Status</option>
+                <option value="Active">Active</option>
+                <option value="Inactive">Inactive</option>
+            </select>
+            <a href="create_user.html" class="btn btn-primary" style="margin-left:auto;"><i class="fas fa-plus"></i> Create User</a>
+        </div>
+
+        <!-- Table Card -->
+        <div class="page-card fade-up delay-2">
+            <div class="page-card-head">
+                <h2>All Users</h2>
+                <span id="userCount" style="font-size:13px; color:var(--text-muted);">0 users</span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>User</th>
+                            <th>Phone</th>
+                            <th>Role</th>
+                            <th>Status</th>
+                            <th>Date Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTableBody"></tbody>
+                </table>
+            </div>
+            <div class="pagination">
+                <span class="page-info" id="pageInfo">Showing 0 of 0</span>
+                <button class="page-btn" id="prevPage"><i class="fas fa-chevron-left"></i></button>
+                <div id="pageNumbers"></div>
+                <button class="page-btn" id="nextPage"><i class="fas fa-chevron-right"></i></button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- VIEW MODAL -->
+<div class="modal-overlay" id="viewModal" style="display:none">
+    <div class="modal modal-lg">
+        <div class="modal-header">
+            <h2>User Details</h2>
+            <button class="modal-close" onclick="closeModal('viewModal')"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="modal-body" id="viewModalBody"></div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" onclick="closeModal('viewModal')">Close</button>
+            <button class="btn btn-primary" id="viewEditBtn">Edit User</button>
+        </div>
+    </div>
+</div>
+
+<!-- EDIT MODAL -->
+<div class="modal-overlay" id="editModal" style="display:none">
+    <div class="modal modal-lg">
+        <div class="modal-header">
+            <h2>Edit User</h2>
+            <button class="modal-close" onclick="closeModal('editModal')"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="modal-body" id="editModalBody"></div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" onclick="closeModal('editModal')">Cancel</button>
+            <button class="btn btn-primary" id="saveEditBtn">Save Changes</button>
+        </div>
+    </div>
+</div>
+
+<!-- RESET PASSWORD MODAL -->
+<div class="modal-overlay" id="resetPwModal" style="display:none">
+    <div class="modal modal-sm">
+        <div class="modal-header">
+            <h2>Reset Password</h2>
+            <button class="modal-close" onclick="closeModal('resetPwModal')"><i class="fas fa-times"></i></button>
+        </div>
+        <form id="form-reset-password" autocomplete="off" onsubmit="event.preventDefault();">
+            <input type="text" name="fake_username_prevent_autofill" style="display:none;" autocomplete="username">
+            <div class="modal-body">
+                <p style="color:var(--text-muted); font-size:14px; margin-bottom:18px;">Enter a new password for this user.</p>
+                <div class="input-group"><label>New Password</label><input class="input-field" type="password" id="newPwInput" placeholder="Enter new password" autocomplete="new-password"></div>
+                <div class="input-group"><label>Confirm Password</label><input class="input-field" type="password" id="confirmPwInput" placeholder="Confirm new password" autocomplete="new-password"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline" onclick="closeModal('resetPwModal')">Cancel</button>
+                <button type="button" class="btn btn-primary" id="saveResetPwBtn">Reset Password</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- CONFIRM DELETE -->
+<div class="modal-overlay" id="deleteModal" style="display:none">
+    <div class="modal modal-sm">
+        <div class="modal-body" style="text-align:center; padding:36px 28px;">
+            <div class="confirm-icon danger"><i class="fas fa-trash"></i></div>
+            <h2 style="font-size:18px; margin-bottom:10px;">Delete User?</h2>
+            <p style="color:var(--text-muted); font-size:14px;">This action cannot be undone.</p>
+        </div>
+        <div class="modal-footer" style="justify-content:center; gap:16px; padding-bottom:28px;">
+            <button class="btn btn-outline" onclick="closeModal('deleteModal')">Cancel</button>
+            <button class="btn btn-danger" id="confirmDeleteBtn">Delete User</button>
+        </div>
+    </div>
+</div>
+
+<!-- CONFIRM DEACTIVATE -->
+<div class="modal-overlay" id="deactivateModal" style="display:none">
+    <div class="modal modal-sm">
+        <div class="modal-body" style="text-align:center; padding:36px 28px;">
+            <div class="confirm-icon warning"><i class="fas fa-user-slash"></i></div>
+            <h2 style="font-size:18px; margin-bottom:10px;" id="deactivateModalTitle">Deactivate User?</h2>
+            <p style="color:var(--text-muted); font-size:14px;">This user will no longer be able to access the system.</p>
+        </div>
+        <div class="modal-footer" style="justify-content:center; gap:16px; padding-bottom:28px;">
+            <button class="btn btn-outline" onclick="closeModal('deactivateModal')">Cancel</button>
+            <button class="btn btn-danger" id="confirmDeactivateBtn">Confirm</button>
+        </div>
+    </div>
+</div>
+
+<!-- LOGOUT MODAL -->
+<div class="modal-overlay" id="logoutModal" style="display:none">
+    <div class="modal modal-sm">
+        <div class="modal-body" style="text-align:center; padding:36px 28px;">
+            <div class="confirm-icon warning"><i class="fas fa-sign-out-alt"></i></div>
+            <h2 style="font-size:18px; margin-bottom:10px;">Confirm Logout</h2>
+            <p style="color:var(--text-muted); font-size:14px;">Are you sure you want to logout?</p>
+        </div>
+        <div class="modal-footer" style="justify-content:center; gap:16px; padding-bottom:28px;">
+            <button class="btn btn-outline" id="cancelLogout">Cancel</button>
+            <button class="btn btn-danger" id="confirmLogout">Logout</button>
+        </div>
+    </div>
+</div>
+
+<div id="toastContainer"></div>
+
+<!-- Scripts -->
+<script src="/static/js/storage.js"></script>
+<script src="/static/js/auth.js"></script>
+<script src="/static/js/notifications.js"></script>
+<script src="/static/js/users.js"></script>
+</body>
+</html>

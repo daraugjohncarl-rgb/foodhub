@@ -1,0 +1,17 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+fastapi/venv
+venv
+ENV
+env
+.env
+.env.local
+.DS_Store
+.idea
+.vscode
+*.log
