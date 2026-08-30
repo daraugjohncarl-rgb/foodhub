@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Blessie FoodHub — Inventory</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <h2 class="sidebar-logo-img" style="margin:0; font-size:1.2rem; color:var(--text-main);">Blessie FoodHub</h2>
+      <button id="toggle-sidebar" class="sidebar-toggle-btn" onclick="document.getElementById('sidebar').classList.toggle('collapsed'); document.getElementById('main-content').classList.toggle('expanded');">☰</button>
+    </div>
+    
+    <div class="sidebar-user">
+      <div class="avatar-fallback" id="nav-user-avatar">I</div>
+      <div class="sidebar-user-info">
+        <strong id="nav-user-name">User</strong>
+        <span id="nav-user-role" style="text-transform: capitalize;">inventory</span>
+      </div>
+    </div>
+
+    <div class="nav-section-title">Main Menu</div>
+    <ul class="nav-menu" id="sidebar-menu"></ul>
+    
+    <div class="sidebar-bottom">
+      <a class="logout-btn" onclick="logout()">
+        <i>🚪</i><span>Logout</span>
+      </a>
+    </div>
+  </div>
+
+  <div class="main-content" id="main-content">
+    <div class="top-header">
+      <div class="header-left">
+        <button class="mobile-menu-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
+        <div class="header-title">
+          <h1 id="current-page-title">Dashboard</h1>
+          <p>Welcome back to Blessie FoodHub</p>
+        </div>
+      </div>
+      
+      <div class="header-actions">
+        <button id="btn-dark-mode" class="btn-icon" style="width:42px;height:42px;border-radius:12px;box-shadow:var(--shadow-soft);">🌙</button>
+        <div class="notif-btn" id="btn-notif">
+          🔔
+          <div class="notif-badge" id="notif-count">0</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="page-wrapper" id="view-container"></div>
+  </div>
+
+  <div id="modal-container" class="modal-overlay hidden"><div class="modal" id="modal-content"></div></div>
+  <div id="toast-container"></div>
+  <div id="printable-receipt" class="hidden"></div>
+
+  <script src="assets/db.js"></script>
+  <script src="assets/utils.js"></script>
+  <script src="assets/auth.js"></script>
+  <script src="assets/permissions.js"></script>
+  <script src="assets/views.js"></script>
+  <script src="inventory.js"></script>
+  <script>
+    setInterval(() => {
+      const user = getCurrentUser();
+      if(user) document.getElementById('nav-user-avatar').innerText = user.name.charAt(0).toUpperCase();
+    }, 1000);
+  </script>
+</body>
+</html>
