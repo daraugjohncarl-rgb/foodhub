@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RestoTrack — Login</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <!-- LOGIN SCREEN -->
+  <div id="login-screen">
+    <div class="login-card">
+      <h2>Blessie FoodHub</h2>
+      <p>Restaurant Management System</p>
+      <div id="login-error" class="badge badge-danger hidden" style="margin-bottom: 1rem; text-align: center; display: block;"></div>
+      <form id="login-form">
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="login-username" class="form-control" required placeholder="Enter username">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="login-password" class="form-control" required placeholder="Enter password">
+        </div>
+        <div class="form-group flex items-center justify-between">
+          <label style="font-weight: normal; margin:0;"><input type="checkbox" id="toggle-password"> Show Password</label>
+          <label style="font-weight: normal; margin:0;"><input type="checkbox" id="remember-me"> Remember Me</label>
+        </div>
+        <button type="submit" class="btn btn-primary w-full" style="padding: 0.75rem; margin-top: 0.5rem;">Sign In</button>
+      </form>
+      <div class="demo-accounts">
+        <strong>Demo Accounts (Password: role + 123)</strong>
+        <div><span>👑 Admin: admin</span> <span>👔 Manager: manager</span></div>
+        <div><span>📦 Inventory: inventory</span> <span>💵 Cashier: cashier</span></div>
+        <div><span>🍳 Kitchen: kitchen</span> <span>Password: kitchen123</span></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="assets/db.js"></script>
+  <script src="assets/utils.js"></script>
+  <script src="assets/auth.js"></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      loadDB();
+      // If already authenticated, redirect to appropriate dashboard
+      if (isAuthenticated()) {
+        const role = getCurrentRole();
+        window.location.href = getDashboardUrl(role);
+      }
+    });
+
+    document.getElementById("login-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const u = document.getElementById("login-username").value.trim();
+      const p = document.getElementById("login-password").value.trim();
+      const remember = document.getElementById("remember-me").checked;
+      
+      const result = login(u, p, remember);
+      
+      if (result.success) {
+        window.location.href = getDashboardUrl(result.user.role);
+      } else {
+        const errEl = document.getElementById("login-error");
+        errEl.innerText = result.message;
+        errEl.classList.remove("hidden");
+      }
+    });
+
+    document.getElementById("toggle-password").addEventListener("change", (e) => {
+      document.getElementById("login-password").type = e.target.checked ? "text" : "password";
+    });
+  </script>
+</body>
+</html>

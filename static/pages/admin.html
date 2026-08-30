@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Branch Admin Portal — Blessie FoodHub</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 28px;
+        }
+        .stat-card {
+            padding: 24px 22px;
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            background: var(--card-bg, #ffffff);
+            border-radius: var(--radius-card, 16px);
+            border: 1px solid rgba(205, 190, 150, 0.35);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .stat-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 15px 35px rgba(180,140,50,0.12);
+        }
+        .stat-icon {
+            width: 56px; height: 56px; border-radius: 16px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 22px; flex-shrink: 0;
+        }
+        .stat-icon.gold   { background: rgba(201,162,39,0.12); color: #c9a227; }
+        .stat-icon.green  { background: rgba(16,185,129,0.12); color: #10b981; }
+        .stat-icon.orange { background: rgba(249,115,22,0.12); color: #f97316; }
+        .stat-icon.red    { background: rgba(239,68,68,0.12); color: #ef4444; }
+
+        .stat-info h3 { font-size: 12px; color: var(--text-muted, #71717a); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+        .stat-count { font-size: 28px; font-weight: 800; color: var(--text-main, #18181b); line-height: 1.1; }
+        .stat-trend { font-size: 11px; margin-top: 4px; font-weight: 500; }
+
+        .section-card {
+            background: var(--card-bg, #ffffff);
+            border: 1px solid rgba(205, 190, 150, 0.35);
+            border-radius: var(--radius-card, 16px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+            overflow: hidden;
+            margin-bottom: 24px;
+        }
+        .section-head {
+            padding: 18px 24px;
+            border-bottom: 1px solid rgba(205, 190, 150, 0.25);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .section-head h2 { font-size: 16px; font-weight: 700; color: var(--text-main, #18181b); }
+        .view-all-link { font-size: 13px; color: #c9a227; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+        .view-all-link:hover { color: #987719; }
+
+        .table-wrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; text-align: left; }
+        th { padding: 14px 24px; font-size: 12px; font-weight: 600; color: var(--text-muted, #71717a); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid rgba(205, 190, 150, 0.25); background: rgba(0,0,0,0.01); }
+        td { padding: 16px 24px; border-bottom: 1px solid rgba(205, 190, 150, 0.15); font-size: 13px; vertical-align: middle; }
+        tr:last-child td { border-bottom: none; }
+
+        @media (max-width: 1100px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 580px) { .stats-grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+
+<!-- Sidebar Overlay (mobile) -->
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+<!-- SIDEBAR -->
+<aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <img src="/static/images/blessie.png" alt="Blessie FoodHub" class="sidebar-logo-img" onerror="this.style.display='none'">
+        <button class="sidebar-toggle-btn" id="sidebarToggle" title="Toggle Sidebar">
+            <i class="fas fa-bars"></i>
+        </button>
+    </div>
+
+    <nav>
+        <div class="nav-section-title">Branch Operations</div>
+        <ul class="nav-menu" id="sidebar-menu">
+            <!-- Dynamic Navigation injected via permissions.js -->
+        </ul>
+    </nav>
+
+    <div class="sidebar-bottom">
+        <div class="nav-divider"></div>
+
+        <!-- Sidebar User Card -->
+        <div class="sidebar-user">
+            <div class="avatar-fallback" id="sidebarAvatar" title="Branch Admin">BA</div>
+            <div class="sidebar-user-info">
+                <strong id="sidebarName">Branch Admin</strong>
+                <span style="font-size:11px; color:#c9a227; font-weight:700;">BRANCH ADMIN</span>
+            </div>
+        </div>
+
+        <div style="padding: 0 16px 16px;">
+            <a href="#" class="logout-btn" id="logoutBtn" data-title="Logout">
+                <i class="fas fa-sign-out-alt"></i><span>Logout</span>
+            </a>
+        </div>
+    </div>
+</aside>
+
+<!-- MAIN CONTENT -->
+<div class="main-content" id="mainContent">
+
+    <!-- TOP HEADER -->
+    <header class="top-header">
+        <div class="header-left">
+            <button class="mobile-menu-btn" id="mobileMenuBtn">
+                <i class="fas fa-bars"></i>
+            </button>
+            <div class="header-title">
+                <h1 id="current-page-title">Executive Dashboard</h1>
+                <p id="liveDate">Loading…</p>
+            </div>
+        </div>
+        <div class="header-actions">
+            <div class="live-clock-badge" id="liveClock">00:00:00</div>
+
+            <!-- Notification Bell -->
+            <div style="position: relative;">
+                <button class="notif-btn" id="notifBell" title="Branch Notifications">
+                    <i class="fas fa-bell"></i>
+                    <span class="notif-badge" id="notifBadge" style="display:none">0</span>
+                </button>
+                <div class="notif-dropdown" id="notifDropdown">
+                    <div class="notif-header">
+                        <h3>Notifications</h3>
+                        <div class="notif-header-actions">
+                            <span class="notif-action-link" id="markAllRead">Mark all read</span>
+                            <span class="notif-action-link" id="clearNotifs" style="color: var(--danger);">Clear</span>
+                        </div>
+                    </div>
+                    <div class="notif-list" id="notifList"></div>
+                </div>
+            </div>
+
+            <!-- Avatar -->
+            <div class="header-avatar">
+                <div class="avatar-fallback" id="headerAvatar" onclick="renderView('settings')" title="View Settings">BA</div>
+            </div>
+        </div>
+    </header>
+
+    <!-- PAGE VIEW CONTAINER (Single-Page Dynamic Router) -->
+    <div class="page-wrapper" id="view-container" style="padding: 24px;"></div>
+</div>
+
+<!-- Modal Dialog Container -->
+<div class="modal-overlay" id="modal-container" style="display:none;">
+    <div class="modal" id="modal-content"></div>
+</div>
+
+<!-- Logout Modal -->
+<div class="modal-overlay" id="logoutModal" style="display:none;">
+    <div class="modal modal-sm">
+        <div class="modal-body" style="text-align:center; padding: 36px 28px;">
+            <div class="confirm-icon warning"><i class="fas fa-sign-out-alt"></i></div>
+            <h2 style="font-size:18px; margin-bottom:10px;">Confirm Logout</h2>
+            <p style="color:var(--text-muted); font-size:14px;">Are you sure you want to end your Branch Admin session?</p>
+        </div>
+        <div class="modal-footer" style="justify-content:center; gap:16px; padding-bottom:28px;">
+            <button class="btn btn-outline" id="cancelLogout">Cancel</button>
+            <button class="btn btn-danger" id="confirmLogout">Logout</button>
+        </div>
+    </div>
+</div>
+
+<!-- Toast Alert Container -->
+<div id="toastContainer"></div>
+<div id="toast-container"></div>
+<div id="printable-receipt" class="hidden" style="display:none;"></div>
+
+<!-- JS Modules -->
+<script src="/static/js/storage.js"></script>
+<script src="/static/assets/js/utils.js"></script>
+<script src="/static/assets/js/auth.js"></script>
+<script src="/static/assets/js/permissions.js"></script>
+<script src="/static/assets/js/views.js"></script>
+<script src="/static/assets/js/admin.js"></script>
+</body>
+</html>

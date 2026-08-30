@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Blessie FoodHub — Kitchen KDS</title>
+  <link rel="stylesheet" href="/static/assets/css/style.css">
+</head>
+<body>
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo">
+        <span>🍳</span>
+        <span class="sidebar-title">Blessie KDS</span>
+      </div>
+      <button id="toggle-sidebar" class="sidebar-toggle-btn" onclick="document.getElementById('sidebar').classList.toggle('collapsed')">☰</button>
+    </div>
+
+    <div class="sidebar-user">
+      <div class="avatar-fallback" id="nav-user-avatar">K</div>
+      <div class="sidebar-user-info">
+        <strong id="nav-user-name">Kitchen Crew</strong>
+        <span id="nav-user-role">kitchen</span>
+      </div>
+    </div>
+
+    <div class="nav-section-title">Kitchen Screen</div>
+    <ul class="nav-menu" id="sidebar-menu"></ul>
+
+    <div class="sidebar-bottom">
+      <a class="logout-btn" onclick="logout()">
+        <i>🚪</i><span class="logout-text">Sign Out</span>
+      </a>
+    </div>
+  </aside>
+
+  <!-- MAIN WRAPPER -->
+  <main class="main-content" id="main-content">
+    <header class="top-header">
+      <div class="header-left">
+        <div class="header-title">
+          <h1 id="current-page-title">Kitchen Display System (KDS)</h1>
+          <p>Live Incoming Order Preparation</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button id="btn-dark-mode" class="btn-icon" title="Toggle Theme">🌙</button>
+        <button class="btn btn-outline btn-sm" onclick="logout()">Sign Out</button>
+      </div>
+    </header>
+
+    <div class="page-wrapper" id="view-container"></div>
+  </main>
+
+  <div id="modal-container" class="modal-overlay hidden"><div class="modal" id="modal-content"></div></div>
+  <div id="toast-container"></div>
+  <div id="printable-receipt" class="hidden"></div>
+
+  <script src="/static/assets/js/utils.js"></script>
+  <script src="/static/assets/js/auth.js"></script>
+  <script src="/static/assets/js/permissions.js"></script>
+  <script src="/static/assets/js/views.js"></script>
+  <script src="/static/assets/js/kitchen.js"></script>
+</body>
+</html>
