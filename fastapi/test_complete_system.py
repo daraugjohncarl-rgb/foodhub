@@ -91,29 +91,6 @@ def run_e2e_tests():
     assert update_res.status_code == 200, f"Report update failed: {update_res.text}"
     print(f"  ✓ Super Admin updated Report #{report_id} status to IN_PROGRESS")
 
-    # 4.5 Branch Admin creates Customer Staff User
-    print("\n▶ 4.5 Testing Branch Staff Creation with CUSTOMER Role...")
-    admin_headers = {"Authorization": f"Bearer {tokens['admin']}"}
-    cust_staff_payload = {
-        "username": f"cust_user_{uuid.uuid4().hex[:4]}",
-        "first_name": "Kiosk",
-        "last_name": "Customer",
-        "email": f"cust_{uuid.uuid4().hex[:4]}@inboxpos.com",
-        "password": "customer123",
-        "role": "CUSTOMER",
-        "is_active": True
-    }
-    create_cust_res = client.post("/api/v1/users", json=cust_staff_payload, headers=admin_headers)
-    assert create_cust_res.status_code == 201, f"Customer staff creation failed: {create_cust_res.text}"
-    created_cust = create_cust_res.json()
-    assert created_cust["role"] == "CUSTOMER", f"Expected role CUSTOMER, got {created_cust['role']}"
-    print(f"  ✓ Branch Admin created user '{created_cust['username']}' with role '{created_cust['role']}'")
-
-    # Verify status toggle and delete by Branch Admin
-    toggle_res = client.put(f"/api/v1/users/{created_cust['id']}/status", headers=admin_headers)
-    assert toggle_res.status_code == 200
-    print(f"  ✓ Branch Admin toggled status of user '{created_cust['username']}'")
-
     del_res = client.delete(f"/api/v1/users/{created_cust['id']}", headers=admin_headers)
     assert del_res.status_code == 204, f"Delete failed: {del_res.status_code}"
     print(f"  ✓ Branch Admin successfully deleted staff account '{created_cust['username']}' (ID: {created_cust['id']})")

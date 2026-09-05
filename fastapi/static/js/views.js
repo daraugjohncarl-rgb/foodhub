@@ -1630,7 +1630,7 @@ function openAddStaffModal() {
             <option value="KITCHEN">Kitchen Staff</option>
             <option value="INVENTORY">Inventory Staff</option>
             <option value="MANAGER">Manager</option>
-            <option value="CUSTOMER">Customer</option>
+            <option value="SUPER_ADMIN">Super Admin</option>
           </select>
         </div>
         <div class="input-group">
@@ -1798,86 +1798,102 @@ async function renderSettings(c) {
 // ─────────────────────────────────────────────────────────────────────────────
 // 10. SUPPLIERS MANAGEMENT
 // ─────────────────────────────────────────────────────────────────────────────
-let cachedSuppliers = [
-  { id: 1, name: "San Miguel Foods Inc.", contact: "Mario Batali", phone: "0917-889-2311", email: "orders@sanmiguelfoods.ph", category: "Poultry & Meat", terms: "Net 15", status: "Active" },
-  { id: 2, name: "Magnolia Fresh Farm", contact: "Elena Ramos", phone: "0920-554-1290", email: "sales@magnoliadairy.com", category: "Dairy & Eggs", terms: "Net 30", status: "Active" },
-  { id: 3, name: "Baguio Greens Produce", contact: "Carlos Tan", phone: "0918-332-9011", email: "carlos@baguiogreens.ph", category: "Fresh Produce", terms: "COD", status: "Active" },
-  { id: 4, name: "Golden Cup Packaging", contact: "Sarah Chua", phone: "0922-811-4432", email: "inquiry@goldencup.com.ph", category: "Packaging & Disposables", terms: "Net 15", status: "Active" }
-];
+let globalSuppliers = [];
 
 async function renderSuppliers(c) {
-  c.innerHTML = `
-    <div class="stats-grid">
-      <div class="stat-card">
-        <div class="stat-icon gold"><i class="fas fa-truck"></i></div>
-        <div class="stat-info">
-          <h3>Active Suppliers</h3>
-          <div class="stat-count" style="color:#c9a227;">${cachedSuppliers.length}</div>
-          <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-handshake"></i> Verified Vendors</div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon green"><i class="fas fa-check-circle"></i></div>
-        <div class="stat-info">
-          <h3>Poultry & Meat</h3>
-          <div class="stat-count" style="color:#10b981;">1</div>
-          <div class="stat-trend" style="color:#10b981;">Primary Vendor</div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon orange"><i class="fas fa-leaf"></i></div>
-        <div class="stat-info">
-          <h3>Fresh Produce</h3>
-          <div class="stat-count" style="color:#f97316;">1</div>
-          <div class="stat-trend" style="color:#f97316;">Farm Direct</div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon purple"><i class="fas fa-box-open"></i></div>
-        <div class="stat-info">
-          <h3>Packaging & Misc</h3>
-          <div class="stat-count" style="color:#9333ea;">2</div>
-          <div class="stat-trend" style="color:#9333ea;">Disposables</div>
-        </div>
-      </div>
-    </div>
+  if (!c) c = document.getElementById("content-area") || document.querySelector('.content-area') || document.querySelector('main');
+  c.innerHTML = `<div style="padding:40px; text-align:center; color:var(--text-muted);">
+    <i class="fas fa-spinner fa-spin" style="font-size:24px; margin-bottom:10px;"></i>
+    <div>Loading suppliers...</div>
+  </div>`;
 
-    <div class="toolbar fade-up delay-1" style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; flex-wrap:wrap;">
-      <div class="search-wrap" style="position:relative; flex:1; max-width:320px;">
-        <i class="fas fa-search" style="position:absolute; left:14px; top:50%; transform:translateY(-50%); color:var(--text-muted);"></i>
-        <input type="text" id="supp-search" class="input-field" placeholder="Search suppliers..." style="padding-left:38px; width:100%;" oninput="filterSuppliersTable()">
-      </div>
-      <button class="btn btn-primary" onclick="openAddSupplierModal()" style="display:inline-flex; align-items:center; gap:8px;">
-        <i class="fas fa-plus"></i> Add New Supplier
-      </button>
-    </div>
+  try {
+    const statsRes = await Auth.fetch("/api/v1/suppliers/stats");
+    const suppRes = await Auth.fetch("/api/v1/suppliers");
 
-    <div class="section-card">
-      <div class="section-head">
-        <h2>Registered Supplier Directory</h2>
-        <span style="font-size:13px; color:var(--text-muted);">${cachedSuppliers.length} vendor partners</span>
+    if (!statsRes.ok || !suppRes.ok) {
+      throw new Error("Failed to load suppliers data.");
+    }
+
+    const statsData = await statsRes.json();
+    const suppliersData = await suppRes.json();
+    globalSuppliers = suppliersData;
+
+    let cats = Object.keys(statsData.categories || {}).map(k => ({ name: k, count: statsData.categories[k] }));
+    cats.sort((a, b) => b.count - a.count);
+    const top3 = cats.slice(0, 3);
+    const icons = ["green", "orange", "purple"];
+    const faIcons = ["fa-check-circle", "fa-leaf", "fa-box-open"];
+
+    let categoryCardsHtml = top3.map((cat, i) => `
+      <div class="stat-card">
+        <div class="stat-icon ${icons[i % icons.length]}"><i class="fas ${faIcons[i % faIcons.length]}"></i></div>
+        <div class="stat-info">
+          <h3>${cat.name || 'General'}</h3>
+          <div class="stat-count">${cat.count}</div>
+          <div class="stat-trend">Category</div>
+        </div>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Supplier Name</th>
-              <th>Contact Person</th>
-              <th>Phone Number</th>
-              <th>Email</th>
-              <th>Category Supplied</th>
-              <th>Terms</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody id="supp-tbody">
-            ${renderSupplierRows(cachedSuppliers)}
-          </tbody>
-        </table>
+    `).join('');
+
+    c.innerHTML = `
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-icon gold"><i class="fas fa-truck"></i></div>
+          <div class="stat-info">
+            <h3>Active Suppliers</h3>
+            <div class="stat-count" style="color:#c9a227;">${statsData.active_suppliers}</div>
+            <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-handshake"></i> Verified Vendors</div>
+          </div>
+        </div>
+        ${categoryCardsHtml}
       </div>
-    </div>
-  `;
+
+      <div class="toolbar fade-up delay-1" style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; flex-wrap:wrap;">
+        <div class="search-wrap" style="position:relative; flex:1; max-width:320px;">
+          <i class="fas fa-search" style="position:absolute; left:14px; top:50%; transform:translateY(-50%); color:var(--text-muted);"></i>
+          <input type="text" id="supp-search" class="input-field" placeholder="Search suppliers..." style="padding-left:38px; width:100%;" oninput="filterSuppliersTable()">
+        </div>
+        <button class="btn btn-primary" onclick="openAddSupplierModal()" style="display:inline-flex; align-items:center; gap:8px;">
+          <i class="fas fa-plus"></i> Add New Supplier
+        </button>
+      </div>
+
+      <div class="section-card">
+        <div class="section-head">
+          <h2>Registered Supplier Directory</h2>
+          <span style="font-size:13px; color:var(--text-muted);">${globalSuppliers.length} vendor partners</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Supplier Name</th>
+                <th>Contact Person</th>
+                <th>Phone Number</th>
+                <th>Email</th>
+                <th>Category Supplied</th>
+                <th>Terms</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="supp-tbody">
+              ${renderSupplierRows(globalSuppliers)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    console.error("Suppliers Error:", err);
+    c.innerHTML = `
+      <div style="padding:40px; text-align:center; color:var(--danger);">
+        <i class="fas fa-exclamation-triangle" style="font-size:24px; margin-bottom:10px;"></i>
+        <div>Unable to load suppliers. Please try again.</div>
+      </div>
+    `;
+  }
 }
 
 function renderSupplierRows(suppliers) {
@@ -1887,12 +1903,12 @@ function renderSupplierRows(suppliers) {
   return suppliers.map(s => `
     <tr>
       <td style="color:var(--text-muted);">#${s.id}</td>
-      <td><strong style="color:var(--text-main); font-size:13px;">${s.name}</strong></td>
-      <td style="color:var(--text-muted); font-size:13px;">${s.contact || '—'}</td>
-      <td><span style="font-family:monospace; font-size:12px; color:var(--text-muted);">${s.phone || '—'}</span></td>
+      <td><strong style="color:var(--text-main); font-size:13px;">${s.supplier_name}</strong></td>
+      <td style="color:var(--text-muted); font-size:13px;">${s.contact_person || '—'}</td>
+      <td><span style="font-family:monospace; font-size:12px; color:var(--text-muted);">${s.contact_number || '—'}</span></td>
       <td style="color:var(--text-muted); font-size:13px;">${s.email || '—'}</td>
       <td><span class="badge badge-info" style="font-size:11px; font-weight:700;">${s.category || 'General'}</span></td>
-      <td style="color:var(--text-muted); font-size:12px;">${s.terms || 'COD'}</td>
+      <td style="color:var(--text-muted); font-size:12px;">${s.notes || '—'}</td>
       <td>
         <span class="badge ${s.status === 'Active' ? 'badge-success' : 'badge-danger'}" style="font-size:11px; font-weight:700;">
           ${s.status || 'Active'}
@@ -1904,9 +1920,11 @@ function renderSupplierRows(suppliers) {
 
 function filterSuppliersTable() {
   const q = (document.getElementById("supp-search")?.value || "").toLowerCase();
-  const filtered = cachedSuppliers.filter(s =>
-    (s.name && s.name.toLowerCase().includes(q)) ||
-    (s.contact && s.contact.toLowerCase().includes(q)) ||
+  const filtered = globalSuppliers.filter(s =>
+    (s.supplier_name && s.supplier_name.toLowerCase().includes(q)) ||
+    (s.contact_person && s.contact_person.toLowerCase().includes(q)) ||
+    (s.contact_number && s.contact_number.toLowerCase().includes(q)) ||
+    (s.email && s.email.toLowerCase().includes(q)) ||
     (s.category && s.category.toLowerCase().includes(q))
   );
   const tbody = document.getElementById("supp-tbody");
@@ -1918,12 +1936,12 @@ function openAddSupplierModal() {
     <form id="form-add-supp" onsubmit="event.preventDefault(); submitAddSupplier();">
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Supplier / Company Name <span style="color:var(--danger);">*</span></label>
-        <input id="sp-name" class="input-field" required placeholder="e.g. San Miguel Foods Inc." style="width:100%;">
+        <input id="sp-name" class="input-field" required placeholder="Enter company name" style="width:100%;">
       </div>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
         <div class="input-group">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Contact Person</label>
-          <input id="sp-contact" class="input-field" placeholder="e.g. Mario Batali" style="width:100%;">
+          <input id="sp-contact" class="input-field" placeholder="Contact person name" style="width:100%;">
         </div>
         <div class="input-group">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Phone Number <span style="color:var(--danger);">*</span></label>
@@ -1937,14 +1955,14 @@ function openAddSupplierModal() {
         </div>
         <div class="input-group">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Supply Category</label>
-          <input id="sp-category" class="input-field" placeholder="e.g. Poultry, Dairy, Packaging" style="width:100%;">
+          <input id="sp-category" class="input-field" placeholder="e.g. Beverages, Produce" style="width:100%;">
         </div>
       </div>
     </form>
   `, `<button class="btn btn-primary" onclick="submitAddSupplier()"><i class="fas fa-save"></i> Save Supplier</button>`);
 }
 
-function submitAddSupplier() {
+async function submitAddSupplier() {
   const name = document.getElementById("sp-name")?.value.trim();
   const contact = document.getElementById("sp-contact")?.value.trim();
   const phone = document.getElementById("sp-phone")?.value.trim();
@@ -1956,18 +1974,33 @@ function submitAddSupplier() {
     return;
   }
 
-  const newSupplier = {
-    id: cachedSuppliers.length + 1,
-    name, contact, phone, email,
+  const payload = {
+    supplier_name: name,
+    contact_person: contact,
+    contact_number: phone,
+    email: email,
     category: category || "General",
-    terms: "Net 30",
     status: "Active"
   };
 
-  cachedSuppliers.push(newSupplier);
-  Utils.showToast("Supplier registered successfully!", "success");
-  Utils.closeModal();
-  renderSuppliers();
+  try {
+    const res = await Auth.fetch("/api/v1/suppliers", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to add supplier");
+    }
+
+    Utils.showToast("Supplier registered successfully!", "success");
+    Utils.closeModal();
+    renderSuppliers();
+  } catch (error) {
+    console.error(error);
+    Utils.showToast(error.message, "danger");
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2081,7 +2114,10 @@ function openCreatePOModal() {
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Supplier <span style="color:var(--danger);">*</span></label>
         <select id="po-supplier" class="input-field" style="width:100%;">
-          ${cachedSuppliers.map(s => `<option value="${s.name}">${s.name} (${s.category})</option>`).join('')}
+          ${globalSuppliers.length > 0
+            ? globalSuppliers.map(s => `<option value="${s.supplier_name}">${s.supplier_name}${s.category ? ' (' + s.category + ')' : ''}</option>`).join('')
+            : '<option value="">No suppliers available</option>'
+          }
         </select>
       </div>
       <div class="input-group" style="margin-bottom:14px;">

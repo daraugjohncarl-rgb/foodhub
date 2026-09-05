@@ -98,7 +98,6 @@ def seed_default_data():
             ("cashier", models.UserRole.CASHIER, "cashier123"),
             ("inventory", models.UserRole.INVENTORY, "inventory123"),
             ("kitchen", models.UserRole.KITCHEN, "kitchen123"),
-            ("customer", models.UserRole.CUSTOMER, "customer123"),
         ]
         
         for username, role, pwd in roles_to_seed:
@@ -189,13 +188,6 @@ async def lifespan(app: FastAPI):
     and then seeds the default system accounts.
     """
     try:
-        # Ensure postgres enum has all UserRole values including CUSTOMER
-        try:
-            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-                conn.execute(text("ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'CUSTOMER';"))
-        except Exception:
-            pass
-
         # Create all tables defined in models.py
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables initialized successfully.")

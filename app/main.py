@@ -287,13 +287,8 @@ async def lifespan(app: FastAPI):
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables initialized successfully.")
         
-        # Ensure users.role column enum contains all current UserRole values
-        try:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE users MODIFY COLUMN role ENUM('SUPER_ADMIN','ADMIN','MANAGER','CASHIER','INVENTORY','KITCHEN') NOT NULL DEFAULT 'CASHIER'"))
-                conn.commit()
-        except Exception as err:
-            logger.debug(f"Enum alignment check: {err}")
+        # (Removed MySQL-specific ALTER TABLE query for ENUM column alignment.
+        # PostgreSQL handles ENUM types via the SQLAlchemy models, and schema migrations should be done via Alembic.)
 
         # Seed default data
         seed_default_data()
@@ -323,6 +318,7 @@ app.add_middleware(
 
 from app.routers.transactions import router as transactions_router
 from app.routers.kitchen import router as kitchen_router
+from app.routers.suppliers import router as suppliers_router
 
 # Register routers
 app.include_router(auth_router, prefix="/api/v1")
@@ -334,6 +330,7 @@ app.include_router(inventory_router, prefix="/api/v1")
 app.include_router(analytics_router, prefix="/api/v1")
 app.include_router(transactions_router, prefix="/api/v1")
 app.include_router(kitchen_router, prefix="/api/v1")
+app.include_router(suppliers_router, prefix="/api/v1")
 
 # Mount static files directories to serve frontend assets using absolute paths
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

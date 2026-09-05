@@ -10,7 +10,6 @@ class UserRole(str, enum.Enum):
     CASHIER = "CASHIER"
     INVENTORY = "INVENTORY"
     KITCHEN = "KITCHEN"
-    CUSTOMER = "CUSTOMER"
 
 
 class ReportCategory(str, enum.Enum):

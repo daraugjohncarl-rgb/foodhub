@@ -504,9 +504,16 @@ class PurchaseOrderItemResponse(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def extract_inventory_name(cls, data: Any) -> Any:
-        if hasattr(data, "inventory_item") and data.inventory_item is not None:
+        if hasattr(data, "__class__"):
             obj = data.__dict__.copy() if hasattr(data, "__dict__") else {}
-            obj["inventory_item_name"] = data.inventory_item.name
+            if hasattr(data, "inventory_item") and data.inventory_item is not None:
+                obj["inventory_item_name"] = data.inventory_item.name
+            if hasattr(data, "po_id"):
+                obj["purchase_order_id"] = data.po_id
+            if hasattr(data, "quantity_ordered"):
+                obj["quantity"] = data.quantity_ordered
+            if not hasattr(data, "notes") and "notes" not in obj:
+                obj["notes"] = None
             return obj
         return data
 
@@ -551,6 +558,8 @@ class PurchaseOrderResponse(BaseModel):
                 obj["supplier_name"] = data.supplier.supplier_name
             if hasattr(data, "created_by_user") and data.created_by_user is not None:
                 obj["created_by_username"] = data.created_by_user.username
+            if hasattr(data, "items"):
+                obj["items"] = data.items
             return obj
         return data
 

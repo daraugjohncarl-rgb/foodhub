@@ -38,7 +38,6 @@ def get_user_stats(
         cashiers_count = base_query.filter(models.User.role == models.UserRole.CASHIER).count()
         inventory_count = base_query.filter(models.User.role == models.UserRole.INVENTORY).count()
         kitchen_count = base_query.filter(models.User.role == models.UserRole.KITCHEN).count()
-        customers_count = base_query.filter(models.User.role == models.UserRole.CUSTOMER).count()
     else:
         admins_query = db.query(models.User).filter(
             models.User.role == models.UserRole.ADMIN,
@@ -53,7 +52,6 @@ def get_user_stats(
         cashiers_count = db.query(models.User).filter(models.User.role == models.UserRole.CASHIER).count()
         inventory_count = db.query(models.User).filter(models.User.role == models.UserRole.INVENTORY).count()
         kitchen_count = db.query(models.User).filter(models.User.role == models.UserRole.KITCHEN).count()
-        customers_count = db.query(models.User).filter(models.User.role == models.UserRole.CUSTOMER).count()
     
     return {
         "total": total_users,
@@ -63,8 +61,7 @@ def get_user_stats(
         "managers": managers_count,
         "cashiers": cashiers_count,
         "inventory": inventory_count,
-        "kitchen": kitchen_count,
-        "customers": customers_count
+        "kitchen": kitchen_count
     }
 
 @router.get("", response_model=List[UserResponse])

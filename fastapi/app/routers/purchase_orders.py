@@ -91,10 +91,9 @@ def create_purchase_order(
         
         po_item = models.PurchaseOrderItem(
             inventory_item_id=item_in.inventory_item_id,
-            quantity=item_in.quantity,
+            quantity_ordered=item_in.quantity,
             unit_cost=item_in.unit_cost,
-            total_cost=total_cost,
-            notes=item_in.notes
+            total_cost=total_cost
         )
         po_items.append(po_item)
 
@@ -210,7 +209,7 @@ def receive_purchase_order(
             
             # Increase stock
             old_qty = float(inv_item.quantity)
-            new_qty = float(inv_item.quantity) + float(item.quantity)
+            new_qty = float(inv_item.quantity) + float(item.quantity_ordered)
             inv_item.quantity = new_qty
             db.flush()
             

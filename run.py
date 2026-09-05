@@ -67,7 +67,6 @@ def main():
     print("  - Cashier POS : cashier    / cashier123     -> /cashier")
     print("  - Inventory   : inventory  / inventory123   -> /inventory")
     print("  - Kitchen KDS : kitchen    / kitchen123     -> /kitchen")
-    print("  - Customer    : customer   / customer123    -> /customer")
     print("========================================================\n")
 
     uvicorn.run(

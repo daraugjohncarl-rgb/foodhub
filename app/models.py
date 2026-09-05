@@ -52,6 +52,7 @@ class Tenant(Base):
     transactions = relationship("Transaction", back_populates="tenant", cascade="all, delete-orphan")
     shift_cash_movements = relationship("ShiftCashMovement", back_populates="tenant", cascade="all, delete-orphan")
     incident_reports = relationship("IncidentReport", back_populates="tenant", cascade="all, delete-orphan")
+    suppliers = relationship("Supplier", back_populates="tenant", cascade="all, delete-orphan")
 
 
 class User(Base):
@@ -295,3 +296,29 @@ class IncidentReport(Base):
     # Relationships
     tenant = relationship("Tenant", back_populates="incident_reports")
     user = relationship("User", back_populates="incident_reports")
+
+
+class Supplier(Base):
+    """Supplier model — maps to the existing `suppliers` table in PostgreSQL."""
+    __tablename__ = "suppliers"
+
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    supplier_name = Column(String(150), nullable=False)
+    contact_number = Column(String(50), nullable=True)
+    category = Column(String(100), nullable=True)
+    contact_person = Column(String(100), nullable=True)
+    email = Column(String(100), nullable=True)
+    address = Column(Text, nullable=True)
+    products_supplied = Column(String(255), nullable=True)
+    status = Column(String(50), default="Active", nullable=False)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Relationships
+    tenant = relationship("Tenant", back_populates="suppliers")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "supplier_name", name="uix_tenant_supplier_name"),
+    )

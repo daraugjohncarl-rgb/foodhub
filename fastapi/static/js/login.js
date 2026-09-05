@@ -26,7 +26,6 @@ function getRoleDashboardUrl(role) {
         case "inventory": return "/inventory";
         case "cashier": return "/cashier";
         case "kitchen": return "/kitchen";
-        case "customer": return "/customer";
         default: return "/dashboard";
     }
 }

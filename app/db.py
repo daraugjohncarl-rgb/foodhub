@@ -17,36 +17,10 @@ if os.path.exists(dotenv_path):
 else:
     load_dotenv()
 
-DB_USER = os.getenv("DB_USER", "root")
-DB_PASSWORD = os.getenv("DB_PASS", "") or os.getenv("DB_PASSWORD", "")
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "3307")
-DB_NAME = os.getenv("DB_NAME", "inbox_pos")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-def check_and_create_db():
-    """
-    Connect directly to the MySQL server using pymysql and ensure the database exists
-    before starting the SQLAlchemy connection pool.
-    """
-    import pymysql
-    try:
-        connection = pymysql.connect(
-            host=DB_HOST,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            port=int(DB_PORT)
-        )
-        with connection.cursor() as cursor:
-            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {DB_NAME}")
-        connection.close()
-        logger.info(f"Database '{DB_NAME}' verified or created successfully.")
-    except Exception as e:
-        logger.warning(f"Could not verify or create database '{DB_NAME}' on startup: {e}")
-
-# Check/create the DB before starting the SQLAlchemy connection pool
-check_and_create_db()
-
-DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not configured. Please set it in your .env file.")
 
 # SQLAlchemy engine config
 # pool_pre_ping=True verifies connections before using them, preventing disconnected socket errors
