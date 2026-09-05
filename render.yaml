@@ -6,7 +6,7 @@ services:
     region: singapore # or oregon / frankfurt
     plan: free
     buildCommand: "pip install --upgrade pip setuptools wheel && pip install -r requirements.txt"
-    startCommand: "cd fastapi && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
     healthCheckPath: "/test-db"
     envVars:
       - key: PYTHON_VERSION
