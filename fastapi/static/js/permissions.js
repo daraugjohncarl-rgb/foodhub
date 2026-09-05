@@ -9,7 +9,6 @@ const ROLE_NAV_CONFIG = {
     { id: "users", label: "User Management", icon: "fas fa-users-cog" },
     { id: "inventory", label: "Inventory", icon: "fas fa-boxes" },
     { id: "products", label: "Products & Menu", icon: "fas fa-utensils" },
-    { id: "customer_portal", label: "Customer Portal (QR)", icon: "fas fa-mobile-alt", external: "/customer" },
     { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },
     { id: "purchases", label: "Purchases", icon: "fas fa-shopping-cart" },
     { id: "reports", label: "Reports & Analytics", icon: "fas fa-chart-bar" },
@@ -21,7 +20,6 @@ const ROLE_NAV_CONFIG = {
     { id: "users", label: "User Management", icon: "fas fa-users-cog" },
     { id: "inventory", label: "Inventory", icon: "fas fa-boxes" },
     { id: "products", label: "Products & Menu", icon: "fas fa-utensils" },
-    { id: "customer_portal", label: "Customer Portal (QR)", icon: "fas fa-mobile-alt", external: "/customer" },
     { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },
     { id: "purchases", label: "Purchases", icon: "fas fa-shopping-cart" },
     { id: "reports", label: "Reports & Analytics", icon: "fas fa-chart-bar" },
@@ -35,15 +33,10 @@ const ROLE_NAV_CONFIG = {
   ],
   cashier: [
     { id: "pos", label: "Point of Sale (POS)", icon: "fas fa-cash-register" },
-    { id: "transactions", label: "Today's Orders", icon: "fas fa-receipt" },
-    { id: "customer_portal", label: "Customer Menu (QR)", icon: "fas fa-mobile-alt", external: "/customer" }
+    { id: "transactions", label: "Today's Orders", icon: "fas fa-receipt" }
   ],
   kitchen: [
-    { id: "kitchen", label: "Live KDS Orders", icon: "fas fa-fire-burner" },
-    { id: "kitchen_logs", label: "Completed Orders", icon: "fas fa-check-double" }
-  ],
-  customer: [
-    { id: "customer_portal", label: "Customer Menu", icon: "fas fa-utensils", external: "/customer" }
+    { id: "kitchen", label: "Live KDS Orders", icon: "fas fa-fire-burner" }
   ]
 };
 
@@ -79,11 +72,6 @@ function buildSidebarMenu(role, onNavigate) {
     a.innerHTML = `<i class="${item.icon}"></i><span>${item.label}</span>`;
     
     a.onclick = (e) => {
-      if (item.external) {
-        e.preventDefault();
-        window.open(item.external, "_blank");
-        return;
-      }
       e.preventDefault();
       document.querySelectorAll("aside.sidebar .nav-link").forEach(el => el.classList.remove("active"));
       a.classList.add("active");

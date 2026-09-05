@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="/static/assets/css/style.css?v=3">
+    <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
 
@@ -24,7 +24,6 @@
             <li class="nav-item"><a href="dashboard.html" class="nav-link" data-title="Dashboard"><i class="fas fa-chart-line"></i><span>Dashboard</span></a></li>
             <li class="nav-item"><a href="users.html" class="nav-link" data-title="User Lists"><i class="fas fa-users-cog"></i><span>User Management</span></a></li>
             <li class="nav-item"><a href="create_user.html" class="nav-link active" data-title="Create User"><i class="fas fa-user-plus"></i><span>Create User</span></a></li>
-            <li class="nav-item"><a href="/customer" target="_blank" class="nav-link" data-title="Customer Portal"><i class="fas fa-mobile-alt"></i><span>Customer Portal (QR)</span></a></li>
             <li class="nav-item"><a href="reports.html" class="nav-link" data-title="Incident Reports"><i class="fas fa-flag"></i><span>System Reports</span></a></li>
         </ul>
         <div class="nav-section-title">Account</div>
@@ -70,8 +69,9 @@
         </div>
     </header>
 
-    <div class="page-wrapper" style="display: flex; justify-content: center; align-items: flex-start;">
-        <div class="form-card fade-up delay-1" style="max-width: 900px; width: 100%; padding: 24px;">
+    <div class="page-wrapper">
+        <div class="form-card fade-up delay-1" style="max-width:900px;">
+
             <!-- Avatar Upload -->
             <div class="avatar-upload-wrap">
                 <img src="https://via.placeholder.com/110/eee/aaa?text=Photo" class="avatar-preview" id="avatarPreview" alt="Preview">
@@ -149,7 +149,6 @@
                         <option value="CASHIER">Cashier</option>
                         <option value="KITCHEN">Kitchen Staff</option>
                         <option value="INVENTORY">Inventory Staff</option>
-                        <option value="SUPER_ADMIN">Super Admin</option>
                     </select>
                 </div>
                 <div class="input-group">
