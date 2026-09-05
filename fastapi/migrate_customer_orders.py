@@ -86,9 +86,48 @@ def run_migration():
         else:
             print("8. Foreign key constraint already exists on customer_orders.tenant_id.")
             
-        print("9. Transaction will commit upon exiting context manager.")
+        print("9. Checking if customer_order_items.product_id column exists...")
+        product_id_exists = conn.execute(text("""
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name='customer_order_items' AND column_name='product_id'
+            )
+        """)).scalar()
         
-    print("10. SUCCESS: Migration completed safely.")
+        if not product_id_exists:
+            print("10. Column 'product_id' is missing from customer_order_items. Adding it as INTEGER (nullable)...")
+            conn.execute(text("ALTER TABLE customer_order_items ADD COLUMN product_id INTEGER"))
+            print("Column added successfully.")
+        else:
+            print("10. Column 'product_id' already exists in customer_order_items.")
+            
+        print("11. Checking for existing foreign key on customer_order_items.product_id to products...")
+        product_fk_exists = conn.execute(text("""
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                  ON tc.constraint_name = kcu.constraint_name
+                  AND tc.table_schema = kcu.table_schema
+                WHERE tc.constraint_type = 'FOREIGN KEY' 
+                  AND tc.table_name = 'customer_order_items'
+                  AND kcu.column_name = 'product_id'
+            )
+        """)).scalar()
+        
+        if not product_fk_exists:
+            print("Foreign key constraint missing. Adding foreign key on product_id -> products(id) ON DELETE SET NULL...")
+            conn.execute(text("""
+                ALTER TABLE customer_order_items 
+                ADD CONSTRAINT fk_customer_order_items_product_id 
+                FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL
+            """))
+            print("Foreign key added successfully.")
+        else:
+            print("11. Foreign key constraint already exists on customer_order_items.product_id.")
+            
+        print("12. Transaction will commit upon exiting context manager.")
+        
+    print("13. SUCCESS: Migration completed safely.")
 
 if __name__ == "__main__":
     try:
