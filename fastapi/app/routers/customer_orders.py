@@ -18,9 +18,17 @@ def submit_customer_order(body: dict, db: Session = Depends(get_db)):
     order_number = body.get("order_number")
     customer_name = body.get("customer_name")
     order_type = body.get("order_type")
+    
     table_number = body.get("table_number")
-    tenant_id = body.get("tenant_id", 1)
+    if table_number is not None:
+        table_number = str(table_number)
+        
+    tenant_id = int(body.get("tenant_id", 1))
+    
     notes = body.get("notes")
+    if notes is not None:
+        notes = str(notes)
+        
     items = body.get("items", [])
 
     if not customer_name or not items:
@@ -64,25 +72,34 @@ def submit_customer_order(body: dict, db: Session = Depends(get_db)):
     if existing:
         return {"message": "Order already exists"}
 
-    new_order = models.CustomerOrder(
-        order_number=order_number,
-        customer_name=customer_name,
-        order_type=order_type,
-        table_number=table_number,
-        tenant_id=tenant_id,
-        notes=notes,
-        total_amount=total_amount,
-        status="pending"
-    )
-    db.add(new_order)
-    db.flush()
-
-    # Add items
-    for new_item in valid_items:
-        new_item.customer_order_id = new_order.id
-        db.add(new_item)
+    import traceback
     
-    db.commit()
+    try:
+        new_order = models.CustomerOrder(
+            order_number=order_number,
+            customer_name=customer_name,
+            order_type=order_type,
+            table_number=table_number,
+            tenant_id=tenant_id,
+            notes=notes,
+            total_amount=total_amount,
+            status="pending"
+        )
+        db.add(new_order)
+        db.flush()
+
+        # Add items
+        for new_item in valid_items:
+            new_item.customer_order_id = new_order.id
+            db.add(new_item)
+        
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        import sys
+        error_msg = f"Database error during customer order creation:\n{traceback.format_exc()}"
+        print(error_msg, file=sys.stderr, flush=True)
+        raise HTTPException(status_code=500, detail="An internal error occurred while processing your order. Please try again or contact staff.")
 
     return {"message": "Order placed successfully", "order_id": new_order.id, "order_number": new_order.order_number}
 
