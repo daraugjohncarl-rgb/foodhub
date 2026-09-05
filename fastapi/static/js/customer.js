@@ -1,14 +1,17 @@
-/**
- * Blessie FoodHub — Customer Portal & Live Order Tracker (customer.js)
- * Modern API-driven frontend for customer ordering, search, cart, and live tracking.
- */
+/* =========================================================
+   BLESSIE FOOD HUB
+   MERGED CUSTOMER JS (REAL API + NEW UI)
+========================================================= */
 
 // Global State
-let menuData = [];
+let menu = [];
 let cart = [];
-let lastPlacedOrderNumber = null;
-let currentView = "menu"; // 'menu' | 'orders'
-let searchDebounceTimeout = null;
+let selectedProduct = null;
+let selectedVariant = 0;
+let selectedQuantity = 1;
+
+let searchTerm = "";
+let activeCategory = "All";
 
 // Tenant ID resolution
 let tenantId = new URLSearchParams(window.location.search).get("tenant_id");
@@ -21,494 +24,649 @@ if (!tenantId) {
     }
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-    // DOM Elements
-    const categoryNav = document.getElementById("categoryNav");
-    const menuSections = document.getElementById("menuSections");
-    const cartToggleBtn = document.getElementById("cartToggleBtn");
-    const cartSidebar = document.getElementById("cartSidebar");
-    const closeCartBtn = document.getElementById("closeCartBtn");
-    const overlay = document.getElementById("overlay");
-    const cartBadge = document.getElementById("cartBadge");
-    const cartItemsContainer = document.getElementById("cartItems");
-    const cartSubtotalEl = document.getElementById("cartSubtotal");
-    const cartTotalEl = document.getElementById("cartTotal");
-    const checkoutForm = document.getElementById("checkoutForm");
-    const successModal = document.getElementById("successModal");
-    const newOrderBtn = document.getElementById("newOrderBtn");
-    const menuSearchInput = document.getElementById("menuSearchInput");
-    const clearSearchBtn = document.getElementById("clearSearchBtn");
-
-    // Initialize Auth / Session
-    initCustomerSession();
-
-    // Fetch Initial Menu
-    fetchMenu();
-
-    // Event Listeners
-    if (cartToggleBtn) cartToggleBtn.addEventListener("click", openCart);
-    if (closeCartBtn) closeCartBtn.addEventListener("click", closeCart);
-    if (overlay) overlay.addEventListener("click", () => {
-        closeCart();
-        closeModal();
-    });
-
-    if (checkoutForm) {
-        checkoutForm.addEventListener("submit", (e) => {
-            e.preventDefault();
-            submitOrder();
-        });
-    }
-
-    if (newOrderBtn) {
-        newOrderBtn.addEventListener("click", () => {
-            closeModal();
-            switchView("menu");
-            const notesEl = document.getElementById("orderNotes");
-            if (notesEl) notesEl.value = "";
-        });
-    }
-
-    // Search Listener
-    if (menuSearchInput) {
-        menuSearchInput.addEventListener("input", (e) => {
-            const query = e.target.value.trim().toLowerCase();
-            if (clearSearchBtn) clearSearchBtn.style.display = query ? "block" : "none";
-            clearTimeout(searchDebounceTimeout);
-            searchDebounceTimeout = setTimeout(() => {
-                filterMenu(query);
-            }, 180);
-        });
-    }
-
-    if (clearSearchBtn) {
-        clearSearchBtn.addEventListener("click", () => {
-            if (menuSearchInput) {
-                menuSearchInput.value = "";
-                menuSearchInput.focus();
-            }
-            clearSearchBtn.style.display = "none";
-            filterMenu("");
-        });
-    }
-
-    // Scroll spy for active category pill
-    window.addEventListener("scroll", handleScrollSpy);
-});
-
-// ────────────────────────────────────────────────────────────
-// SESSION & AUTH
-// ────────────────────────────────────────────────────────────
-function initCustomerSession() {
-    const loggedInUser = localStorage.getItem("username");
-    if (loggedInUser) {
-        const nameInput = document.getElementById("customerName");
-        if (nameInput && !nameInput.value) {
-            nameInput.value = loggedInUser;
-        }
-        const badgeContainer = document.getElementById("userBadgeContainer");
-        const userLabel = document.getElementById("customerUserLabel");
-        if (badgeContainer && userLabel) {
-            userLabel.innerHTML = `<i class="fas fa-user-circle"></i> ${loggedInUser}`;
-            badgeContainer.style.display = "flex";
-        }
-    }
-
-    const logoutBtn = document.getElementById("customerLogoutBtn");
-    if (logoutBtn) {
-        logoutBtn.addEventListener("click", () => {
-            localStorage.removeItem("access_token");
-            localStorage.removeItem("username");
-            localStorage.removeItem("role");
-            localStorage.removeItem("tenant_id");
-            localStorage.removeItem("RESTOTRACK_USER");
-            localStorage.removeItem("RESTOTRACK_ROLE");
-            sessionStorage.clear();
-            showToast("Signed out successfully", "info");
-            setTimeout(() => {
-                window.location.href = "/";
-            }, 500);
-        });
-    }
-}
-
-// ────────────────────────────────────────────────────────────
-// VIEW SWITCHER (MENU / ORDERS)
-// ────────────────────────────────────────────────────────────
-window.switchView = function(viewName) {
-    currentView = viewName;
-    const menuView = document.getElementById("menuView");
-    const ordersView = document.getElementById("ordersView");
-    const tabMenuBtn = document.getElementById("tabMenuBtn");
-    const tabOrdersBtn = document.getElementById("tabOrdersBtn");
-
-    if (viewName === "menu") {
-        if (menuView) menuView.style.display = "block";
-        if (ordersView) ordersView.style.display = "none";
-        if (tabMenuBtn) tabMenuBtn.classList.add("active");
-        if (tabOrdersBtn) tabOrdersBtn.classList.remove("active");
-    } else {
-        if (menuView) menuView.style.display = "none";
-        if (ordersView) ordersView.style.display = "block";
-        if (tabMenuBtn) tabMenuBtn.classList.remove("active");
-        if (tabOrdersBtn) tabOrdersBtn.classList.add("active");
-        loadOrderHistory();
-    }
+// Image fallback mapping
+const fallbackImages = {
+    "arroz caldo": "/static/assets/images/arrozcaldo.png",
+    "burger": "/static/assets/images/burger solo.png",
+    "burger with fries": "/static/assets/images/burger with fries.png",
+    "molo": "/static/assets/images/MOLO.png",
+    "nachos": "/static/assets/images/nachos.png",
+    "pancit canton with toasted bread": "/static/assets/images/Pancit Canton with Toasted Bread.png",
+    "pancit canton": "/static/assets/images/PANCIT CANTON.png",
+    "sotanghon guisado": "/static/assets/images/sotanghon guisado.png",
+    "spaghetti with bread": "/static/assets/images/spaghetti with bread.png",
+    "spaghetti with burger": "/static/assets/images/spaghetti with burger.png",
+    "toasted bread": "/static/assets/images/toasted bread.png",
+    "tuna sandwich": "/static/assets/images/tuna sandwich.png",
+    "caramel macchiato": "/static/assets/images/coffee/caramel macchiato.png",
+    "coffee jelly": "/static/assets/images/coffee/coffee jelly.png",
+    "dirty matcha": "/static/assets/images/coffee/dirty matcha.png",
+    "french vanilla": "/static/assets/images/coffee/french vanill.png",
+    "iced americano": "/static/assets/images/coffee/iced americano.png",
+    "iced coffee": "/static/assets/images/coffee/iced coffe.png",
+    "matcha milk": "/static/assets/images/coffee/matcha milk.png",
+    "salted caramel": "/static/assets/images/coffee/salted caramel.png",
+    "spanish latte": "/static/assets/images/coffee/spanish latte.png",
+    "vietnamese coffee": "/static/assets/images/coffee/vietnamese coffee.png"
 };
 
-// ────────────────────────────────────────────────────────────
-// MENU FETCHING & RENDERING
-// ────────────────────────────────────────────────────────────
+function resolveImage(product) {
+    if (product.image_url) {
+        let p = product.image_url;
+        if (!p.startsWith("http") && !p.startsWith("/static")) {
+            if (p.startsWith("images/")) return "/static/assets/" + p;
+            if (p.startsWith("assets/images/")) return "/static/" + p;
+            return "/static/assets/images/" + p;
+        }
+        return p;
+    }
+    if (product.name) {
+        const nameLower = product.name.toLowerCase();
+        // Exact match first
+        if (fallbackImages[nameLower]) return fallbackImages[nameLower];
+        // Partial match
+        for (const key in fallbackImages) {
+            if (nameLower.includes(key)) return fallbackImages[key];
+        }
+    }
+    return "";
+}
+
+// Grouping Helper (Global)
+function getBaseProductName(name) {
+    // Detect typical size suffixes globally across any category
+    // Examples: " - 16 oz", " 16oz", " — Large", " - M", " - Single", " - 2 pcs"
+    const match = name.match(/^(.*?)(?:\s*[-–—]\s*|\s+)(\d+\s*oz|\d+\s*pcs|Large|Medium|Small|Regular|S|M|L|Single|Barkada)$/i);
+    if (match) {
+        return {
+            baseName: match[1].trim(),
+            variantName: match[2].trim()
+        };
+    }
+    
+    return {
+        baseName: name.trim(),
+        variantName: "Regular"
+    };
+}
+
+// DOM Elements
+const menuTitle = document.getElementById("menuTitle");
+const menuCount = document.getElementById("menuCount");
+const menuList = document.getElementById("menuList");
+
+const productOverlay = document.getElementById("productOverlay");
+const detailImage = document.getElementById("detailImage");
+const detailTitle = document.getElementById("detailTitle");
+const detailDescription = document.getElementById("detailDescription");
+const variantSection = document.getElementById("variantSection");
+const variantList = document.getElementById("variantList");
+const detailPrice = document.getElementById("detailPrice");
+const quantityValue = document.getElementById("quantityValue");
+const detailTotal = document.getElementById("detailTotal");
+
+const cartCount = document.getElementById("cartCount");
+const floatingItems = document.getElementById("floatingItems");
+const floatingTotal = document.getElementById("floatingTotal");
+const cartDrawer = document.getElementById("cartDrawer");
+const cartOverlay = document.getElementById("cartOverlay");
+const cartList = document.getElementById("cartList");
+const cartTotal = document.getElementById("cartTotal");
+
+const toast = document.getElementById("toast");
+
+const checkoutOverlay = document.getElementById("checkoutOverlay");
+const checkoutContent = document.getElementById("checkoutContent");
+const success = document.getElementById("success");
+
+// Initialize Table Number from URL
+const urlParams = new URLSearchParams(window.location.search);
+const tableParam = urlParams.get("table");
+
+document.addEventListener("DOMContentLoaded", () => {
+    // 1. Table Input
+    const tableInput = document.getElementById("tableNumber");
+    const orderTypeSelect = document.getElementById("orderType");
+    
+    if (tableParam && tableInput) {
+        tableInput.value = tableParam;
+        tableInput.readOnly = true;
+        if (orderTypeSelect) {
+            orderTypeSelect.value = "Dine In";
+            orderTypeSelect.disabled = true;
+        }
+    }
+    
+    // 2. Order Button
+    const ob = document.getElementById("orderButton");
+    const lp = document.getElementById("landingPage");
+    
+    if (ob) {
+        ob.addEventListener("click", () => {
+            if (lp) lp.classList.add("is-hidden");
+            document.body.classList.remove("landing-active");
+            
+            const main = document.querySelector("main");
+            if (main) main.scrollIntoView({ behavior: "smooth", block: "start" });
+            
+            if (typeof fetchMenu === "function") fetchMenu();
+        });
+    }
+    
+    // 3. Product Modal Buttons
+    const closeBtn = document.getElementById("closeProduct");
+    if (closeBtn) closeBtn.addEventListener("click", closeProduct);
+    
+    const qMinus = document.getElementById("quantityMinus");
+    if (qMinus) qMinus.addEventListener("click", () => {
+        if (selectedQuantity > 1) {
+            selectedQuantity--;
+            updateProduct();
+        }
+    });
+    
+    const qPlus = document.getElementById("quantityPlus");
+    if (qPlus) qPlus.addEventListener("click", () => {
+        selectedQuantity++;
+        updateProduct();
+    });
+    
+    const addToOrderBtn = document.getElementById("addToOrder");
+    if (addToOrderBtn) addToOrderBtn.addEventListener("click", addToCart);
+    
+    if (productOverlay) {
+        productOverlay.addEventListener("click", event => {
+            if (event.target === productOverlay) closeProduct();
+        });
+    }
+
+    // 4. Cart UI Buttons
+    const headerCart = document.getElementById("headerCart");
+    if (headerCart) headerCart.addEventListener("click", openCart);
+    
+    const closeCartBtn = document.getElementById("closeCart");
+    if (closeCartBtn) closeCartBtn.addEventListener("click", closeCart);
+    
+    if (cartOverlay) {
+        cartOverlay.addEventListener("click", event => {
+            if (event.target === cartOverlay) closeCart();
+        });
+    }
+    
+    const floatingCart = document.getElementById("floatingCart");
+    if (floatingCart) floatingCart.addEventListener("click", openCart);
+    
+    // 5. Checkout Buttons
+    const checkoutButton = document.getElementById("checkoutButton");
+    if (checkoutButton) checkoutButton.addEventListener("click", openCheckout);
+    
+    const cancelCheckout = document.getElementById("cancelCheckout");
+    if (cancelCheckout) cancelCheckout.addEventListener("click", closeCheckout);
+    
+    if (checkoutOverlay) {
+        checkoutOverlay.addEventListener("click", event => {
+            if (event.target === checkoutOverlay) closeCheckout();
+        });
+    }
+    
+    const placeOrderBtn = document.getElementById("placeOrder");
+    if (placeOrderBtn) placeOrderBtn.addEventListener("click", submitOrder);
+    
+    const doneButton = document.getElementById("doneButton");
+    if (doneButton) doneButton.addEventListener("click", () => {
+        closeCheckout();
+        if (success) success.classList.remove("active");
+        if (checkoutContent) checkoutContent.style.display = "block";
+        cart = [];
+        updateCart();
+        window.scrollTo(0, 0);
+    });
+
+    // 6. Search
+    const searchInput = document.getElementById("searchInput");
+    if (searchInput) {
+        searchInput.addEventListener("input", event => {
+            searchTerm = event.target.value;
+            renderMenu();
+        });
+    }
+
+    // 7. Categories
+    const categoriesContainer = document.getElementById("categories");
+    if (categoriesContainer) {
+        categoriesContainer.addEventListener("click", (event) => {
+            const button = event.target.closest(".category");
+            if (!button) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+
+            const category = button.dataset.category;
+            if (!category) return;
+
+            console.log("CATEGORY CLICK:", category);
+
+            categoriesContainer.querySelectorAll(".category").forEach(btn => btn.classList.remove("active"));
+            button.classList.add("active");
+
+            activeCategory = category;
+            
+            if (menuTitle) {
+                menuTitle.textContent = button.textContent.trim() || activeCategory;
+            }
+            
+            renderMenu();
+        });
+    }
+
+    updateCart();
+});
+
+/* =========================================================
+   UTILITIES
+========================================================= */
+function peso(amount) {
+    return "₱" + parseFloat(amount).toFixed(2);
+}
+
+function escapeHTML(str) {
+    if (!str) return "";
+    return str
+        .toString()
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+/* =========================================================
+   API FETCH MENU
+========================================================= */
 async function fetchMenu() {
-    const menuSections = document.getElementById("menuSections");
+    const lp = document.getElementById("landingPage");
+    if (lp) lp.classList.add("is-loading");
+
     try {
         const response = await fetch(`/api/v1/customer-orders/menu?tenant_id=${tenantId}`);
         if (!response.ok) throw new Error("Failed to load menu data");
-        menuData = await response.json();
-        renderMenu(menuData);
-    } catch (error) {
-        console.error("Error fetching menu:", error);
-        if (menuSections) {
-            menuSections.innerHTML = `
-                <div class="loader-container">
-                    <i class="fas fa-exclamation-triangle" style="font-size:2.5rem; color:#ef4444; margin-bottom:12px;"></i>
-                    <h3 style="color:#ffffff; margin-bottom:6px;">Unable to load menu</h3>
-                    <p style="font-size:13px; color:var(--text-muted);">Please check your network connection and retry.</p>
-                    <button class="btn-primary" onclick="fetchMenu()" style="margin-top:16px;">
-                        <i class="fas fa-redo"></i> Retry
-                    </button>
-                </div>
-            `;
-        }
-    }
-}
+        const data = await response.json();
+        
+        menu = [];
+        const groupedMap = new Map();
 
-function renderMenu(data) {
-    const categoryNav = document.getElementById("categoryNav");
-    const menuSections = document.getElementById("menuSections");
-    if (!categoryNav || !menuSections) return;
-
-    if (!data || data.length === 0) {
-        menuSections.innerHTML = `
-            <div class="loader-container">
-                <i class="fas fa-utensils" style="font-size:2.5rem; color:var(--text-gold); margin-bottom:12px;"></i>
-                <h3 style="color:#ffffff;">No menu items currently available</h3>
-                <p style="font-size:13px; color:var(--text-muted);">Please check back shortly or ask our staff.</p>
-            </div>
-        `;
-        categoryNav.innerHTML = "";
-        return;
-    }
-
-    categoryNav.innerHTML = "";
-    menuSections.innerHTML = "";
-
-    data.forEach((category, index) => {
-        if (!category.products || category.products.length === 0) return;
-
-        // 1. Create Category Pill Button
-        const catBtn = document.createElement("button");
-        catBtn.className = `cat-btn ${index === 0 ? 'active' : ''}`;
-        catBtn.id = `cat-btn-${category.id}`;
-        catBtn.innerHTML = `<span>${category.name}</span> <small style="opacity:0.65;">(${category.products.length})</small>`;
-        catBtn.onclick = () => scrollToCategory(category.id, catBtn);
-        categoryNav.appendChild(catBtn);
-
-        // 2. Create Section Card
-        const section = document.createElement("div");
-        section.className = "menu-section";
-        section.id = `cat-section-${category.id}`;
-
-        // Header
-        const header = document.createElement("div");
-        header.className = "menu-section-header";
-        header.innerHTML = `
-            <h2>${category.name}</h2>
-            <span class="item-count">${category.products.length} Items</span>
-        `;
-        section.appendChild(header);
-
-        // Products Grid
-        const grid = document.createElement("div");
-        grid.className = "product-grid";
-
-        category.products.forEach(product => {
-            const card = document.createElement("div");
-            card.className = "product-card";
-
-            // Determine Food Icon based on name
-            const iconClass = getFoodIcon(product.name);
-
-            card.innerHTML = `
-                <div class="product-img-wrap">
-                    <i class="fas ${iconClass} product-icon"></i>
-                </div>
-                <div class="product-info">
-                    <div class="product-name">${escapeHtml(product.name)}</div>
-                    <div class="product-footer">
-                        <div class="product-price">₱${parseFloat(product.price).toFixed(2)}</div>
-                        <button class="add-btn" onclick="addToCart(${product.id}, '${escapeQuote(product.name)}', ${product.price}, event)">
-                            <i class="fas fa-plus"></i> Add
-                        </button>
-                    </div>
-                </div>
-            `;
-            grid.appendChild(card);
-        });
-
-        section.appendChild(grid);
-        menuSections.appendChild(section);
-    });
-}
-
-function filterMenu(query) {
-    if (!query) {
-        renderMenu(menuData);
-        return;
-    }
-
-    const filtered = [];
-    menuData.forEach(cat => {
-        const matchingProds = (cat.products || []).filter(p => 
-            p.name.toLowerCase().includes(query) || cat.name.toLowerCase().includes(query)
-        );
-        if (matchingProds.length > 0) {
-            filtered.push({
-                ...cat,
-                products: matchingProds
-            });
-        }
-    });
-
-    renderMenu(filtered);
-}
-
-function scrollToCategory(id, btnElement) {
-    document.querySelectorAll(".cat-btn").forEach(btn => btn.classList.remove("active"));
-    if (btnElement) btnElement.classList.add("active");
-
-    const section = document.getElementById(`cat-section-${id}`);
-    if (section) {
-        const topOffset = section.getBoundingClientRect().top + window.pageYOffset - 160;
-        window.scrollTo({ top: topOffset, behavior: "smooth" });
-    }
-}
-
-function handleScrollSpy() {
-    if (currentView !== "menu") return;
-    const sections = document.querySelectorAll(".menu-section");
-    let currentId = "";
-
-    sections.forEach(sec => {
-        const secTop = sec.offsetTop;
-        if (window.pageYOffset >= secTop - 180) {
-            currentId = sec.getAttribute("id");
-        }
-    });
-
-    if (currentId) {
-        const cleanId = currentId.replace("cat-section-", "");
-        document.querySelectorAll(".cat-btn").forEach(btn => {
-            btn.classList.remove("active");
-            if (btn.id === `cat-btn-${cleanId}`) {
-                btn.classList.add("active");
+        data.forEach(category => {
+            if (category.products && category.products.length > 0) {
+                category.products.forEach(product => {
+                    let imagePath = resolveImage(product);
+                    const parsed = getBaseProductName(product.name);
+                    const baseName = parsed.baseName;
+                    const variantName = parsed.variantName;
+                    
+                    const groupKey = category.name + "||" + baseName;
+                    
+                    if (groupedMap.has(groupKey)) {
+                        const existing = groupedMap.get(groupKey);
+                        existing.options.push({
+                            id: product.id,
+                            label: variantName !== "Regular" ? variantName : product.name,
+                            price: product.price
+                        });
+                        if (!existing.image && imagePath) {
+                            existing.image = imagePath;
+                        }
+                    } else {
+                        groupedMap.set(groupKey, {
+                            id: "group_" + product.id,
+                            name: baseName,
+                            category: category.name,
+                            description: product.description || "",
+                            image: imagePath,
+                            options: [{
+                                id: product.id,
+                                label: variantName,
+                                price: product.price
+                            }]
+                        });
+                    }
+                });
             }
         });
+        
+        menu = Array.from(groupedMap.values());
+        
+        if (lp) lp.classList.add("is-hidden");
+        
+        renderMenu();
+
+    } catch (error) {
+        console.error("Error fetching menu:", error);
+        showToast("Error loading menu. Please refresh.");
+        if (lp) lp.classList.remove("is-loading");
     }
 }
 
-function getFoodIcon(name) {
-    const l = name.toLowerCase();
-    if (l.includes("burger") || l.includes("patty") || l.includes("sandwich")) return "fa-hamburger";
-    if (l.includes("pizza")) return "fa-pizza-slice";
-    if (l.includes("coffee") || l.includes("latte") || l.includes("cappuccino") || l.includes("espresso")) return "fa-mug-hot";
-    if (l.includes("tea") || l.includes("milk tea") || l.includes("boba")) return "fa-glass-water";
-    if (l.includes("chicken") || l.includes("wings") || l.includes("chick")) return "fa-drumstick-bite";
-    if (l.includes("rice") || l.includes("bowl") || l.includes("fried rice")) return "fa-bowl-rice";
-    if (l.includes("fries") || l.includes("potato") || l.includes("chips")) return "fa-fire";
-    if (l.includes("beer") || l.includes("drink") || l.includes("soda") || l.includes("beverage")) return "fa-wine-bottle";
-    if (l.includes("ice cream") || l.includes("cake") || l.includes("dessert") || l.includes("halo")) return "fa-ice-cream";
-    return "fa-utensils";
-}
-
-// ────────────────────────────────────────────────────────────
-// CART MANAGEMENT
-// ────────────────────────────────────────────────────────────
-window.addToCart = function(id, name, price, e) {
-    const existing = cart.find(item => item.id === id);
-    if (existing) {
-        existing.quantity += 1;
-    } else {
-        cart.push({ id, name, price: parseFloat(price), quantity: 1 });
-    }
-
-    updateCartUI();
-
-    // Button feedback
-    if (e && e.currentTarget) {
-        const btn = e.currentTarget;
-        const orig = btn.innerHTML;
-        btn.innerHTML = `<i class="fas fa-check"></i> Added`;
-        btn.style.background = "#10b981";
-        btn.style.color = "#ffffff";
-        setTimeout(() => {
-            btn.innerHTML = orig;
-            btn.style.background = "";
-            btn.style.color = "";
-        }, 800);
-    }
-
-    showToast(`Added 1x ${name} to your tray`, "success");
-};
-
-window.updateQuantity = function(id, delta) {
-    const item = cart.find(i => i.id === id);
-    if (!item) return;
-
-    item.quantity += delta;
-    if (item.quantity <= 0) {
-        removeFromCart(id);
-    } else {
-        updateCartUI();
-    }
-};
-
-window.removeFromCart = function(id) {
-    const item = cart.find(i => i.id === id);
-    cart = cart.filter(i => i.id !== id);
-    updateCartUI();
-    if (item) showToast(`Removed ${item.name} from tray`, "info");
-};
-
-function updateCartUI() {
-    const cartBadge = document.getElementById("cartBadge");
-    const cartItemsContainer = document.getElementById("cartItems");
-    const cartSubtotalEl = document.getElementById("cartSubtotal");
-    const cartTotalEl = document.getElementById("cartTotal");
-
-    // Total Items
-    const totalQty = cart.reduce((sum, i) => sum + i.quantity, 0);
-    if (cartBadge) {
-        cartBadge.textContent = totalQty;
-        cartBadge.style.transform = "scale(1.25)";
-        setTimeout(() => { cartBadge.style.transform = "scale(1)"; }, 200);
-    }
-
-    if (!cartItemsContainer) return;
-
-    if (cart.length === 0) {
-        cartItemsContainer.innerHTML = `
-            <div class="empty-cart-state">
-                <i class="fas fa-shopping-basket"></i>
-                <h4>Your tray is empty</h4>
-                <p>Select delicious dishes from the menu to start your order.</p>
+/* =========================================================
+   PRODUCT IMAGE
+========================================================= */
+function productImage(product) {
+    if (product.image) {
+        return `
+            <img
+                src="${escapeHTML(product.image)}"
+                alt="${escapeHTML(product.name)}"
+                onerror="
+                    this.style.display='none';
+                    this.parentElement.style.background='#ebe7df';
+                    let span = this.parentElement.querySelector('.image-placeholder');
+                    if(span) span.style.display='flex';
+                "
+            >
+            <div class="image-placeholder" style="display:none; align-items:center; justify-content:center; width:100%; height:100%; font-size:12px; color:#999; text-align:center; padding:10px;">
+                ${escapeHTML(product.name)}
             </div>
         `;
-        if (cartSubtotalEl) cartSubtotalEl.textContent = "₱0.00";
-        if (cartTotalEl) cartTotalEl.textContent = "₱0.00";
+    } else {
+        return `
+            <div class="image-placeholder" style="display:flex; align-items:center; justify-content:center; width:100%; height:100%; font-size:12px; color:#999; text-align:center; padding:10px; background:#ebe7df;">
+                ${escapeHTML(product.name)}
+            </div>
+        `;
+    }
+}
+
+/* =========================================================
+   FILTER & RENDER MENU
+========================================================= */
+function getFilteredProducts() {
+    return menu.filter(product => {
+        const catA = String(activeCategory).toLowerCase().trim();
+        const catB = String(product.category).toLowerCase().trim();
+        
+        const categoryMatch = catA === "all" || catB === catA;
+        
+        const searchable = (
+            product.name + " " + product.category + " " + product.description + " " +
+            product.options.map(option => option.label).join(" ")
+        ).toLowerCase();
+        
+        const searchMatch = searchable.includes(searchTerm.toLowerCase());
+        
+        return categoryMatch && searchMatch;
+    });
+}
+
+function renderMenu() {
+    if (!menuList) return;
+    const products = getFilteredProducts();
+
+    if (products.length === 0) {
+        menuList.innerHTML = `<div style="text-align:center; padding: 20px; color: var(--muted);">No products found.</div>`;
+        if (menuCount) menuCount.textContent = "0 items";
         return;
     }
 
-    cartItemsContainer.innerHTML = "";
-    let total = 0;
+    menuList.innerHTML = products.map((product) => {
+        const prices = product.options.map(option => option.price);
+        const lowest = Math.min(...prices);
+        const highest = Math.max(...prices);
+        let priceText = lowest === highest ? peso(lowest) : (peso(lowest) + " - " + peso(highest));
 
-    cart.forEach(item => {
-        const itemTotal = item.price * item.quantity;
-        total += itemTotal;
-
-        const row = document.createElement("div");
-        row.className = "cart-item";
-        row.innerHTML = `
-            <div class="cart-item-header">
-                <span class="cart-item-title">${escapeHtml(item.name)}</span>
-                <span class="cart-item-price">₱${itemTotal.toFixed(2)}</span>
-            </div>
-            <div class="cart-item-controls">
-                <div class="qty-control">
-                    <button type="button" class="qty-btn" onclick="updateQuantity(${item.id}, -1)">
-                        <i class="fas fa-minus"></i>
-                    </button>
-                    <span class="qty-display">${item.quantity}</span>
-                    <button type="button" class="qty-btn" onclick="updateQuantity(${item.id}, 1)">
-                        <i class="fas fa-plus"></i>
-                    </button>
+        return `
+            <article class="menu-item" data-product-id="${product.id}">
+                <div class="menu-image">${productImage(product)}</div>
+                <div class="menu-info">
+                    <div class="menu-category">${escapeHTML(product.category)}</div>
+                    <div class="menu-name">${escapeHTML(product.name)}</div>
+                    <div class="menu-description">${escapeHTML(product.description)}</div>
+                    <div class="menu-bottom">
+                        <div class="menu-price">${priceText}</div>
+                        <button class="select-button select-product" type="button" data-product-id="${product.id}">Select</button>
+                    </div>
                 </div>
-                <button type="button" class="remove-btn" onclick="removeFromCart(${item.id})">
-                    <i class="fas fa-trash-alt"></i> Remove
-                </button>
-            </div>
+            </article>
         `;
-        cartItemsContainer.appendChild(row);
-    });
+    }).join("");
 
-    if (cartSubtotalEl) cartSubtotalEl.textContent = `₱${total.toFixed(2)}`;
-    if (cartTotalEl) cartTotalEl.textContent = `₱${total.toFixed(2)}`;
+    if (menuCount) menuCount.textContent = products.length + (products.length === 1 ? " item" : " items");
+}
+
+// Event Delegation for Menu List
+if (menuList) {
+    menuList.addEventListener("click", (event) => {
+        const button = event.target.closest(".select-product");
+        const card = event.target.closest(".menu-item");
+        
+        let productId = null;
+        if (button) {
+            productId = button.dataset.productId;
+        } else if (card) {
+            productId = card.dataset.productId;
+        }
+
+        if (productId) {
+            const product = menu.find(p => String(p.id) === String(productId));
+            if (product) {
+                openProduct(product);
+            }
+        }
+    });
+}
+
+/* =========================================================
+   PRODUCT MODAL
+========================================================= */
+function openProduct(product) {
+    selectedProduct = product;
+    selectedVariant = 0;
+    selectedQuantity = 1;
+
+    if (productOverlay) productOverlay.classList.add("active");
+    document.body.classList.add("modal-open");
+
+    if (detailImage) detailImage.innerHTML = productImage(selectedProduct);
+    if (detailTitle) detailTitle.textContent = selectedProduct.name;
+    if (detailDescription) detailDescription.textContent = selectedProduct.description;
+
+    renderVariants();
+    updateProduct();
+}
+
+function closeProduct() {
+    if (productOverlay) productOverlay.classList.remove("active");
+    document.body.classList.remove("modal-open");
+    selectedProduct = null;
+}
+
+function renderVariants() {
+    if (!variantSection || !variantList) return;
+    
+    if (selectedProduct.options.length <= 1) {
+        variantSection.style.display = "none";
+        variantList.innerHTML = "";
+        return;
+    }
+
+    variantSection.style.display = "block";
+    variantList.innerHTML = selectedProduct.options.map((option, index) => `
+        <label class="variant-option">
+            <input type="radio" name="variant" value="${index}" ${index === selectedVariant ? "checked" : ""}>
+            <span>${escapeHTML(option.label)}</span>
+            <strong>${peso(option.price)}</strong>
+        </label>
+    `).join("");
+
+    variantList.querySelectorAll("input").forEach(input => {
+        input.addEventListener("change", () => {
+            selectedVariant = Number(input.value);
+            updateProduct();
+        });
+    });
+}
+
+function updateProduct() {
+    if (!selectedProduct) return;
+    const price = selectedProduct.options[selectedVariant].price;
+    if (detailPrice) detailPrice.textContent = peso(price);
+    if (quantityValue) quantityValue.textContent = selectedQuantity;
+    if (detailTotal) detailTotal.textContent = peso(price * selectedQuantity);
+}
+
+
+/* =========================================================
+   CART
+========================================================= */
+function addToCart() {
+    if (!selectedProduct) return;
+    const option = selectedProduct.options[selectedVariant];
+    const existing = cart.find(item => item.product_id === option.id);
+
+    if (existing) {
+        existing.quantity += selectedQuantity;
+    } else {
+        cart.push({
+            product_id: option.id,
+            name: selectedProduct.name,
+            variant: option.label !== "Regular" ? option.label : "",
+            price: option.price,
+            quantity: selectedQuantity
+        });
+    }
+
+    closeProduct();
+    updateCart();
+    showToast("Added to cart");
+}
+
+function updateCart() {
+    const count = cart.reduce((sum, item) => sum + item.quantity, 0);
+    const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
+    if (cartCount) cartCount.textContent = count;
+    if (floatingItems) floatingItems.textContent = count + (count === 1 ? " item" : " items");
+    if (floatingTotal) floatingTotal.textContent = peso(total);
+
+    const floatingCart = document.getElementById("floatingCart");
+    if (floatingCart) {
+        if (count > 0) {
+            floatingCart.classList.add("active");
+            floatingCart.style.display = "flex";
+        } else {
+            floatingCart.classList.remove("active");
+            floatingCart.style.display = "none";
+        }
+    }
+
+    renderCart();
+}
+
+function renderCart() {
+    if (!cartList) return;
+    
+    if (cart.length === 0) {
+        cartList.innerHTML = `<div class="empty-cart">Your cart is empty.</div>`;
+        if (cartTotal) cartTotal.textContent = peso(0);
+        return;
+    }
+
+    cartList.innerHTML = cart.map((item, index) => `
+        <div class="cart-item">
+            <div class="cart-item-info">
+                <strong>${escapeHTML(item.name)}</strong>
+                <span>${item.variant ? escapeHTML(item.variant) : ""}</span>
+                <small>${peso(item.price)} each</small>
+            </div>
+            <div class="cart-item-actions">
+                <button type="button" data-action="decrease" data-index="${index}">−</button>
+                <span>${item.quantity}</span>
+                <button type="button" data-action="increase" data-index="${index}">+</button>
+            </div>
+            <strong class="cart-item-total">${peso(item.price * item.quantity)}</strong>
+        </div>
+    `).join("");
+
+    const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+    if (cartTotal) cartTotal.textContent = peso(total);
+
+    cartList.querySelectorAll("button").forEach(button => {
+        button.addEventListener("click", () => {
+            const index = Number(button.dataset.index);
+            const action = button.dataset.action;
+            if (action === "increase") {
+                cart[index].quantity++;
+            } else {
+                cart[index].quantity--;
+                if (cart[index].quantity <= 0) cart.splice(index, 1);
+            }
+            updateCart();
+        });
+    });
 }
 
 function openCart() {
-    const sidebar = document.getElementById("cartSidebar");
-    const overlay = document.getElementById("overlay");
-    if (sidebar) sidebar.classList.add("open");
-    if (overlay) overlay.classList.add("active");
+    if (cartDrawer) cartDrawer.classList.add("active");
+    if (cartOverlay) cartOverlay.classList.add("active");
+    document.body.classList.add("modal-open");
 }
 
 function closeCart() {
-    const sidebar = document.getElementById("cartSidebar");
-    const overlay = document.getElementById("overlay");
-    if (sidebar) sidebar.classList.remove("open");
-    if (overlay) overlay.classList.remove("active");
+    if (cartDrawer) cartDrawer.classList.remove("active");
+    if (cartOverlay) cartOverlay.classList.remove("active");
+    document.body.classList.remove("modal-open");
 }
 
-// ────────────────────────────────────────────────────────────
-// ORDER SUBMISSION
-// ────────────────────────────────────────────────────────────
-async function submitOrder() {
+/* =========================================================
+   CHECKOUT & API SUBMISSION
+========================================================= */
+function openCheckout() {
     if (cart.length === 0) {
-        showToast("Your tray is empty. Add items from the menu first!", "danger");
+        showToast("Your cart is empty");
+        return;
+    }
+    closeCart();
+    if (checkoutOverlay) checkoutOverlay.classList.add("active");
+    document.body.classList.add("modal-open");
+}
+
+function closeCheckout() {
+    if (checkoutOverlay) checkoutOverlay.classList.remove("active");
+    document.body.classList.remove("modal-open");
+}
+
+async function submitOrder(event) {
+    if (event) event.preventDefault();
+
+    if (cart.length === 0) {
+        showToast("Your cart is empty", "danger");
         return;
     }
 
-    const nameInput = document.getElementById("customerName");
-    const tableInput = document.getElementById("tableNumber");
-    const typeInput = document.getElementById("orderType");
-    const notesInput = document.getElementById("orderNotes");
-    const submitBtn = document.getElementById("submitOrderBtn");
-    const submitText = document.getElementById("submitOrderText");
-
-    const name = nameInput ? nameInput.value.trim() : "";
-    const table = tableInput ? tableInput.value.trim() : "";
-    const type = typeInput ? typeInput.value : "Dine-in";
-    const notes = notesInput ? notesInput.value.trim() : "";
-
-    if (!name) {
-        showToast("Please enter your name to proceed", "danger");
-        if (nameInput) nameInput.focus();
-        return;
+    const customerName = document.getElementById("customerName") ? document.getElementById("customerName").value : "";
+    const orderTypeEl = document.getElementById("orderType");
+    const orderType = orderTypeEl ? orderTypeEl.value : "Dine In";
+    const tableNumber = document.getElementById("tableNumber") ? document.getElementById("tableNumber").value : "";
+    const notes = document.getElementById("orderNotes") ? document.getElementById("orderNotes").value : "";
+    
+    const submitBtn = event.currentTarget || document.getElementById("placeOrder");
+    const originalText = submitBtn ? submitBtn.textContent : "Place Order";
+    if (submitBtn) {
+        submitBtn.textContent = "Processing...";
+        submitBtn.disabled = true;
     }
-
-    const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const randomHex = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const orderNumber = `CUST-${randomHex}`;
-
-    const payload = {
-        order_number: orderNumber,
-        customer_name: name,
-        order_type: type,
-        table_number: table || (type === "Takeout" ? "Takeout" : "Dine-In"),
-        notes: notes,
-        total: total,
-        items: cart.map(i => ({
-            name: i.name,
-            variant: null,
-            price: i.price,
-            quantity: i.quantity
-        }))
-    };
-
-    if (submitBtn) submitBtn.disabled = true;
-    if (submitText) submitText.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Transmitting...`;
 
     try {
+        const payload = {
+            tenant_id: tenantId,
+            customer_name: customerName,
+            order_type: orderType,
+            table_number: tableNumber,
+            notes: notes,
+            items: cart.map(item => ({
+                product_id: item.product_id,
+                quantity: item.quantity
+            }))
+        };
+
         const response = await fetch("/api/v1/customer-orders", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -516,253 +674,41 @@ async function submitOrder() {
         });
 
         if (!response.ok) {
-            const errData = await response.json();
-            throw new Error(errData.detail || "Failed to submit order.");
+            throw new Error(`Server returned ${response.status}`);
         }
 
-        // Save order number in local store for customer history tracking
-        saveOrderToHistory(orderNumber);
-        lastPlacedOrderNumber = orderNumber;
+        const data = await response.json();
+        
+        if (checkoutContent) checkoutContent.style.display = "none";
+        if (success) success.classList.add("active");
+        
+        const orderNumEl = document.getElementById("orderNumber");
+        if (orderNumEl) orderNumEl.textContent = data.order_number;
+        const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+        const successTotalEl = document.getElementById("successTotal");
+        if (successTotalEl) successTotalEl.textContent = peso(total);
 
-        // Clear cart & close drawer
-        cart = [];
-        updateCartUI();
-        closeCart();
-
-        // Show Success Dialog
-        const orderNumEl = document.getElementById("createdOrderNumber");
-        if (orderNumEl) orderNumEl.textContent = orderNumber;
-
-        const successModal = document.getElementById("successModal");
-        const overlay = document.getElementById("overlay");
-        if (successModal) successModal.classList.add("active");
-        if (overlay) overlay.classList.add("active");
-
-        showToast("Order transmitted to kitchen!", "success");
-
-    } catch (err) {
-        console.error("Order submission failed:", err);
-        showToast(err.message || "Failed to send order. Please try again.", "danger");
+    } catch (error) {
+        console.error("Order submission failed:", error);
+        showToast("Failed to place order. Please try again.");
     } finally {
-        if (submitBtn) submitBtn.disabled = false;
-        if (submitText) submitText.textContent = "Place Order Now";
-    }
-}
-
-function saveOrderToHistory(orderNum) {
-    try {
-        let history = JSON.parse(localStorage.getItem("CUSTOMER_ORDERS_HISTORY") || "[]");
-        if (!history.includes(orderNum)) {
-            history.unshift(orderNum);
-            localStorage.setItem("CUSTOMER_ORDERS_HISTORY", JSON.stringify(history.slice(0, 30)));
+        if (submitBtn) {
+            submitBtn.textContent = originalText;
+            submitBtn.disabled = false;
         }
-    } catch (e) {}
+    }
 }
 
-window.copyOrderNumber = function() {
-    if (!lastPlacedOrderNumber) return;
-    navigator.clipboard.writeText(lastPlacedOrderNumber).then(() => {
-        showToast("Order number copied to clipboard!", "info");
-    });
-};
-
-window.viewOrderInTracker = function() {
-    closeModal();
-    switchView("orders");
-    if (lastPlacedOrderNumber) {
-        const trackInput = document.getElementById("orderTrackInput");
-        if (trackInput) trackInput.value = lastPlacedOrderNumber;
-        trackSpecificOrder();
-    }
-};
-
-function closeModal() {
-    const successModal = document.getElementById("successModal");
-    const overlay = document.getElementById("overlay");
-    if (successModal) successModal.classList.remove("active");
-    if (overlay) overlay.classList.remove("active");
-}
-
-// ────────────────────────────────────────────────────────────
-// LIVE ORDER TRACKER & HISTORY
-// ────────────────────────────────────────────────────────────
-window.trackSpecificOrder = async function() {
-    const trackInput = document.getElementById("orderTrackInput");
-    const resultContainer = document.getElementById("trackedOrderResult");
-    if (!trackInput || !resultContainer) return;
-
-    const orderNum = trackInput.value.trim().toUpperCase();
-    if (!orderNum) {
-        showToast("Please enter an order number", "danger");
-        return;
-    }
-
-    resultContainer.style.display = "block";
-    resultContainer.innerHTML = `
-        <div class="loader-container">
-            <div class="spinner"></div>
-            <p>Searching for order ${orderNum}...</p>
-        </div>
-    `;
-
-    try {
-        const response = await fetch(`/api/v1/customer-orders/track/${encodeURIComponent(orderNum)}`);
-        if (!response.ok) {
-            resultContainer.innerHTML = `
-                <div class="glass-panel" style="padding:20px; text-align:center; color:var(--text-muted);">
-                    <i class="fas fa-search" style="font-size:24px; color:#ef4444; margin-bottom:8px;"></i>
-                    <h4 style="color:#ffffff;">Order Not Found</h4>
-                    <p style="font-size:13px;">No active order found with tracking number <strong>${orderNum}</strong>.</p>
-                </div>
-            `;
-            return;
-        }
-
-        const ord = await response.json();
-        resultContainer.innerHTML = renderOrderTrackCard(ord);
-        showToast(`Tracking status for ${orderNum}`, "info");
-    } catch (err) {
-        resultContainer.innerHTML = `
-            <div class="glass-panel" style="padding:20px; text-align:center; color:#ef4444;">
-                Failed to communicate with tracking server.
-            </div>
-        `;
-    }
-};
-
-window.loadOrderHistory = async function() {
-    const container = document.getElementById("ordersHistoryList");
-    if (!container) return;
-
-    const loggedInUser = localStorage.getItem("username") || "";
-    let url = `/api/v1/customer-orders/history?limit=25`;
-    if (loggedInUser && loggedInUser !== "customer") {
-        url += `&customer_name=${encodeURIComponent(loggedInUser)}`;
-    }
-
-    try {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error("Failed to load history");
-        const orders = await res.json();
-
-        if (orders.length === 0) {
-            container.innerHTML = `
-                <div class="glass-panel" style="padding:40px 20px; text-align:center; color:var(--text-muted);">
-                    <i class="fas fa-receipt" style="font-size:36px; color:var(--text-gold); margin-bottom:12px; opacity:0.6;"></i>
-                    <h4 style="color:#ffffff; margin-bottom:4px;">No Orders Recorded Yet</h4>
-                    <p style="font-size:13px;">Your recent orders will appear here for live status tracking.</p>
-                    <button class="btn-primary" onclick="switchView('menu')" style="margin-top:16px;">
-                        <i class="fas fa-utensils"></i> Browse Menu
-                    </button>
-                </div>
-            `;
-            return;
-        }
-
-        container.innerHTML = orders.map(ord => renderOrderTrackCard(ord)).join("");
-
-    } catch (err) {
-        container.innerHTML = `
-            <div class="glass-panel" style="padding:20px; text-align:center; color:var(--text-muted);">
-                <p>Could not refresh order history at this time.</p>
-            </div>
-        `;
-    }
-};
-
-function renderOrderTrackCard(ord) {
-    const status = (ord.status || "pending").toLowerCase();
-    let statusClass = "status-pending";
-    let statusLabel = "⏳ PENDING CONFIRMATION";
-    let statusDesc = "Received. Waiting for cashier verification.";
-
-    if (status === "accepted" || status === "preparing") {
-        statusClass = "status-accepted";
-        statusLabel = "🍳 IN KITCHEN / PREPARING";
-        statusDesc = "Accepted by kitchen. Your meal is being cooked!";
-    } else if (status === "completed" || status === "ready") {
-        statusClass = "status-completed";
-        statusLabel = "✅ READY / COMPLETED";
-        statusDesc = "Your order is ready to serve! Enjoy your meal!";
-    } else if (status === "rejected") {
-        statusClass = "status-rejected";
-        statusLabel = "❌ CANCELLED / REJECTED";
-        statusDesc = "Order was cancelled.";
-    }
-
-    const dateStr = ord.created_at ? new Date(ord.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Just now";
-
-    return `
-        <div class="order-track-card">
-            <div class="order-card-header">
-                <div>
-                    <span class="order-num-tag"><i class="fas fa-receipt"></i> ${ord.order_number}</span>
-                    <div class="order-meta">
-                        <span><i class="far fa-clock"></i> ${dateStr}</span> • 
-                        <span><i class="fas fa-user"></i> ${escapeHtml(ord.customer_name)}</span> • 
-                        <span><i class="fas fa-chair"></i> ${ord.table_number || ord.order_type}</span>
-                    </div>
-                </div>
-                <div style="text-align:right;">
-                    <span class="status-badge ${statusClass}">${statusLabel}</span>
-                    <div style="font-size:11.5px; color:var(--text-muted); margin-top:4px;">${statusDesc}</div>
-                </div>
-            </div>
-            <div class="order-card-body">
-                <ul class="order-items-list">
-                    ${(ord.items || []).map(it => `
-                        <li class="order-item-row">
-                            <span><strong style="color:var(--text-gold);">${it.quantity}x</strong> ${escapeHtml(it.name)}</span>
-                            <span style="color:var(--text-muted);">₱${(it.price * it.quantity).toFixed(2)}</span>
-                        </li>
-                    `).join('')}
-                </ul>
-                ${ord.notes ? `<div style="font-size:12px; color:var(--text-gold); background:rgba(201,162,39,0.08); padding:6px 10px; border-radius:6px; border-left:2px solid var(--primary);"><i class="fas fa-info-circle"></i> Note: ${escapeHtml(ord.notes)}</div>` : ''}
-            </div>
-            <div class="order-card-footer">
-                <span>Payment Mode: Cash / Counter</span>
-                <span style="font-size:15px; color:var(--text-gold);">Total: ₱${parseFloat(ord.total_amount).toFixed(2)}</span>
-            </div>
-        </div>
-    `;
-}
-
-// ────────────────────────────────────────────────────────────
-// TOAST NOTIFICATIONS & HELPERS
-// ────────────────────────────────────────────────────────────
-function showToast(message, type = "info") {
-    const container = document.getElementById("toastContainer");
-    if (!container) return;
-
-    const toast = document.createElement("div");
-    toast.className = `toast ${type}`;
-
-    let icon = "fa-info-circle";
-    if (type === "success") icon = "fa-check-circle";
-    if (type === "danger") icon = "fa-exclamation-triangle";
-
-    toast.innerHTML = `<i class="fas ${icon}"></i> <span>${message}</span>`;
-    container.appendChild(toast);
-
-    setTimeout(() => {
-        toast.style.opacity = "0";
-        toast.style.transform = "translateY(10px)";
-        toast.style.transition = "all 0.3s ease";
-        setTimeout(() => toast.remove(), 300);
-    }, 3200);
-}
-
-function escapeHtml(str) {
-    if (!str) return "";
-    return String(str)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
-
-function escapeQuote(str) {
-    if (!str) return "";
-    return String(str).replace(/'/g, "\\'");
+/* =========================================================
+   TOAST
+========================================================= */
+let toastTimer;
+function showToast(message, type="info") {
+    if (!toast) return;
+    toast.textContent = message;
+    toast.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => {
+        toast.classList.remove("show");
+    }, 2200);
 }

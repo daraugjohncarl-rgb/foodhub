@@ -386,6 +386,7 @@ class CustomerOrder(Base):
     __tablename__ = "customer_orders"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, default=1)
     order_number = Column(String(50), unique=True, index=True, nullable=False)
     customer_name = Column(String(100), nullable=False)
     order_type = Column(String(50), nullable=False) # Dine In, Take Out
@@ -407,5 +408,16 @@ class CustomerOrderItem(Base):
     variant = Column(String(100), nullable=True)
     price = Column(Numeric(10, 2), nullable=False)
     quantity = Column(Integer, default=1, nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
 
     customer_order = relationship("CustomerOrder", back_populates="items")
+
+class RestaurantTable(Base):
+    __tablename__ = "restaurant_tables"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    table_number = Column(String(50), nullable=False)
+    status = Column(String(20), default="active", nullable=False)
+    
+    tenant = relationship("Tenant")

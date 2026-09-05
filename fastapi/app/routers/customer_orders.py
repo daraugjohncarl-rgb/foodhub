@@ -6,6 +6,7 @@ from datetime import datetime
 
 from app.db import get_db
 import app.models as models
+from app.core.dependencies import get_current_user
 
 router = APIRouter(prefix="/customer-orders", tags=["Customer Orders"])
 
@@ -18,12 +19,45 @@ def submit_customer_order(body: dict, db: Session = Depends(get_db)):
     customer_name = body.get("customer_name")
     order_type = body.get("order_type")
     table_number = body.get("table_number")
+    tenant_id = body.get("tenant_id", 1)
     notes = body.get("notes")
     items = body.get("items", [])
-    total_amount = body.get("total", 0.0)
 
-    if not order_number or not customer_name or not items:
+    if not customer_name or not items:
         raise HTTPException(status_code=400, detail="Missing required order fields")
+        
+    if not order_number:
+        import uuid
+        order_number = f"CUST-{uuid.uuid4().hex[:6].upper()}"
+
+    total_amount = 0.0
+    valid_items = []
+    
+    for item in items:
+        prod_id = item.get("product_id")
+        qty = int(item.get("quantity", 1))
+        
+        if not prod_id:
+            raise HTTPException(status_code=400, detail="Missing product_id in order items")
+        if qty <= 0:
+            raise HTTPException(status_code=400, detail=f"Invalid quantity {qty} for product {prod_id}")
+            
+        product = db.query(models.Product).filter(models.Product.id == prod_id).first()
+        if not product:
+            raise HTTPException(status_code=404, detail=f"Product with ID {prod_id} not found")
+        if not product.is_active:
+            raise HTTPException(status_code=400, detail=f"Product {product.name} is currently unavailable")
+            
+        real_price = float(product.price)
+        total_amount += real_price * qty
+        
+        valid_items.append(models.CustomerOrderItem(
+            name=product.name,
+            variant=item.get("variant"),
+            price=real_price,
+            quantity=qty,
+            product_id=product.id
+        ))
 
     # Check if order_number already exists (should be unique)
     existing = db.query(models.CustomerOrder).filter(models.CustomerOrder.order_number == order_number).first()
@@ -35,39 +69,34 @@ def submit_customer_order(body: dict, db: Session = Depends(get_db)):
         customer_name=customer_name,
         order_type=order_type,
         table_number=table_number,
+        tenant_id=tenant_id,
         notes=notes,
         total_amount=total_amount,
         status="pending"
     )
     db.add(new_order)
-    db.commit()
-    db.refresh(new_order)
+    db.flush()
 
     # Add items
-    for item in items:
-        new_item = models.CustomerOrderItem(
-            customer_order_id=new_order.id,
-            name=item.get("name"),
-            variant=item.get("variant"),
-            price=item.get("price", 0.0),
-            quantity=item.get("quantity", 1)
-        )
+    for new_item in valid_items:
+        new_item.customer_order_id = new_order.id
         db.add(new_item)
     
     db.commit()
 
-    return {"message": "Order placed successfully", "order_id": new_order.id}
+    return {"message": "Order placed successfully", "order_id": new_order.id, "order_number": new_order.order_number}
 
 
 @router.get("/pending", summary="Get all pending customer orders for the POS")
-def get_pending_orders(db: Session = Depends(get_db)):
+def get_pending_orders(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Polled by the POS cashier dashboard to show incoming orders.
     """
     orders = db.query(models.CustomerOrder).options(
         joinedload(models.CustomerOrder.items)
     ).filter(
-        models.CustomerOrder.status == "pending"
+        models.CustomerOrder.status == "pending",
+        models.CustomerOrder.tenant_id == current_user.tenant_id
     ).order_by(models.CustomerOrder.created_at.asc()).all()
 
     result = []
@@ -86,7 +115,8 @@ def get_pending_orders(db: Session = Depends(get_db)):
                     "name": item.name,
                     "variant": item.variant,
                     "price": float(item.price),
-                    "quantity": item.quantity
+                    "quantity": item.quantity,
+                    "product_id": getattr(item, "product_id", None)
                 } for item in order.items
             ]
         })
@@ -143,7 +173,8 @@ def get_customer_history(customer_name: Optional[str] = None, limit: int = 20, d
                     "name": item.name,
                     "variant": item.variant,
                     "price": float(item.price),
-                    "quantity": item.quantity
+                    "quantity": item.quantity,
+                    "product_id": getattr(item, "product_id", None)
                 } for item in order.items
             ]
         })
@@ -177,7 +208,8 @@ def track_customer_order(order_number: str, db: Session = Depends(get_db)):
                 "name": item.name,
                 "variant": item.variant,
                 "price": float(item.price),
-                "quantity": item.quantity
+                "quantity": item.quantity,
+                "product_id": getattr(item, "product_id", None)
             } for item in order.items
         ]
     }

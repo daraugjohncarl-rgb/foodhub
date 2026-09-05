@@ -23,6 +23,11 @@ async function renderView(viewId, container) {
     </div>
   `;
 
+  if (window.posOnlineOrdersInterval) {
+    clearInterval(window.posOnlineOrdersInterval);
+    window.posOnlineOrdersInterval = null;
+  }
+  
   try {
     switch (viewId) {
       case "dashboard":
@@ -57,6 +62,9 @@ async function renderView(viewId, container) {
         break;
       case "reports":
         await renderReports(container);
+        break;
+      case "tables":
+        await renderTables(container);
         break;
       case "users":
         await renderUsers(container);
@@ -803,9 +811,14 @@ async function renderPOS(c) {
       <div class="pos-workspace" style="display:flex; flex-direction:column; gap:20px;">
         
         <!-- SEARCH ROW -->
-        <div class="search-wrap" style="position:relative; width:100%;">
-          <i class="fas fa-search" style="position:absolute; left:16px; top:50%; transform:translateY(-50%); color:var(--text-muted); font-size:16px;"></i>
-          <input type="text" id="pos-search" class="input-field" placeholder="Search menu products..." style="padding-left:44px; width:100%; font-size:16px; height:50px; border-radius:12px; background:#ffffff;" oninput="filterPOSGrid()">
+        <div style="display:flex; gap:16px; width:100%; margin-bottom: 20px;">
+          <div class="search-wrap" style="position:relative; flex:1;">
+            <i class="fas fa-search" style="position:absolute; left:16px; top:50%; transform:translateY(-50%); color:var(--text-muted); font-size:16px;"></i>
+            <input type="text" id="pos-search" class="input-field" placeholder="Search menu products..." style="padding-left:44px; width:100%; font-size:16px; height:50px; border-radius:12px; background:#ffffff;" oninput="filterPOSGrid()">
+          </div>
+          <button id="pos-online-orders-btn" onclick="openOnlineOrdersModal()" style="height:50px; padding:0 24px; background:#18181b; color:#fff; border:none; border-radius:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:8px;">
+            <i class="fas fa-bell"></i> ONLINE ORDERS <span id="pos-online-orders-badge" style="background:#ef4444; color:#fff; padding:2px 8px; border-radius:20px; font-size:12px; font-weight:bold; display:none;">0</span>
+          </button>
         </div>
 
         <!-- KPI SUMMARY ROW -->
@@ -887,6 +900,9 @@ async function renderPOS(c) {
 
     </div>
   `;
+  
+  window.currentOnlineOrderId = null;
+  startPOSOnlineOrdersPolling();
 }
 
 function renderPOSProductCards(products) {
@@ -1122,6 +1138,20 @@ async function submitCheckout() {
     }
     
     const tx = await res.json();
+    
+    // Mark customer online order as completed if applicable
+    if (window.currentOnlineOrderId) {
+      try {
+        await Auth.fetch(`/api/v1/customer-orders/${window.currentOnlineOrderId}/status`, {
+          method: "PUT",
+          body: JSON.stringify({ status: "completed" })
+        });
+        window.currentOnlineOrderId = null;
+      } catch (err) {
+        console.error("Failed to update online order status:", err);
+      }
+    }
+    
     Utils.showToast("Order completed successfully!", "success");
     Utils.closeModal();
     
@@ -2341,3 +2371,353 @@ window.addEventListener("storage", (e) => {
     }
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CUSTOMER ONLINE ORDERS INTEGRATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+let pendingOnlineOrders = [];
+
+function startPOSOnlineOrdersPolling() {
+  fetchPendingOnlineOrders();
+  window.posOnlineOrdersInterval = setInterval(fetchPendingOnlineOrders, 10000);
+}
+
+async function fetchPendingOnlineOrders() {
+  try {
+    const res = await Auth.fetch("/api/v1/customer-orders/pending");
+    if (res.ok) {
+      pendingOnlineOrders = await res.json();
+      updateOnlineOrdersBadge();
+    }
+  } catch (err) {
+    console.error("Error polling online orders:", err);
+  }
+}
+
+function updateOnlineOrdersBadge() {
+  const badge = document.getElementById("pos-online-orders-badge");
+  if (!badge) return;
+  if (pendingOnlineOrders.length > 0) {
+    badge.textContent = pendingOnlineOrders.length;
+    badge.style.display = "inline-block";
+  } else {
+    badge.style.display = "none";
+  }
+}
+
+function openOnlineOrdersModal() {
+  let ordersHtml = "<p style='color:var(--text-muted);'>No pending online orders.</p>";
+  if (pendingOnlineOrders.length > 0) {
+    ordersHtml = pendingOnlineOrders.map(o => {
+      let itemsHtml = o.items.map(it => `<li><strong style="color:#c9a227;">${it.quantity}x</strong> ${it.name} <span style="color:var(--text-muted); font-size:12px;">(₱${it.price})</span></li>`).join('');
+      return `
+        <div style="padding:16px; border:1px solid rgba(205,190,150,0.3); border-radius:12px; margin-bottom:12px; background:#fff;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+            <div>
+              <span style="background:#18181b; color:#fff; font-size:11px; padding:3px 8px; border-radius:4px; font-weight:bold; margin-right:8px;">ONLINE CUSTOMER ORDER</span>
+              <strong style="color:var(--text-main); font-size:14px;">${o.order_number}</strong>
+            </div>
+            <div style="font-size:12px; color:var(--text-muted);">
+              ${new Date(o.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+            </div>
+          </div>
+          <div style="font-size:13px; color:var(--text-main); margin-bottom:12px;">
+            <div><i class="fas fa-user" style="color:var(--text-muted); margin-right:6px;"></i> <strong>${o.customer_name}</strong></div>
+            <div><i class="fas fa-chair" style="color:var(--text-muted); margin-right:6px;"></i> ${o.table_number || o.order_type}</div>
+          </div>
+          <ul style="list-style:none; padding:0; margin:0 0 16px 0; font-size:13px;">
+            ${itemsHtml}
+          </ul>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="font-size:16px; font-weight:800; color:#c9a227;">₱${parseFloat(o.total_amount).toFixed(2)}</div>
+            <button onclick="processOnlineOrder(${o.id})" class="btn btn-primary btn-sm" style="border-radius:8px; font-weight:bold;">
+              <i class="fas fa-shopping-cart"></i> PROCESS ORDER
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  Utils.openModal("Pending Online Orders", `
+    <div style="max-height:60vh; overflow-y:auto; padding-right:8px;">
+      ${ordersHtml}
+    </div>
+  `);
+}
+
+function processOnlineOrder(orderId) {
+  const order = pendingOnlineOrders.find(o => o.id === orderId);
+  if (!order) return;
+  
+  // Clear cart and push items
+  clearCart();
+  
+  order.items.forEach(it => {
+    if (it.product_id) {
+      const prod = cachedProducts.find(p => p.id === it.product_id);
+      if (prod) {
+        // Find existing cart item to accumulate if necessary
+        const existing = posCart.find(c => c.product_id === it.product_id);
+        if (existing) {
+          existing.quantity += it.quantity;
+        } else {
+          posCart.push({ product_id: it.product_id, name: prod.name, price: it.price, quantity: it.quantity });
+        }
+      } else {
+        Utils.showToast(`Product ${it.name} not found in local POS cache!`, "danger");
+      }
+    } else {
+      Utils.showToast(`Cannot process item ${it.name}: Missing product ID`, "danger");
+    }
+  });
+  
+  window.currentOnlineOrderId = order.id;
+  updateCartUI();
+  Utils.closeModal();
+  Utils.showToast("Loaded Order #" + order.order_number + " into cart.", "success");
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TABLE QR CODE MANAGEMENT
+// ─────────────────────────────────────────────────────────────────────────────
+async function renderTables(c) {
+  c.innerHTML = `
+    <div class="section-card" style="padding:24px; margin-bottom: 24px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h2 style="font-size:18px; font-weight:700;">Table QR Codes</h2>
+        <div style="display:flex; gap: 8px;">
+          <button class="btn btn-primary" onclick="showAddTableModal()"><i class="fas fa-plus"></i> Add Table</button>
+          <button class="btn btn-outline" onclick="printAllQRs()"><i class="fas fa-print"></i> Print All QRs</button>
+        </div>
+      </div>
+      <div id="tables-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:24px;">
+        <p style="color:var(--text-muted); font-size:14px;">Loading tables...</p>
+      </div>
+    </div>
+  `;
+  
+  await fetchAndRenderTablesGrid();
+}
+
+async function fetchAndRenderTablesGrid() {
+  const grid = document.getElementById("tables-grid");
+  if (!grid) return;
+  
+  try {
+    const res = await Auth.fetch("/api/v1/tables");
+    if (!res.ok) throw new Error("Failed to load tables");
+    const tables = await res.json();
+    
+    if (tables.length === 0) {
+      grid.innerHTML = `<p style="color:var(--text-muted); font-size:14px; grid-column: 1 / -1; text-align:center; padding: 40px 0;">No tables configured yet.</p>`;
+      return;
+    }
+    
+    grid.innerHTML = "";
+    
+    tables.forEach(t => {
+      const card = document.createElement("div");
+      card.className = "table-qr-card";
+      card.style.cssText = "border: 1px solid rgba(205,190,150,0.35); border-radius: 12px; padding: 24px; text-align: center; background: #fff;";
+      
+      const qrUrl = `https://foodhub-xbdi.onrender.com/customer?table=${encodeURIComponent(t.table_number)}`;
+      const qrContainerId = `qrcode-${t.id}`;
+      
+      card.innerHTML = `
+        <h3 style="font-size:16px; font-weight:700; color: #18181b; margin-bottom: 4px;">BLESSIE FOOD HUB</h3>
+        <h4 style="font-size:18px; font-weight:800; color: #c9a227; margin-bottom: 8px;">TABLE ${t.table_number}</h4>
+        <p style="font-size:12px; font-weight:600; color: #71717a; margin-bottom: 16px;">SCAN TO ORDER</p>
+        
+        <div id="${qrContainerId}" style="display:flex; justify-content:center; margin-bottom: 24px; min-height: 150px;" data-url="${qrUrl}"></div>
+        
+        <div style="display:flex; gap:8px; justify-content:center;">
+          <button class="btn btn-outline btn-sm" onclick="downloadQR('${qrContainerId}', 'Table_${t.table_number}_QR')"><i class="fas fa-download"></i></button>
+          <button class="btn btn-outline btn-sm" onclick="printSingleQR('${t.id}', '${t.table_number}')"><i class="fas fa-print"></i></button>
+          <button class="btn btn-danger btn-sm" onclick="deleteTable(${t.id})"><i class="fas fa-trash"></i></button>
+        </div>
+      `;
+      grid.appendChild(card);
+      
+      // Generate QR
+      setTimeout(() => {
+        const qrEl = document.getElementById(qrContainerId);
+        if (qrEl && typeof QRCode !== 'undefined') {
+          new QRCode(qrEl, {
+            text: qrUrl,
+            width: 150,
+            height: 150,
+            colorDark : "#000000",
+            colorLight : "#ffffff",
+            correctLevel : QRCode.CorrectLevel.H
+          });
+        }
+      }, 50);
+    });
+    
+  } catch (err) {
+    grid.innerHTML = `<p style="color:var(--danger);">${err.message}</p>`;
+  }
+}
+
+function showAddTableModal() {
+  const content = `
+    <div class="modal-header">
+      <h3 style="font-size:18px; font-weight:700;">Add Restaurant Table</h3>
+      <button class="btn-close-modal" onclick="Utils.closeModal()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body" style="padding:24px;">
+      <label style="display:block; margin-bottom:8px; font-size:13px; font-weight:600; color:var(--text-muted);">Table Number/Identifier:</label>
+      <input type="text" id="newTableNumber" class="form-input" style="width:100%;" placeholder="e.g. 5 or Patio 1">
+    </div>
+    <div class="modal-footer" style="padding:16px 24px; display:flex; justify-content:flex-end; gap:12px;">
+      <button class="btn btn-outline" onclick="Utils.closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitAddTable()">Save Table</button>
+    </div>
+  `;
+  Utils.showModal(content);
+}
+
+async function submitAddTable() {
+  const tableNum = document.getElementById("newTableNumber").value.trim();
+  if (!tableNum) return Utils.showToast("Table number required", "danger");
+  
+  try {
+    const res = await Auth.fetch("/api/v1/tables", {
+      method: "POST",
+      body: JSON.stringify({ table_number: tableNum })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Failed to add table");
+    
+    Utils.showToast("Table added!", "success");
+    Utils.closeModal();
+    fetchAndRenderTablesGrid();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+}
+
+async function deleteTable(id) {
+  if (!confirm("Delete this table? This will invalidate its QR code.")) return;
+  try {
+    const res = await Auth.fetch(`/api/v1/tables/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error("Failed to delete table");
+    Utils.showToast("Table deleted", "success");
+    fetchAndRenderTablesGrid();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+}
+
+function downloadQR(containerId, filename) {
+  const container = document.getElementById(containerId);
+  const img = container.querySelector("img");
+  const canvas = container.querySelector("canvas");
+  
+  let src = null;
+  if (img && img.src) src = img.src;
+  else if (canvas) src = canvas.toDataURL("image/png");
+  
+  if (!src) return Utils.showToast("QR code not ready yet.", "warning");
+  
+  const a = document.createElement("a");
+  a.href = src;
+  a.download = filename + ".png";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+function getPrintableHTML(qrs) {
+  // qrs is an array of objects: { title, number, src }
+  let html = `
+    <html>
+      <head>
+        <title>Print QRs</title>
+        <style>
+          @page { size: A4 portrait; margin: 0; }
+          body { font-family: 'Inter', sans-serif; margin: 0; padding: 20px; text-align: center; background: #fff; }
+          .qr-page { 
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            height: 100vh; page-break-after: always; box-sizing: border-box; padding: 40px;
+          }
+          .qr-page:last-child { page-break-after: auto; }
+          .qr-badge {
+            border: 4px solid #18181b; padding: 40px; border-radius: 20px;
+            display: flex; flex-direction: column; align-items: center; width: 80%; max-width: 400px;
+          }
+          h1 { font-size: 28px; font-weight: 800; text-transform: uppercase; margin: 0 0 10px 0; color: #18181b; }
+          h2 { font-size: 42px; font-weight: 800; margin: 0 0 20px 0; color: #18181b; }
+          h3 { font-size: 20px; font-weight: 700; margin: 0 0 40px 0; color: #18181b; letter-spacing: 2px; }
+          img { width: 300px; height: 300px; }
+        </style>
+      </head>
+      <body>
+  `;
+  
+  qrs.forEach(qr => {
+    html += `
+      <div class="qr-page">
+        <div class="qr-badge">
+          <h1>BLESSIE FOOD HUB</h1>
+          <h2>TABLE ${qr.number}</h2>
+          <h3>SCAN TO ORDER</h3>
+          <img src="${qr.src}" alt="QR">
+        </div>
+      </div>
+    `;
+  });
+  
+  html += `
+      <script>
+        window.onload = function() { window.print(); window.close(); }
+      </script>
+      </body>
+    </html>
+  `;
+  return html;
+}
+
+function printSingleQR(tableId, tableNumber) {
+  const container = document.getElementById(`qrcode-${tableId}`);
+  let src = null;
+  const img = container.querySelector("img");
+  const canvas = container.querySelector("canvas");
+  if (img && img.src) src = img.src;
+  else if (canvas) src = canvas.toDataURL("image/png");
+  
+  if (!src) return Utils.showToast("QR code not ready yet.", "warning");
+  
+  const printWin = window.open("", "_blank");
+  printWin.document.write(getPrintableHTML([{ number: tableNumber, src }]));
+  printWin.document.close();
+}
+
+function printAllQRs() {
+  const qrs = [];
+  const cards = document.querySelectorAll(".table-qr-card");
+  
+  cards.forEach(card => {
+    const tableNumberText = card.querySelector("h4").innerText.replace("TABLE ", "");
+    const container = card.querySelector("[id^='qrcode-']");
+    let src = null;
+    const img = container.querySelector("img");
+    const canvas = container.querySelector("canvas");
+    if (img && img.src) src = img.src;
+    else if (canvas) src = canvas.toDataURL("image/png");
+    
+    if (src) {
+      qrs.push({ number: tableNumberText, src });
+    }
+  });
+  
+  if (qrs.length === 0) return Utils.showToast("No QR codes to print.", "warning");
+  
+  const printWin = window.open("", "_blank");
+  printWin.document.write(getPrintableHTML(qrs));
+  printWin.document.close();
+}
+

@@ -2,6 +2,7 @@ services:
   # Web Service for Inbox POS
   - type: web
     name: inbox-pos
+    rootDir: fastapi
     runtime: python
     region: singapore # or oregon / frankfurt
     plan: free

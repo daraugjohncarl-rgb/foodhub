@@ -1,0 +1,5931 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Blessie Food Hub | Customer Menu</title>
+
+    <style>
+        /* =========================================================
+   BLESSIE FOOD HUB
+   CUSTOMER QR MENU
+   MINIMAL / RESPONSIVE
+========================================================= */
+
+        :root {
+            --bg: #faf9f6;
+            --white: #ffffff;
+            --soft: #f3f1ec;
+            --text: #171717;
+            --muted: #77736b;
+            --light: #aaa59c;
+            --border: #e5e1d9;
+            --black: #171717;
+            --gold: #b18a42;
+
+            --container: 850px;
+        }
+
+        /* =========================================================
+   RESET
+========================================================= */
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+
+            font-family:
+                -apple-system,
+                BlinkMacSystemFont,
+                "Segoe UI",
+                Roboto,
+                Helvetica,
+                Arial,
+                sans-serif;
+
+            min-height: 100vh;
+
+            overflow-x: hidden;
+        }
+
+        body,
+        button,
+        input {
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        button,
+        input,
+        textarea,
+        select {
+            font: inherit;
+        }
+
+        button {
+            cursor: pointer;
+        }
+
+        img {
+            display: block;
+            max-width: 100%;
+        }
+
+        /* =========================================================
+   HEADER
+========================================================= */
+
+        .landing-page {
+            position: fixed;
+            inset: 0;
+            z-index: 2000;
+
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+
+            padding: 32px 18px;
+
+            background:
+                linear-gradient(180deg,
+                    rgba(23, 23, 23, .08) 0%,
+                    rgba(23, 23, 23, .72) 100%),
+                url("images/box.png") center / cover no-repeat;
+        }
+
+        .landing-content {
+            width: 100%;
+            max-width: 430px;
+
+            color: white;
+            text-align: center;
+        }
+
+        .landing-kicker {
+            margin-bottom: 8px;
+
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        .landing-title {
+            font-family: Georgia, "Times New Roman", serif;
+            font-size: clamp(34px, 10vw, 54px);
+            font-weight: 500;
+            line-height: 1;
+        }
+
+        .order-button {
+            width: 100%;
+            height: 52px;
+            margin-top: 25px;
+
+            border: 0;
+            border-radius: 9px;
+
+            background: white;
+            color: var(--text);
+
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: .8px;
+            text-transform: uppercase;
+
+            transition: transform .2s ease, background .2s ease;
+        }
+
+        .order-button:hover {
+            background: #f3f1ec;
+            transform: translateY(-2px);
+        }
+
+        .order-button:disabled {
+            cursor: wait;
+            opacity: .7;
+        }
+
+        .landing-loader {
+            display: none;
+
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+
+            min-height: 52px;
+            margin-top: 25px;
+
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .landing-loader::before {
+            content: "";
+
+            width: 18px;
+            height: 18px;
+
+            border: 2px solid rgba(255, 255, 255, .4);
+            border-top-color: white;
+            border-radius: 50%;
+
+            animation: landing-spin .7s linear infinite;
+        }
+
+        .landing-page.is-loading .landing-kicker,
+        .landing-page.is-loading .landing-title,
+        .landing-page.is-loading .order-button {
+            display: none;
+        }
+
+        .landing-page.is-loading .landing-loader {
+            display: flex;
+        }
+
+        @keyframes landing-spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .landing-page.is-hidden {
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity .35s ease;
+        }
+
+        .header {
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+
+            height: 68px;
+
+            background: rgba(250, 249, 246, 0.96);
+
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+
+            border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+        }
+
+        .header-inner {
+            width: 100%;
+            max-width: var(--container);
+
+            height: 100%;
+
+            margin: auto;
+
+            padding: 0 18px;
+
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        /* =========================================================
+   BRAND
+========================================================= */
+
+        .brand {
+            display: flex;
+            align-items: center;
+
+            gap: 10px;
+
+            min-width: 0;
+        }
+
+        .logo {
+            width: 58px;
+            height: 58px;
+
+            flex-shrink: 0;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .logo img {
+            width: 100%;
+            height: 100%;
+
+            object-fit: contain;
+        }
+
+        .brand-name {
+            font-family:
+                Georgia,
+                "Times New Roman",
+                serif;
+
+            font-size: 15px;
+            font-weight: 700;
+
+            letter-spacing: -0.2px;
+        }
+
+        .brand-subtitle {
+            margin-top: 2px;
+
+            font-size: 7px;
+
+            color: var(--muted);
+
+            letter-spacing: 1.2px;
+        }
+
+        /* =========================================================
+   HEADER CART
+========================================================= */
+
+        .header-cart {
+            flex-shrink: 0;
+
+            height: 38px;
+
+            padding: 0 11px;
+
+            border: 1px solid var(--border);
+
+            border-radius: 22px;
+
+            background: var(--white);
+
+            display: flex;
+            align-items: center;
+
+            gap: 6px;
+
+            color: var(--text);
+
+            font-size: 11px;
+            font-weight: 700;
+
+            transition: .2s ease;
+        }
+
+        .header-cart:hover {
+            border-color: #c9c3b9;
+        }
+
+        .cart-count {
+            min-width: 19px;
+            height: 19px;
+
+            padding: 0 4px;
+
+            border-radius: 50%;
+
+            background: var(--black);
+            color: white;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
+            font-size: 9px;
+        }
+
+        /* =========================================================
+   MAIN
+========================================================= */
+
+        .main {
+            width: 100%;
+            max-width: var(--container);
+
+            margin: auto;
+
+            padding:
+                0 18px 125px;
+        }
+
+        /* =========================================================
+   ACTUAL RESTAURANT PHOTO
+========================================================= */
+
+        .restaurant-photo {
+            width: 100%;
+
+            height: 360px;
+
+            margin-bottom: 30px;
+
+            overflow: hidden;
+
+            border-radius:
+                0 0 18px 18px;
+
+            background: #ebe7df;
+        }
+
+        .restaurant-photo img {
+            width: 100%;
+            height: 100%;
+
+            display: block;
+
+            object-fit: cover;
+
+            object-position: center 42%;
+        }
+
+        /* =========================================================
+   SEARCH
+========================================================= */
+
+        .search {
+            position: relative;
+
+            width: 100%;
+
+            margin-bottom: 17px;
+        }
+
+        .search-icon {
+            position: absolute;
+
+            left: 16px;
+            top: 50%;
+
+            transform: translateY(-50%);
+
+            color: #8e8981;
+
+            font-size: 17px;
+
+            pointer-events: none;
+        }
+
+        .search input {
+            width: 100%;
+
+            height: 46px;
+
+            padding:
+                0 15px 0 43px;
+
+            border: 1px solid var(--border);
+
+            border-radius: 11px;
+
+            outline: none;
+
+            background: white;
+
+            color: var(--text);
+
+            font-size: 12px;
+
+            transition: border .2s;
+        }
+
+        .search input::placeholder {
+            color: #aaa59d;
+        }
+
+        .search input:focus {
+            border-color: #c5bfb5;
+        }
+
+        /* =========================================================
+   CATEGORY NAVIGATION
+========================================================= */
+
+        .category-scroll {
+            position: relative;
+
+            width: 100%;
+
+            overflow-x: auto;
+            overflow-y: hidden;
+
+            padding:
+                3px 0 18px;
+
+            margin: 0;
+
+            -webkit-overflow-scrolling: touch;
+
+            scrollbar-width: none;
+
+            overscroll-behavior-x: contain;
+        }
+
+        .category-scroll::-webkit-scrollbar {
+            display: none;
+        }
+
+        .categories {
+            display: flex;
+
+            align-items: center;
+
+            gap: 24px;
+
+            width: max-content;
+
+            min-width: max-content;
+
+            padding:
+                0 2px;
+        }
+
+        .category {
+            position: relative;
+
+            flex: 0 0 auto;
+
+            min-height: 31px;
+
+            padding: 3px 0;
+
+            border: none;
+
+            background: transparent;
+
+            color: var(--muted);
+
+            white-space: nowrap;
+
+            font-size: 11px;
+
+            font-weight: 500;
+
+            transition:
+                color .2s ease;
+        }
+
+        .category:hover {
+            color: var(--text);
+        }
+
+        .category.active {
+            color: var(--text);
+
+            font-weight: 700;
+        }
+
+        .category.active::after {
+            content: "";
+
+            position: absolute;
+
+            left: 0;
+            right: 0;
+
+            bottom: -6px;
+
+            height: 2px;
+
+            background: var(--black);
+
+            border-radius: 10px;
+        }
+
+        /* =========================================================
+   CATEGORY FADE
+========================================================= */
+
+        .category-scroll::before,
+        .category-scroll::after {
+            content: "";
+
+            position: absolute;
+
+            top: 0;
+            bottom: 18px;
+
+            width: 25px;
+
+            z-index: 5;
+
+            pointer-events: none;
+        }
+
+        .category-scroll::before {
+            left: 0;
+
+            background:
+                linear-gradient(to right,
+                    var(--bg),
+                    rgba(250, 249, 246, 0));
+        }
+
+        .category-scroll::after {
+            right: 0;
+
+            background:
+                linear-gradient(to left,
+                    var(--bg),
+                    rgba(250, 249, 246, 0));
+        }
+
+        /* =========================================================
+   MENU HEADER
+========================================================= */
+
+        .menu-header {
+            display: flex;
+
+            align-items: baseline;
+
+            justify-content: space-between;
+
+            gap: 15px;
+
+            margin:
+                2px 0 13px;
+        }
+
+        .menu-header h2 {
+            font-family:
+                Georgia,
+                "Times New Roman",
+                serif;
+
+            font-size: 23px;
+
+            font-weight: 500;
+        }
+
+        .menu-count {
+            color: var(--muted);
+
+            font-size: 10px;
+
+            white-space: nowrap;
+        }
+
+        /* =========================================================
+   MENU LIST
+========================================================= */
+
+        .menu-list {
+            width: 100%;
+
+            display: flex;
+
+            flex-direction: column;
+
+            gap: 9px;
+        }
+
+        /* =========================================================
+   MENU CARD
+========================================================= */
+
+        .menu-item {
+            width: 100%;
+
+            min-width: 0;
+
+            display: flex;
+
+            gap: 13px;
+
+            padding: 7px;
+
+            background: white;
+
+            border: 1px solid var(--border);
+
+            border-radius: 13px;
+
+            cursor: pointer;
+
+            transition:
+                transform .18s ease,
+                border-color .18s ease,
+                box-shadow .18s ease;
+        }
+
+        .menu-item:hover {
+            transform: translateY(-1px);
+
+            border-color: #d0cbc2;
+
+            box-shadow:
+                0 5px 18px rgba(0, 0, 0, .035);
+        }
+
+        /* =========================================================
+   MENU IMAGE
+========================================================= */
+
+        .menu-image {
+            position: relative;
+
+            flex-shrink: 0;
+
+            width: 155px;
+            height: 116px;
+
+            overflow: hidden;
+
+            border-radius: 9px;
+
+            background:
+                #ebe7df;
+        }
+
+        .menu-image img {
+            width: 100%;
+            height: 100%;
+
+            object-fit: cover;
+        }
+
+        .image-placeholder {
+            position: absolute;
+
+            inset: 0;
+
+            display: flex;
+
+            align-items: center;
+            justify-content: center;
+
+            padding: 15px;
+
+            text-align: center;
+
+            color: #7d776e;
+
+            font-family:
+                Georgia,
+                serif;
+
+            font-size: 12px;
+
+            line-height: 1.3;
+        }
+
+        .badge {
+            position: absolute;
+
+            top: 7px;
+            left: 7px;
+
+            padding: 4px 7px;
+
+            background:
+                rgba(255, 255, 255, .94);
+
+            border-radius: 5px;
+
+            color: #3d3a36;
+
+            font-size: 7px;
+
+            font-weight: 800;
+
+            letter-spacing: .5px;
+
+            text-transform: uppercase;
+        }
+
+        /* =========================================================
+   MENU INFO
+========================================================= */
+
+        .menu-info {
+            flex: 1;
+
+            min-width: 0;
+
+            padding:
+                4px 6px 4px 0;
+
+            display: flex;
+
+            flex-direction: column;
+        }
+
+        .menu-category {
+            margin-bottom: 5px;
+
+            color: var(--light);
+
+            font-size: 7px;
+
+            font-weight: 800;
+
+            letter-spacing: 1px;
+
+            text-transform: uppercase;
+        }
+
+        .menu-name {
+            font-family:
+                Georgia,
+                "Times New Roman",
+                serif;
+
+            font-size: 17px;
+
+            line-height: 1.1;
+
+            font-weight: 600;
+
+            overflow: hidden;
+
+            text-overflow: ellipsis;
+        }
+
+        .menu-description {
+            margin-top: 5px;
+
+            color: var(--muted);
+
+            font-size: 9px;
+
+            line-height: 1.45;
+
+            display: -webkit-box;
+
+            -webkit-box-orient: vertical;
+
+            -webkit-line-clamp: 2;
+
+            overflow: hidden;
+        }
+
+        .menu-bottom {
+            margin-top: auto;
+
+            display: flex;
+
+            align-items: center;
+
+            justify-content: space-between;
+
+            gap: 8px;
+        }
+
+        .menu-price {
+            color: var(--text);
+
+            font-size: 12px;
+
+            font-weight: 700;
+
+            white-space: nowrap;
+        }
+
+        .menu-price small {
+            color: var(--muted);
+
+            font-size: 9px;
+
+            font-weight: 400;
+        }
+
+        .select-button {
+            flex-shrink: 0;
+
+            border: none;
+
+            background: var(--black);
+
+            color: white;
+
+            padding:
+                8px 13px;
+
+            border-radius: 18px;
+
+            font-size: 9px;
+
+            font-weight: 700;
+
+            transition: .2s;
+        }
+
+        .select-button:hover {
+            background: #333;
+        }
+
+        /* =========================================================
+   EMPTY
+========================================================= */
+
+        .empty {
+            padding:
+                55px 20px;
+
+            text-align: center;
+        }
+
+        .empty-icon {
+            font-size: 27px;
+
+            margin-bottom: 10px;
+        }
+
+        .empty h3 {
+            font-family:
+                Georgia,
+                serif;
+
+            font-size: 21px;
+
+            font-weight: 500;
+        }
+
+        .empty p {
+            margin-top: 5px;
+
+            color: var(--muted);
+
+            font-size: 11px;
+        }
+
+        /* =========================================================
+   PRODUCT MODAL
+========================================================= */
+
+        .product-overlay {
+            position: fixed;
+
+            inset: 0;
+
+            z-index: 3000;
+
+            background:
+                rgba(15, 15, 15, .56);
+
+            display: flex;
+
+            align-items: flex-end;
+
+            justify-content: center;
+
+            opacity: 0;
+
+            visibility: hidden;
+
+            transition: .25s;
+        }
+
+        .product-overlay.active {
+            opacity: 1;
+
+            visibility: visible;
+        }
+
+        .product-modal {
+            position: relative;
+
+            width: min(520px, 100%);
+
+            max-height: 94vh;
+
+            overflow-y: auto;
+
+            background: white;
+
+            border-radius:
+                21px 21px 0 0;
+
+            transform:
+                translateY(30px);
+
+            transition:
+                transform .3s ease;
+        }
+
+        .product-overlay.active .product-modal {
+            transform: translateY(0);
+        }
+
+        /* =========================================================
+   PRODUCT IMAGE
+========================================================= */
+
+        .detail-image {
+            position: relative;
+
+            height: 315px;
+
+            background: #ebe7df;
+
+            overflow: hidden;
+        }
+
+        .detail-image img {
+            width: 100%;
+            height: 100%;
+
+            object-fit: cover;
+        }
+
+        .detail-image .image-placeholder {
+            font-size: 17px;
+        }
+
+        /* =========================================================
+   PRODUCT BUTTONS
+========================================================= */
+
+        .detail-back,
+        .detail-favorite {
+            position: absolute;
+
+            top: 15px;
+
+            z-index: 5;
+
+            width: 38px;
+            height: 38px;
+
+            border: none;
+
+            border-radius: 50%;
+
+            background:
+                rgba(255, 255, 255, .94);
+
+            color: #222;
+
+            display: flex;
+
+            align-items: center;
+            justify-content: center;
+
+            font-size: 19px;
+        }
+
+        .detail-back {
+            left: 15px;
+        }
+
+        .detail-favorite {
+            right: 15px;
+        }
+
+        /* =========================================================
+   DETAIL CONTENT
+========================================================= */
+
+        .detail-content {
+            padding: 21px;
+        }
+
+        .detail-heading {
+            display: flex;
+
+            justify-content: space-between;
+
+            align-items: flex-start;
+
+            gap: 15px;
+        }
+
+        .detail-title {
+            font-family:
+                Georgia,
+                "Times New Roman",
+                serif;
+
+            font-size: 29px;
+
+            line-height: 1.05;
+
+            font-weight: 500;
+        }
+
+        .detail-price {
+            flex-shrink: 0;
+
+            font-size: 16px;
+
+            font-weight: 700;
+        }
+
+        .detail-description {
+            margin-top: 10px;
+
+            color: var(--muted);
+
+            font-size: 11px;
+
+            line-height: 1.6;
+        }
+
+        .detail-divider {
+            width: 100%;
+
+            height: 1px;
+
+            margin: 20px 0;
+
+            background: var(--border);
+        }
+
+        /* =========================================================
+   VARIANTS
+========================================================= */
+
+        .variant-title {
+            margin-bottom: 9px;
+
+            font-size: 9px;
+
+            font-weight: 800;
+
+            letter-spacing: 1px;
+
+            text-transform: uppercase;
+        }
+
+        .variant-list {
+            display: flex;
+
+            flex-direction: column;
+
+            gap: 7px;
+        }
+
+        .variant {
+            position: relative;
+        }
+
+        .variant input {
+            position: absolute;
+
+            opacity: 0;
+
+            pointer-events: none;
+        }
+
+        .variant label {
+            width: 100%;
+
+            min-height: 45px;
+
+            padding:
+                10px 13px;
+
+            display: flex;
+
+            align-items: center;
+
+            justify-content: space-between;
+
+            gap: 10px;
+
+            border: 1px solid var(--border);
+
+            border-radius: 9px;
+
+            background: white;
+
+            cursor: pointer;
+
+            font-size: 11px;
+
+            transition: .2s;
+        }
+
+        .variant label:hover {
+            border-color: #bcb6ac;
+        }
+
+        .variant input:checked+label {
+            border: 1.5px solid #222;
+
+            background: #faf9f6;
+        }
+
+        .variant-left {
+            display: flex;
+
+            align-items: center;
+
+            gap: 9px;
+        }
+
+        .radio {
+            width: 15px;
+            height: 15px;
+
+            flex-shrink: 0;
+
+            border: 1px solid #aaa;
+
+            border-radius: 50%;
+        }
+
+        .variant input:checked+label .radio {
+            border: 4px solid #222;
+        }
+
+        .variant-price {
+            font-weight: 700;
+
+            white-space: nowrap;
+        }
+
+        /* =========================================================
+   QUANTITY
+========================================================= */
+
+        .quantity-row {
+            display: flex;
+
+            align-items: center;
+
+            justify-content: space-between;
+
+            margin-top: 20px;
+        }
+
+        .quantity-label {
+            color: var(--muted);
+
+            font-size: 9px;
+
+            font-weight: 800;
+
+            letter-spacing: .8px;
+
+            text-transform: uppercase;
+        }
+
+        .quantity {
+            display: flex;
+
+            align-items: center;
+
+            gap: 12px;
+
+            padding: 3px;
+
+            border: 1px solid var(--border);
+
+            border-radius: 24px;
+        }
+
+        .quantity button {
+            width: 31px;
+            height: 31px;
+
+            border: none;
+
+            border-radius: 50%;
+
+            background: var(--soft);
+
+            color: var(--text);
+
+            font-size: 17px;
+        }
+
+        .quantity span {
+            min-width: 16px;
+
+            text-align: center;
+
+            font-size: 12px;
+
+            font-weight: 700;
+        }
+
+        /* =========================================================
+   DETAIL FOOTER
+========================================================= */
+
+        .detail-footer {
+            position: sticky;
+
+            bottom: 0;
+
+            z-index: 10;
+
+            padding:
+                11px 21px 16px;
+
+            display: flex;
+
+            align-items: center;
+
+            gap: 12px;
+
+            border-top: 1px solid var(--border);
+
+            background:
+                rgba(255, 255, 255, .96);
+
+            backdrop-filter: blur(14px);
+        }
+
+        .total {
+            min-width: 70px;
+
+            display: flex;
+
+            flex-direction: column;
+        }
+
+        .total small {
+            color: var(--muted);
+
+            font-size: 8px;
+        }
+
+        .total strong {
+            font-size: 15px;
+        }
+
+        .add-button {
+            flex: 1;
+
+            height: 50px;
+
+            border: none;
+
+            border-radius: 10px;
+
+            background: var(--black);
+
+            color: white;
+
+            font-size: 12px;
+
+            font-weight: 700;
+        }
+
+        .add-button:hover {
+            background: #333;
+        }
+
+        /* =========================================================
+   FLOATING CART
+========================================================= */
+
+        .floating-cart {
+            position: fixed;
+
+            left: 50%;
+            bottom: 14px;
+
+            z-index: 1500;
+
+            width: min(calc(100% - 28px),
+                    450px);
+
+            min-height: 56px;
+
+            padding:
+                6px 9px 6px 14px;
+
+            transform: translateX(-50%);
+
+            display: flex;
+
+            align-items: center;
+
+            justify-content: space-between;
+
+            gap: 10px;
+
+            background: var(--black);
+
+            color: white;
+
+            border-radius: 29px;
+
+            box-shadow:
+                0 12px 35px rgba(0, 0, 0, .18);
+
+            cursor: pointer;
+
+            transition: transform .2s;
+        }
+
+        .floating-cart:hover {
+            transform:
+                translateX(-50%) translateY(-2px);
+        }
+
+        .cart-left {
+            display: flex;
+
+            align-items: center;
+
+            gap: 9px;
+
+            min-width: 0;
+        }
+
+        .cart-icon {
+            width: 36px;
+            height: 36px;
+
+            flex-shrink: 0;
+
+            border-radius: 50%;
+
+            background: white;
+
+            color: var(--black);
+
+            display: flex;
+
+            align-items: center;
+            justify-content: center;
+
+            font-size: 15px;
+        }
+
+        .cart-info {
+            min-width: 0;
+        }
+
+        .cart-info strong {
+            display: block;
+
+            font-size: 11px;
+        }
+
+        .cart-info small {
+            display: block;
+
+            margin-top: 2px;
+
+            color: #aaa;
+
+            font-size: 8px;
+        }
+
+        .cart-total {
+            padding: 0 8px;
+
+            font-size: 12px;
+
+            font-weight: 700;
+
+            white-space: nowrap;
+        }
+
+        /* =========================================================
+   CART OVERLAY
+========================================================= */
+
+        .cart-overlay {
+            position: fixed;
+
+            inset: 0;
+
+            z-index: 4000;
+
+            background:
+                rgba(0, 0, 0, .48);
+
+            opacity: 0;
+
+            visibility: hidden;
+
+            transition: .25s;
+        }
+
+        .cart-overlay.active {
+            opacity: 1;
+
+            visibility: visible;
+        }
+
+        /* =========================================================
+   CART DRAWER
+========================================================= */
+
+        .cart-drawer {
+            position: fixed;
+
+            top: 0;
+            right: -480px;
+
+            z-index: 4100;
+
+            width: min(450px, 100%);
+
+            height: 100%;
+
+            display: flex;
+
+            flex-direction: column;
+
+            background: white;
+
+            transition:
+                right .3s ease;
+        }
+
+        .cart-drawer.active {
+            right: 0;
+        }
+
+        .cart-header {
+            padding:
+                19px 20px;
+
+            border-bottom:
+                1px solid var(--border);
+
+            display: flex;
+
+            align-items: center;
+
+            justify-content: space-between;
+        }
+
+        .cart-header h2 {
+            font-family:
+                Georgia,
+                serif;
+
+            font-size: 23px;
+
+            font-weight: 500;
+        }
+
+        .close-cart {
+            width: 35px;
+            height: 35px;
+
+            border: 1px solid var(--border);
+
+            border-radius: 50%;
+
+            background: white;
+
+            font-size: 18px;
+        }
+
+        .cart-list {
+            flex: 1;
+
+            overflow-y: auto;
+
+            padding:
+                0 20px;
+        }
+
+        .cart-item {
+            padding:
+                15px 0;
+
+            display: flex;
+
+            align-items: center;
+
+            justify-content: space-between;
+
+            gap: 15px;
+
+            border-bottom:
+                1px solid var(--border);
+        }
+
+        .cart-name {
+            font-family:
+                Georgia,
+                serif;
+
+            font-size: 14px;
+        }
+
+        .cart-variant {
+            margin-top: 4px;
+
+            color: var(--muted);
+
+            font-size: 9px;
+        }
+
+        .cart-price {
+            margin-top: 4px;
+
+            font-size: 11px;
+
+            font-weight: 700;
+        }
+
+        .cart-controls {
+            display: flex;
+
+            align-items: center;
+
+            gap: 7px;
+        }
+
+        .cart-controls button {
+            width: 29px;
+            height: 29px;
+
+            border: 1px solid var(--border);
+
+            border-radius: 50%;
+
+            background: white;
+        }
+
+        .cart-quantity {
+            min-width: 18px;
+
+            text-align: center;
+
+            font-size: 11px;
+
+            font-weight: 700;
+        }
+
+        .cart-footer {
+            padding:
+                18px 20px;
+
+            border-top:
+                1px solid var(--border);
+        }
+
+        .cart-total-row {
+            display: flex;
+
+            align-items: center;
+
+            justify-content: space-between;
+
+            margin-bottom: 13px;
+
+            font-size: 15px;
+
+            font-weight: 700;
+        }
+
+        .checkout-button {
+            width: 100%;
+
+            height: 50px;
+
+            border: none;
+
+            border-radius: 10px;
+
+            background: var(--black);
+
+            color: white;
+
+            font-size: 12px;
+
+            font-weight: 700;
+        }
+
+        /* =========================================================
+   CHECKOUT
+========================================================= */
+
+        .checkout-overlay {
+            position: fixed;
+
+            inset: 0;
+
+            z-index: 5000;
+
+            background:
+                rgba(0, 0, 0, .55);
+
+            display: flex;
+
+            align-items: flex-end;
+
+            justify-content: center;
+
+            opacity: 0;
+
+            visibility: hidden;
+
+            transition: .25s;
+        }
+
+        .checkout-overlay.active {
+            opacity: 1;
+
+            visibility: visible;
+        }
+
+        .checkout-box {
+            width: min(520px, 100%);
+
+            max-height: 94vh;
+
+            overflow-y: auto;
+
+            background: white;
+
+            border-radius:
+                20px 20px 0 0;
+        }
+
+        .checkout-header {
+            padding: 22px;
+
+            border-bottom:
+                1px solid var(--border);
+        }
+
+        .checkout-header h2 {
+            font-family:
+                Georgia,
+                serif;
+
+            font-size: 26px;
+
+            font-weight: 500;
+        }
+
+        .checkout-header p {
+            margin-top: 5px;
+
+            color: var(--muted);
+
+            font-size: 10px;
+        }
+
+        .checkout-content {
+            padding: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+
+            margin-bottom: 7px;
+
+            font-size: 8px;
+
+            font-weight: 800;
+
+            letter-spacing: .8px;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+
+            padding: 12px;
+
+            border: 1px solid var(--border);
+
+            border-radius: 9px;
+
+            outline: none;
+
+            background: white;
+
+            color: var(--text);
+
+            font-size: 12px;
+        }
+
+        .form-group textarea {
+            resize: vertical;
+        }
+
+        .checkout-actions {
+            display: flex;
+
+            gap: 8px;
+
+            margin-top: 20px;
+        }
+
+        .checkout-actions button {
+            flex: 1;
+
+            height: 48px;
+
+            border-radius: 10px;
+
+            font-size: 11px;
+
+            font-weight: 700;
+        }
+
+        .cancel-button {
+            border: 1px solid var(--border);
+
+            background: white;
+        }
+
+        .place-button {
+            border: none;
+
+            background: var(--black);
+
+            color: white;
+        }
+
+        /* =========================================================
+   SUCCESS
+========================================================= */
+
+        .success {
+            display: none;
+
+            padding:
+                45px 25px;
+
+            text-align: center;
+        }
+
+        .success.active {
+            display: block;
+        }
+
+        .success-icon {
+            width: 60px;
+            height: 60px;
+
+            margin:
+                0 auto 16px;
+
+            border: 1px solid #d7d2c9;
+
+            border-radius: 50%;
+
+            display: flex;
+
+            align-items: center;
+            justify-content: center;
+
+            font-size: 25px;
+        }
+
+        .success h2 {
+            font-family:
+                Georgia,
+                serif;
+
+            font-size: 26px;
+
+            font-weight: 500;
+        }
+
+        .success p {
+            margin-top: 8px;
+
+            color: var(--muted);
+
+            font-size: 11px;
+
+            line-height: 1.6;
+        }
+
+        .order-number {
+            margin: 18px 0;
+
+            padding: 14px;
+
+            border-radius: 9px;
+
+            background: var(--soft);
+
+            font-size: 10px;
+
+            line-height: 1.7;
+        }
+
+        .done-button {
+            width: 100%;
+
+            height: 48px;
+
+            border: none;
+
+            border-radius: 10px;
+
+            background: var(--black);
+
+            color: white;
+
+            font-size: 11px;
+
+            font-weight: 700;
+        }
+
+        /* =========================================================
+   TOAST
+========================================================= */
+
+        .toast {
+            position: fixed;
+
+            left: 50%;
+            bottom: 84px;
+
+            z-index: 7000;
+
+            transform:
+                translate(-50%, 20px);
+
+            padding:
+                10px 17px;
+
+            border-radius: 22px;
+
+            background: var(--black);
+
+            color: white;
+
+            font-size: 10px;
+
+            opacity: 0;
+
+            visibility: hidden;
+
+            transition: .2s;
+        }
+
+        .toast.show {
+            opacity: 1;
+
+            visibility: visible;
+
+            transform:
+                translate(-50%, 0);
+        }
+
+        /* =========================================================
+   DESKTOP
+========================================================= */
+
+        @media (min-width: 701px) {
+
+            .product-overlay {
+                align-items: center;
+            }
+
+            .product-modal {
+                border-radius: 20px;
+            }
+
+            .checkout-overlay {
+                align-items: center;
+            }
+
+            .checkout-box {
+                border-radius: 20px;
+            }
+        }
+
+        /* =========================================================
+   TABLET / MOBILE
+========================================================= */
+
+        @media (max-width: 700px) {
+
+            .landing-page {
+                align-items: flex-end;
+                padding:
+                    24px 14px max(24px, env(safe-area-inset-bottom));
+            }
+
+            .landing-content {
+                max-width: 520px;
+            }
+
+            .landing-title {
+                font-size: clamp(32px, 11vw, 48px);
+            }
+
+            .header-inner {
+                padding: 0 14px;
+            }
+
+            .main {
+                padding:
+                    0 14px 125px;
+            }
+
+            .restaurant-photo {
+                height: 280px;
+
+                margin-bottom: 23px;
+
+                border-radius:
+                    0 0 14px 14px;
+            }
+
+            .category-scroll {
+                width:
+                    calc(100% + 28px);
+
+                margin-left: -14px;
+
+                margin-right: -14px;
+
+                padding-left: 14px;
+
+                padding-right: 14px;
+            }
+
+            .categories {
+                gap: 21px;
+
+                padding-right: 30px;
+            }
+
+            .menu-image {
+                width: 120px;
+
+                height: 110px;
+            }
+
+            .menu-name {
+                font-size: 15px;
+            }
+
+            .menu-description {
+                font-size: 8px;
+            }
+
+            .menu-price {
+                font-size: 10px;
+            }
+
+            .select-button {
+                padding:
+                    7px 10px;
+
+                font-size: 8px;
+            }
+
+            .floating-cart {
+                width:
+                    calc(100% - 24px);
+
+                bottom: 11px;
+            }
+
+            .detail-image {
+                height: 285px;
+            }
+
+            .detail-content {
+                padding:
+                    18px 16px;
+            }
+
+            .detail-title {
+                font-size: 26px;
+            }
+
+            .detail-footer {
+                padding:
+                    10px 16px 15px;
+            }
+
+            .cart-drawer {
+                right: -100%;
+
+                width: 100%;
+            }
+
+            .cart-drawer.active {
+                right: 0;
+            }
+        }
+
+        /* =========================================================
+   SMALL PHONE
+========================================================= */
+
+        @media (max-width: 430px) {
+
+            .landing-page {
+                padding-left: 12px;
+                padding-right: 12px;
+            }
+
+            .landing-kicker {
+                font-size: 9px;
+            }
+
+            .landing-title {
+                font-size: clamp(30px, 11vw, 42px);
+            }
+
+            .order-button {
+                height: 50px;
+                margin-top: 21px;
+            }
+
+            .header {
+                height: 62px;
+            }
+
+            .logo {
+                width: 48px;
+                height: 48px;
+            }
+
+            .brand-name {
+                font-size: 13px;
+            }
+
+            .brand-subtitle {
+                font-size: 6px;
+            }
+
+            .header-cart {
+                height: 36px;
+
+                padding: 0 9px;
+            }
+
+            .main {
+                padding:
+                    0 12px 120px;
+            }
+
+            .restaurant-photo {
+                height: 240px;
+
+                margin-bottom: 21px;
+            }
+
+            .category-scroll {
+                width:
+                    calc(100% + 24px);
+
+                margin-left: -12px;
+
+                margin-right: -12px;
+
+                padding-left: 12px;
+
+                padding-right: 12px;
+            }
+
+            .categories {
+                gap: 20px;
+
+                padding-right: 30px;
+            }
+
+            .category {
+                font-size: 10.5px;
+            }
+
+            .menu-item {
+                gap: 9px;
+
+                padding: 6px;
+
+                border-radius: 11px;
+            }
+
+            .menu-image {
+                width: 105px;
+
+                min-width: 105px;
+
+                height: 102px;
+            }
+
+            .menu-category {
+                font-size: 6px;
+            }
+
+            .menu-name {
+                font-size: 14px;
+            }
+
+            .menu-description {
+                font-size: 7.5px;
+
+                line-height: 1.35;
+            }
+
+            .menu-price {
+                font-size: 9.5px;
+            }
+
+            .select-button {
+                padding:
+                    6px 9px;
+
+                font-size: 7.5px;
+            }
+
+            .floating-cart {
+                width:
+                    calc(100% - 22px);
+            }
+        }
+
+        /* =========================================================
+   VERY SMALL PHONE
+========================================================= */
+
+        @media (max-width: 350px) {
+
+            .landing-title {
+                font-size: 29px;
+            }
+
+            .order-button {
+                font-size: 11px;
+            }
+
+            .brand-name {
+                font-size: 12px;
+            }
+
+            .brand-subtitle {
+                display: none;
+            }
+
+            .restaurant-photo {
+                height: 215px;
+            }
+
+            .menu-image {
+                width: 88px;
+
+                min-width: 88px;
+
+                height: 92px;
+            }
+
+            .menu-name {
+                font-size: 13px;
+            }
+
+            .menu-description {
+                display: none;
+            }
+
+            .select-button {
+                padding:
+                    6px 8px;
+
+                font-size: 7px;
+            }
+
+            .categories {
+                gap: 18px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+
+    <!-- =========================================================
+     LANDING PAGE
+========================================================= -->
+
+    <section class="landing-page" id="landingPage">
+
+        <div class="landing-content">
+
+            <div class="landing-kicker">
+                Welcome to
+            </div>
+
+            <h1 class="landing-title">
+                Blessie Food Hub
+            </h1>
+
+            <button class="order-button" id="orderButton" type="button">
+                Order now
+            </button>
+
+            <div class="landing-loader" id="landingLoader" role="status" aria-live="polite">
+                Loading menu
+            </div>
+
+        </div>
+
+    </section>
+
+
+    <!-- =========================================================
+     HEADER
+========================================================= -->
+
+    <header class="header">
+
+        <div class="header-inner">
+
+            <div class="brand">
+
+                <div class="logo">
+                    <img src="images/blessie logo.png" alt="Blessie Food Hub logo">
+                </div>
+
+                <div>
+
+                    <div class="brand-name">
+                        BLESSIE FOOD HUB
+                    </div>
+
+                    <div class="brand-subtitle">
+                        REFRESHMENTS & ENTERTAINMENT
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <button class="header-cart" id="headerCart" type="button">
+
+                🛒
+
+                <span>
+                    Cart
+                </span>
+
+                <span class="cart-count" id="cartCount">
+                    0
+                </span>
+
+            </button>
+
+        </div>
+
+    </header>
+
+
+    <!-- =========================================================
+     MAIN
+========================================================= -->
+
+    <main class="main">
+
+
+        <!-- =====================================================
+         ACTUAL RESTAURANT PHOTO
+    ====================================================== -->
+
+        <section class="restaurant-photo">
+
+            <img src="images/box.png" alt="Blessie Food Hub Restaurant" onerror="
+                this.style.display='none';
+                this.parentElement.style.background='#ebe7df';
+            ">
+
+        </section>
+
+
+        <!-- =====================================================
+         SEARCH
+    ====================================================== -->
+
+        <div class="search">
+
+            <span class="search-icon">
+                ⌕
+            </span>
+
+            <input id="searchInput" type="search" placeholder="Search our menu..." autocomplete="off">
+
+        </div>
+
+
+        <!-- =====================================================
+         CATEGORIES
+    ====================================================== -->
+
+        <div class="category-scroll" id="categoryScroll">
+
+            <div class="categories" id="categories">
+
+                <button class="category active" data-category="All" type="button">
+                    Popular
+                </button>
+
+                <button class="category" data-category="Snacks" type="button">
+                    Snacks
+                </button>
+
+                <button class="category" data-category="Bilao Snacks" type="button">
+                    Bilao
+                </button>
+
+                <button class="category" data-category="Non-Alcoholic Drinks" type="button">
+                    Drinks
+                </button>
+
+                <button class="category" data-category="Alcoholic Drinks" type="button">
+                    Alcoholic
+                </button>
+
+                <button class="category" data-category="Gen-Z Tower" type="button">
+                    Gen-Z Tower
+                </button>
+
+                <button class="category" data-category="Add-ons" type="button">
+                    Add-ons
+                </button>
+
+                <button class="category" data-category="Milktea w/ Boba Pearls" type="button">
+                    Milktea
+                </button>
+
+                <button class="category" data-category="Sticky Milk" type="button">
+                    Sticky Milk
+                </button>
+
+                <button class="category" data-category="Milky Shake Frappe" type="button">
+                    Frappe
+                </button>
+
+                <button class="category" data-category="Cold Coffee" type="button">
+                    Cold Coffee
+                </button>
+
+                <button class="category" data-category="Hot Coffee" type="button">
+                    Hot Coffee
+                </button>
+
+                <button class="category" data-category="Unli Samgyupsal" type="button">
+                    Samgyupsal
+                </button>
+
+            </div>
+
+        </div>
+
+
+        <!-- =====================================================
+         MENU HEADER
+    ====================================================== -->
+
+        <div class="menu-header">
+
+            <h2 id="menuTitle">
+                Popular
+            </h2>
+
+            <span class="menu-count" id="menuCount">
+                0 items
+            </span>
+
+        </div>
+
+
+        <!-- =====================================================
+         MENU LIST
+    ====================================================== -->
+
+        <div class="menu-list" id="menuList"></div>
+
+    </main>
+
+
+    <!-- =========================================================
+     FLOATING CART
+========================================================= -->
+
+    <div class="floating-cart" id="floatingCart">
+
+        <div class="cart-left">
+
+            <div class="cart-icon">
+                🛒
+            </div>
+
+            <div class="cart-info">
+
+                <strong>
+                    Your Order
+                </strong>
+
+                <small id="floatingItems">
+                    0 items
+                </small>
+
+            </div>
+
+        </div>
+
+        <div class="cart-total" id="floatingTotal">
+            ₱0.00
+        </div>
+
+    </div>
+
+
+    <!-- =========================================================
+     PRODUCT MODAL
+========================================================= -->
+
+    <div class="product-overlay" id="productOverlay">
+
+        <div class="product-modal">
+
+            <div class="detail-image" id="detailImage">
+
+                <button class="detail-back" id="closeProduct" type="button">
+                    ←
+                </button>
+
+                <button class="detail-favorite" type="button">
+                    ♡
+                </button>
+
+            </div>
+
+
+            <div class="detail-content">
+
+                <div class="detail-heading">
+
+                    <h2 class="detail-title" id="detailTitle">
+                        Product
+                    </h2>
+
+                    <div class="detail-price" id="detailPrice">
+                        ₱0.00
+                    </div>
+
+                </div>
+
+
+                <p class="detail-description" id="detailDescription"></p>
+
+
+                <div class="detail-divider"></div>
+
+
+                <div id="variantSection">
+
+                    <div class="variant-title">
+                        Choose your option
+                    </div>
+
+                    <div class="variant-list" id="variantList"></div>
+
+                </div>
+
+
+                <div class="quantity-row">
+
+                    <span class="quantity-label">
+                        Quantity
+                    </span>
+
+                    <div class="quantity">
+
+                        <button id="quantityMinus" type="button">
+                            −
+                        </button>
+
+                        <span id="quantityValue">
+                            1
+                        </span>
+
+                        <button id="quantityPlus" type="button">
+                            +
+                        </button>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <div class="detail-footer">
+
+                <div class="total">
+
+                    <small>
+                        Total
+                    </small>
+
+                    <strong id="detailTotal">
+                        ₱0.00
+                    </strong>
+
+                </div>
+
+                <button class="add-button" id="addToOrder" type="button">
+                    Add to Order
+                </button>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- =========================================================
+     CART OVERLAY
+========================================================= -->
+
+    <div class="cart-overlay" id="cartOverlay"></div>
+
+
+    <!-- =========================================================
+     CART DRAWER
+========================================================= -->
+
+    <aside class="cart-drawer" id="cartDrawer">
+
+        <div class="cart-header">
+
+            <h2>
+                Your Order
+            </h2>
+
+            <button class="close-cart" id="closeCart" type="button">
+                ×
+            </button>
+
+        </div>
+
+
+        <div class="cart-list" id="cartList"></div>
+
+
+        <div class="cart-footer">
+
+            <div class="cart-total-row">
+
+                <span>
+                    Total
+                </span>
+
+                <span id="cartTotal">
+                    ₱0.00
+                </span>
+
+            </div>
+
+            <button class="checkout-button" id="checkoutButton" type="button">
+                Continue to Checkout
+            </button>
+
+        </div>
+
+    </aside>
+
+
+    <!-- =========================================================
+     CHECKOUT
+========================================================= -->
+
+    <div class="checkout-overlay" id="checkoutOverlay">
+
+        <div class="checkout-box">
+
+            <div class="checkout-header">
+
+                <h2>
+                    Checkout
+                </h2>
+
+                <p>
+                    No account required.
+                </p>
+
+            </div>
+
+
+            <div class="checkout-content" id="checkoutContent">
+
+                <div class="form-group">
+
+                    <label>
+                        CUSTOMER NAME
+                    </label>
+
+                    <input id="customerName" type="text" placeholder="Your name">
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label>
+                        ORDER TYPE
+                    </label>
+
+                    <select id="orderType">
+
+                        <option value="Dine In">
+                            Dine In
+                        </option>
+
+                        <option value="Take Out">
+                            Take Out
+                        </option>
+
+                    </select>
+
+                </div>
+
+
+                <div class="form-group" id="tableGroup">
+
+                    <label>
+                        TABLE NUMBER
+                    </label>
+
+                    <input id="tableNumber" type="text" placeholder="Example: Table 5">
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label>
+                        SPECIAL INSTRUCTIONS
+                    </label>
+
+                    <textarea id="orderNotes" rows="3" placeholder="Optional"></textarea>
+
+                </div>
+
+
+                <div class="checkout-actions">
+
+                    <button class="cancel-button" id="cancelCheckout" type="button">
+                        Cancel
+                    </button>
+
+                    <button class="place-button" id="placeOrder" type="button">
+                        Place Order
+                    </button>
+
+                </div>
+
+            </div>
+
+
+            <!-- SUCCESS -->
+
+            <div class="success" id="success">
+
+                <div class="success-icon">
+                    ✓
+                </div>
+
+                <h2>
+                    Order Received
+                </h2>
+
+                <p>
+                    Your order has been received.
+                    Please wait for our staff.
+                </p>
+
+                <div class="order-number">
+
+                    Order Number
+
+                    <br>
+
+                    <strong id="orderNumber">
+                        BFH-0000
+                    </strong>
+
+                </div>
+
+                <button class="done-button" id="doneButton" type="button">
+                    Done
+                </button>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- =========================================================
+     TOAST
+========================================================= -->
+
+    <div class="toast" id="toast"></div>
+
+
+    <script>
+
+        /* =========================================================
+           MENU DATA
+        ========================================================= */
+
+        const menu = [
+
+            /* =========================
+               SNACKS
+            ========================= */
+
+            {
+                name: "Spaghetti w/ Bread",
+                category: "Snacks",
+                description: "Classic spaghetti served with toasted bread.",
+                image: "images/spaghetti with bread.png",
+                options: [
+                    ["Single", 125],
+                    ["Barkada", 550]
+                ]
+            },
+
+            {
+                name: "Carbonara w/ Bread",
+                category: "Snacks",
+                description: "Creamy carbonara served with toasted bread.",
+                image: "images/carbonara with bread.png",
+                options: [
+                    ["Single", 140],
+                    ["Barkada", 480]
+                ]
+            },
+
+            {
+                name: "Molo",
+                category: "Snacks",
+                description: "Warm and comforting Molo soup.",
+                image: "images/MOLO.png",
+                options: [
+                    ["Single", 55],
+                    ["Barkada", 200]
+                ]
+            },
+
+            {
+                name: "Sotanghon Guisado",
+                category: "Snacks",
+                description: "Savory stir-fried sotanghon.",
+                image: "images/sotanghon guisado.png",
+                options: [
+                    ["Single", 85],
+                    ["Barkada", 280]
+                ]
+            },
+
+            {
+                name: "Pancit Canton",
+                category: "Snacks",
+                description: "Classic savory pancit canton.",
+                image: "images/PANCIT CANTON.png",
+                options: [
+                    ["Single", 85],
+                    ["Barkada", 280]
+                ]
+            },
+
+            {
+                name: "Burger w/ Fries",
+                category: "Snacks",
+                description: "Burger served with crispy fries.",
+                image: "images/burger with fries.png",
+                options: [
+                    ["Single", 95],
+                    ["Barkada", 450]
+                ]
+            },
+
+            {
+                name: "Toasted Bread",
+                category: "Snacks",
+                description: "Crispy toasted bread.",
+                image: "images/toasted bread.png",
+                options: [
+                    ["2 pcs", 30],
+                    ["4 pcs", 60]
+                ]
+            },
+
+            {
+                name: "Arrozcaldo",
+                category: "Snacks",
+                description: "Warm Filipino rice porridge.",
+                image: "images/arrozcaldo.png",
+                options: [
+                    ["Regular", 20],
+                    ["w/ Egg", 40]
+                ]
+            },
+
+            {
+                name: "Lumpia Shanghai",
+                category: "Snacks",
+                description: "Crispy Filipino spring rolls.",
+                image: "images/lumpia shanghai.jpg",
+                options: [
+                    ["5 pcs", 65]
+                ]
+            },
+
+            {
+                name: "Burger Solo",
+                category: "Snacks",
+                description: "Classic burger with cheese.",
+                image: "images/burger solo.png",
+                options: [
+                    ["w/ Cheese", 65]
+                ]
+            },
+
+            {
+                name: "Tuna Sandwich",
+                category: "Snacks",
+                description: "Savory tuna sandwich.",
+                image: "images/tuna sandwich.png",
+                options: [
+                    ["Regular", 90]
+                ]
+            },
+
+            {
+                name: "Chicken Sandwich",
+                category: "Snacks",
+                description: "Savory chicken sandwich.",
+                image: "images/snacks/chicken-sandwich.jpg",
+                options: [
+                    ["Regular", 70]
+                ]
+            },
+
+            {
+                name: "Egg Sandwich",
+                category: "Snacks",
+                description: "Simple egg sandwich.",
+                image: "images/snacks/egg-sandwich.jpg",
+                options: [
+                    ["Regular", 60]
+                ]
+            },
+
+            {
+                name: "Nachos",
+                category: "Snacks",
+                description: "Crispy nachos.",
+                image: "images/nachos.png",
+                options: [
+                    ["Regular", 90]
+                ]
+            },
+
+            {
+                name: "Nachofries",
+                category: "Snacks",
+                description: "Loaded nachos with crispy fries.",
+                image: "images/nachofries.png",
+                options: [
+                    ["Regular", 150]
+                ]
+            },
+
+            {
+                name: "Sotanghon w/ Toasted Bread",
+                category: "Snacks",
+                description: "Sotanghon served with toasted bread.",
+                image: "images/Sotanghon wuth Toasted Bread.png",
+                options: [
+                    ["Single", 90],
+                    ["Barkada", 300]
+                ]
+            },
+
+            {
+                name: "Pancit Canton w/ Toasted Bread",
+                category: "Snacks",
+                description: "Pancit canton served with toasted bread.",
+                image: "images/Pancit Canton with Toasted Bread.png",
+                options: [
+                    ["Single", 110],
+                    ["Barkada", 350]
+                ]
+            },
+
+            {
+                name: "Spaghetti w/ Burger",
+                category: "Snacks",
+                description: "Spaghetti served with burger.",
+                image: "images/spaghetti with burger.png",
+                options: [
+                    ["Regular", 140]
+                ]
+            },
+
+            {
+                name: "Sotanghon Guisado w/ Lumpia Shanghai",
+                category: "Snacks",
+                description: "Sotanghon served with lumpia Shanghai.",
+                image: "images/sotanghon lumpia.png",
+                options: [
+                    ["Regular", 140]
+                ]
+            },
+
+
+            /* =========================
+               BILAO
+            ========================= */
+
+            {
+                name: "Bilao 1",
+                category: "Bilao Snacks",
+                description: "Blessie Food Hub Bilao.",
+                image: "images/bilao/bilao-1.jpg",
+                options: [
+                    ["Regular", 199]
+                ]
+            },
+
+            {
+                name: "Bilao 2",
+                category: "Bilao Snacks",
+                description: "Blessie Food Hub Bilao.",
+                image: "images/bilao/bilao-2.jpg",
+                options: [
+                    ["Regular", 199]
+                ]
+            },
+
+            {
+                name: "Bilao 3",
+                category: "Bilao Snacks",
+                description: "Blessie Food Hub Bilao.",
+                image: "images/bilao/bilao-3.jpg",
+                options: [
+                    ["Regular", 249]
+                ]
+            },
+
+
+            /* =========================
+               NON-ALCOHOLIC
+            ========================= */
+
+            {
+                name: "Mt. Dew",
+                category: "Non-Alcoholic Drinks",
+                description: "Refreshing soft drink.",
+                image: "images/drinks/mountain-dew.jpg",
+                options: [
+                    ["Regular", 25]
+                ]
+            },
+
+            {
+                name: "Sting",
+                category: "Non-Alcoholic Drinks",
+                description: "Refreshing energy drink.",
+                image: "images/drinks/sting.jpg",
+                options: [
+                    ["Regular", 25]
+                ]
+            },
+
+            {
+                name: "Royal",
+                category: "Non-Alcoholic Drinks",
+                description: "Refreshing soft drink.",
+                image: "images/drinks/royal.jpg",
+                options: [
+                    ["Regular", 25]
+                ]
+            },
+
+            {
+                name: "Water",
+                category: "Non-Alcoholic Drinks",
+                description: "Bottled drinking water.",
+                image: "images/drinks/water.jpg",
+                options: [
+                    ["Regular", 20]
+                ]
+            },
+
+            {
+                name: "Coke",
+                category: "Non-Alcoholic Drinks",
+                description: "Classic Coca-Cola.",
+                image: "images/drinks/coke.jpg",
+                options: [
+                    ["12 oz", 25],
+                    ["Litro", 50]
+                ]
+            },
+
+
+            /* =========================
+               ALCOHOLIC
+            ========================= */
+
+            {
+                name: "Red Horse",
+                category: "Alcoholic Drinks",
+                description: "Choose your preferred Red Horse size.",
+                image: "images/alcoholic/red-horse.jpg",
+                options: [
+                    ["Litro", 180],
+                    ["500 ml", 90]
+                ]
+            },
+
+            {
+                name: "Red Horse Stallion",
+                category: "Alcoholic Drinks",
+                description: "Red Horse Stallion.",
+                image: "images/alcoholic/red-horse-stallion.jpg",
+                options: [
+                    ["Regular", 75]
+                ]
+            },
+
+            {
+                name: "San Mig",
+                category: "Alcoholic Drinks",
+                description: "Choose your preferred San Mig variant.",
+                image: "images/alcoholic/san-mig.jpg",
+                options: [
+                    ["Light", 75],
+                    ["Apple", 75]
+                ]
+            },
+
+            {
+                name: "Pelsin",
+                category: "Alcoholic Drinks",
+                description: "Pelsin.",
+                image: "images/alcoholic/pelsin.jpg",
+                options: [
+                    ["Regular", 65]
+                ]
+            },
+
+            {
+                name: "Eagle",
+                category: "Alcoholic Drinks",
+                description: "Eagle beer.",
+                image: "images/alcoholic/eagle.jpg",
+                options: [
+                    ["Regular", 60]
+                ]
+            },
+
+            {
+                name: "Tanduay",
+                category: "Alcoholic Drinks",
+                description: "Choose your preferred Tanduay variant.",
+                image: "images/alcoholic/tanduay.jpg",
+                options: [
+                    ["Light", 195],
+                    ["Dark", 200]
+                ]
+            },
+
+            {
+                name: "Smirnoff",
+                category: "Alcoholic Drinks",
+                description: "Smirnoff.",
+                image: "images/alcoholic/smirnoff.jpg",
+                options: [
+                    ["Regular", 80]
+                ]
+            },
+
+            {
+                name: "CLVB",
+                category: "Alcoholic Drinks",
+                description: "CLVB.",
+                image: "images/alcoholic/clvb.jpg",
+                options: [
+                    ["Regular", 250]
+                ]
+            },
+
+
+            /* =========================
+               GEN-Z TOWER
+            ========================= */
+
+            {
+                name: "Gen-Z Tower",
+                category: "Gen-Z Tower",
+                description: "Gin, ice and juice tower.",
+                image: "images/gen-z/gen-z-tower.jpg",
+                options: [
+                    ["1.5 L — Gin, Ice, Juice", 190],
+                    ["2 L — Gin, Ice, Juice", 220],
+                    ["3 L — Gin, Ice, Juice", 440],
+                    ["1.5 L — Gin, Ice, Juice + Kropek", 220],
+                    ["2 L — Gin, Ice, Juice + 2 Kropek", 380],
+                    ["3 L — Gin, Ice, Juice + 2 Kropek", 500]
+                ]
+            },
+
+
+            /* =========================
+               ADD-ONS
+            ========================= */
+
+            {
+                name: "Kropek",
+                category: "Add-ons",
+                description: "Crispy shrimp crackers.",
+                image: "images/kropek.png",
+                options: [
+                    ["Regular", 60]
+                ]
+            },
+
+            {
+                name: "Bucket Ice",
+                category: "Add-ons",
+                description: "One bucket of ice.",
+                image: "images/addons/ice.jpg",
+                options: [
+                    ["1 Bucket", 15]
+                ]
+            },
+
+
+            /* =========================
+               MILKTEA
+            ========================= */
+
+            {
+                name: "Okinawa",
+                category: "Milktea w/ Boba Pearls",
+                description: "Okinawa milk tea with boba pearls.",
+                image: "images/milktea/okinawa.jpg",
+                options: [
+                    ["16 oz", 65],
+                    ["22 oz", 75]
+                ]
+            },
+
+            {
+                name: "Taro",
+                category: "Milktea w/ Boba Pearls",
+                description: "Taro milk tea with boba pearls.",
+                image: "images/milktea/taro.jpg",
+                options: [
+                    ["16 oz", 65],
+                    ["22 oz", 75]
+                ]
+            },
+
+            {
+                name: "Watermelon",
+                category: "Milktea w/ Boba Pearls",
+                description: "Watermelon milk tea with boba pearls.",
+                image: "images/milktea/watermelon.jpg",
+                options: [
+                    ["16 oz", 65],
+                    ["22 oz", 75]
+                ]
+            },
+
+            {
+                name: "Cookies & Cream",
+                category: "Milktea w/ Boba Pearls",
+                description: "Cookies and cream milk tea.",
+                image: "images/milktea/cookies-cream.jpg",
+                options: [
+                    ["16 oz", 70],
+                    ["22 oz", 80]
+                ]
+            },
+
+            {
+                name: "Caramelized Sugar",
+                category: "Milktea w/ Boba Pearls",
+                description: "Caramelized sugar milk tea.",
+                image: "images/milktea/caramelized-sugar.jpg",
+                options: [
+                    ["16 oz", 65],
+                    ["22 oz", 75]
+                ]
+            },
+
+
+            /* =========================
+               STICKY MILK
+            ========================= */
+
+            {
+                name: "Buko",
+                category: "Sticky Milk",
+                description: "Creamy buko sticky milk.",
+                image: "images/sticky-milk/buko.jpg",
+                options: [
+                    ["16 oz", 75],
+                    ["22 oz", 85]
+                ]
+            },
+
+            {
+                name: "Mango",
+                category: "Sticky Milk",
+                description: "Creamy mango sticky milk.",
+                image: "images/sticky-milk/mango.jpg",
+                options: [
+                    ["16 oz", 75],
+                    ["22 oz", 85]
+                ]
+            },
+
+            {
+                name: "Choco",
+                category: "Sticky Milk",
+                description: "Chocolate sticky milk.",
+                image: "images/sticky-milk/choco.jpg",
+                options: [
+                    ["16 oz", 80],
+                    ["22 oz", 90]
+                ]
+            },
+
+            {
+                name: "Melon",
+                category: "Sticky Milk",
+                description: "Creamy melon sticky milk.",
+                image: "images/sticky-milk/melon.jpg",
+                options: [
+                    ["16 oz", 75],
+                    ["22 oz", 85]
+                ]
+            },
+
+            {
+                name: "Red Velvet",
+                category: "Sticky Milk",
+                description: "Red velvet sticky milk.",
+                image: "images/sticky-milk/red-velvet.jpg",
+                options: [
+                    ["16 oz", 85],
+                    ["22 oz", 95]
+                ]
+            },
+
+
+            /* =========================
+               FRAPPE
+            ========================= */
+
+            {
+                name: "Mango",
+                category: "Milky Shake Frappe",
+                description: "Creamy mango frappe.",
+                image: "images/frappe/mango.jpg",
+                options: [
+                    ["16 oz", 80],
+                    ["22 oz", 100]
+                ]
+            },
+
+            {
+                name: "Choco",
+                category: "Milky Shake Frappe",
+                description: "Creamy chocolate frappe.",
+                image: "images/frappe/choco.jpg",
+                options: [
+                    ["16 oz", 85],
+                    ["22 oz", 105]
+                ]
+            },
+
+            {
+                name: "Caramel Macchiato",
+                category: "Milky Shake Frappe",
+                description: "Caramel macchiato frappe.",
+                image: "images/frappe/caramel-macchiato.jpg",
+                options: [
+                    ["16 oz", 85],
+                    ["22 oz", 105]
+                ]
+            },
+
+            {
+                name: "Coffee Crumble",
+                category: "Milky Shake Frappe",
+                description: "Creamy coffee crumble frappe.",
+                image: "images/frappe/coffee-crumble.jpg",
+                options: [
+                    ["16 oz", 80],
+                    ["22 oz", 100]
+                ]
+            },
+
+            {
+                name: "Melon",
+                category: "Milky Shake Frappe",
+                description: "Creamy melon frappe.",
+                image: "images/frappe/melon.jpg",
+                options: [
+                    ["16 oz", 80],
+                    ["22 oz", 100]
+                ]
+            },
+
+            {
+                name: "Buko",
+                category: "Milky Shake Frappe",
+                description: "Creamy buko frappe.",
+                image: "images/frappe/buko.jpg",
+                options: [
+                    ["16 oz", 80],
+                    ["22 oz", 100]
+                ]
+            },
+
+
+            /* =========================
+               COLD COFFEE
+            ========================= */
+
+            {
+                name: "Spanish Latte",
+                category: "Cold Coffee",
+                description: "Smooth and creamy Spanish latte.",
+                image: "images/coffee/spanish latte.png",
+                options: [
+                    ["16 oz", 50],
+                    ["22 oz", 65]
+                ]
+            },
+
+            {
+                name: "French",
+                category: "Cold Coffee",
+                description: "French-style iced coffee.",
+                image: "images/coffee/french vanill.png",
+                options: [
+                    ["16 oz", 60],
+                    ["22 oz", 75]
+                ]
+            },
+
+            {
+                name: "Salted Caramel",
+                category: "Cold Coffee",
+                description: "Sweet and salty caramel coffee.",
+                image: "images/coffee/salted caramel.png",
+                options: [
+                    ["16 oz", 65],
+                    ["22 oz", 80]
+                ]
+            },
+
+            {
+                name: "Caramel Macchiato",
+                category: "Cold Coffee",
+                description: "Caramel macchiato iced coffee.",
+                image: "images/coffee/caramel macchiato.png",
+                options: [
+                    ["16 oz", 60],
+                    ["22 oz", 75]
+                ]
+            },
+
+            {
+                name: "Iced Americano",
+                category: "Cold Coffee",
+                description: "Refreshing iced americano.",
+                image: "images/coffee/iced americano.png",
+                options: [
+                    ["16 oz", 50],
+                    ["22 oz", 65]
+                ]
+            },
+
+            {
+                name: "Vietnamese",
+                category: "Cold Coffee",
+                description: "Vietnamese-style iced coffee.",
+                image: "images/coffee/vietnamese coffee.png",
+                options: [
+                    ["16 oz", 55],
+                    ["22 oz", 70]
+                ]
+            },
+
+            {
+                name: "Dirty Matcha",
+                category: "Cold Coffee",
+                description: "Matcha combined with coffee.",
+                image: "images/coffee/dirty matcha.png",
+                options: [
+                    ["16 oz", 55],
+                    ["22 oz", 70]
+                ]
+            },
+
+            {
+                name: "Matcha Milk",
+                category: "Cold Coffee",
+                description: "Creamy matcha milk.",
+                image: "images/coffee/matcha milk.png",
+                options: [
+                    ["16 oz", 55],
+                    ["22 oz", 70]
+                ]
+            },
+
+            {
+                name: "Matcha Latte",
+                category: "Cold Coffee",
+                description: "Creamy matcha latte.",
+                image: "images/coffee/matcha latte.png",
+                options: [
+                    ["16 oz", 60],
+                    ["22 oz", 75]
+                ]
+            },
+
+
+            /* =========================
+               HOT COFFEE
+            ========================= */
+
+            {
+                name: "Native Coffee",
+                category: "Hot Coffee",
+                description: "Traditional native coffee.",
+                image: "images/coffee/native.jpg",
+                options: [
+                    ["Regular", 25]
+                ]
+            },
+
+            {
+                name: "Native with Milk",
+                category: "Hot Coffee",
+                description: "Native coffee with milk.",
+                image: "images/coffee/native-milk.jpg",
+                options: [
+                    ["Regular", 35]
+                ]
+            },
+
+            {
+                name: "Barako",
+                category: "Hot Coffee",
+                description: "Strong Filipino Barako coffee.",
+                image: "images/coffee/barako.jpg",
+                options: [
+                    ["Regular", 35]
+                ]
+            },
+
+            {
+                name: "Brewed",
+                category: "Hot Coffee",
+                description: "Freshly brewed coffee.",
+                image: "images/coffee/brewed.jpg",
+                options: [
+                    ["Regular", 30]
+                ]
+            },
+
+            {
+                name: "Americano",
+                category: "Hot Coffee",
+                description: "Classic hot americano.",
+                image: "images/coffee/americano.jpg",
+                options: [
+                    ["Regular", 30]
+                ]
+            },
+
+            {
+                name: "Spanish Latte",
+                category: "Hot Coffee",
+                description: "Hot Spanish latte.",
+                image: "images/coffee/spanish-hot.jpg",
+                options: [
+                    ["Regular", 45]
+                ]
+            },
+
+            {
+                name: "French Vanilla",
+                category: "Hot Coffee",
+                description: "Sweet French vanilla coffee.",
+                image: "images/coffee/french-vanilla.jpg",
+                options: [
+                    ["Regular", 55]
+                ]
+            },
+
+            {
+                name: "Salted Caramel Latte",
+                category: "Hot Coffee",
+                description: "Salted caramel latte.",
+                image: "images/coffee/salted-caramel-latte.jpg",
+                options: [
+                    ["Regular", 60]
+                ]
+            },
+
+            {
+                name: "Caramel Macchiato",
+                category: "Hot Coffee",
+                description: "Hot caramel macchiato.",
+                image: "images/coffee/hot-caramel-macchiato.jpg",
+                options: [
+                    ["Regular", 55]
+                ]
+            },
+
+            {
+                name: "Hot Matcha Latte",
+                category: "Hot Coffee",
+                description: "Warm creamy matcha latte.",
+                image: "images/coffee/hot-matcha.jpg",
+                options: [
+                    ["Regular", 50]
+                ]
+            },
+
+
+            /* =========================
+               SAMGYUPSAL
+            ========================= */
+
+            {
+                name: "Unli Samgyupsal",
+                category: "Unli Samgyupsal",
+                description: "Unlimited samgyupsal with your choice of meat.",
+                image: "images/samgyupsal/samgyupsal.jpg",
+                options: [
+                    ["Pork", 249],
+                    ["Chicken", 240],
+                    ["Chicken & Pork", 299],
+                    ["Beef", 299]
+                ]
+            },
+
+            {
+                name: "Samgyupsal Add-ons",
+                category: "Unli Samgyupsal",
+                description: "Additional samgyupsal sides and add-ons.",
+                image: "images/samgyupsal/addons.jpg",
+                options: [
+                    ["Lettuce (70g)", 50],
+                    ["Cheese (Dipping)", 50],
+                    ["Sesame Oil + Salt", 30],
+                    ["Seaweed", 35]
+                ]
+            }
+
+        ];
+
+
+        /* =========================================================
+           STATE
+        ========================================================= */
+
+        let activeCategory = "All";
+
+        let searchTerm = "";
+
+        let cart = [];
+
+        let selectedProduct = null;
+
+        let selectedVariant = 0;
+
+        let selectedQuantity = 1;
+
+
+        /* =========================================================
+           ELEMENTS
+        ========================================================= */
+
+        const menuList =
+            document.getElementById("menuList");
+
+        const menuTitle =
+            document.getElementById("menuTitle");
+
+        const menuCount =
+            document.getElementById("menuCount");
+
+        const productOverlay =
+            document.getElementById("productOverlay");
+
+        const detailImage =
+            document.getElementById("detailImage");
+
+        const detailTitle =
+            document.getElementById("detailTitle");
+
+        const detailDescription =
+            document.getElementById("detailDescription");
+
+        const detailPrice =
+            document.getElementById("detailPrice");
+
+        const variantSection =
+            document.getElementById("variantSection");
+
+        const variantList =
+            document.getElementById("variantList");
+
+        const quantityValue =
+            document.getElementById("quantityValue");
+
+        const detailTotal =
+            document.getElementById("detailTotal");
+
+        const cartDrawer =
+            document.getElementById("cartDrawer");
+
+        const cartOverlay =
+            document.getElementById("cartOverlay");
+
+        const cartList =
+            document.getElementById("cartList");
+
+        const cartTotal =
+            document.getElementById("cartTotal");
+
+        const cartCount =
+            document.getElementById("cartCount");
+
+        const floatingItems =
+            document.getElementById("floatingItems");
+
+        const floatingTotal =
+            document.getElementById("floatingTotal");
+
+        const toast =
+            document.getElementById("toast");
+
+        const landingPage =
+            document.getElementById("landingPage");
+
+        const orderButton =
+            document.getElementById("orderButton");
+
+
+        orderButton.addEventListener("click", () => {
+
+            orderButton.disabled = true;
+            landingPage.classList.add("is-loading");
+
+            window.setTimeout(() => {
+                landingPage.classList.add("is-hidden");
+
+                window.setTimeout(() => {
+                    landingPage.style.display = "none";
+                }, 350);
+            }, 700);
+
+        });
+
+
+        if (false) {
+            /* =========================================================
+               PESO FORMAT
+            ========================================================= */
+
+            function peso(value) {
+
+                return "₱" +
+                    Number(value).toLocaleString(
+                        "en-PH",
+                        {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2
+                        }
+                    );
+
+            }
+
+
+            /* =========================================================
+               ESCAPE HTML
+            ========================================================= */
+
+            function escapeHTML(value) {
+
+                return String(value)
+                    .replaceAll("&", "&amp;")
+                    .replaceAll("<", "&lt;")
+                    .replaceAll(">", "&gt;")
+                    .replaceAll('"', "&quot;")
+                    .replaceAll("'", "&#039;");
+
+            }
+
+
+            /* =========================================================
+               PRODUCT IMAGE
+            ========================================================= */
+
+            function productImage(product) {
+
+                return `
+
+        <img
+            src="${product.image}"
+            alt="${escapeHTML(product.name)}"
+            onerror="
+                this.style.display='none';
+                this.parentElement
+                    .querySelector('.image-placeholder')
+                    .style.display='flex';
+            "
+        >
+
+        <div
+            class="image-placeholder"
+            style="display:none;"
+        >
+            ${escapeHTML(product.name)}
+        </div>
+
+    `;
+
+            }
+
+
+            /* =========================================================
+               FILTER
+            ========================================================= */
+
+            function getFilteredProducts() {
+
+                return menu.filter(product => {
+
+                    const categoryMatch =
+                        activeCategory === "All" ||
+                        product.category === activeCategory;
+
+                    const searchable = (
+                        product.name +
+                        " " +
+                        product.category +
+                        " " +
+                        product.description +
+                        " " +
+                        product.options
+                            .map(option => option[0])
+                            .join(" ")
+                    ).toLowerCase();
+
+                    const searchMatch =
+                        searchable.includes(
+                            searchTerm.toLowerCase()
+                        );
+
+                    return categoryMatch &&
+                        searchMatch;
+                });
+
+            }
+
+
+            /* =========================================================
+               RENDER MENU
+            ========================================================= */
+
+            function renderMenu() {
+
+                const products =
+                    getFilteredProducts();
+
+                menuList.innerHTML = products
+                    .map((product, index) => {
+
+                        const originalIndex =
+                            menu.indexOf(product);
+
+                        const prices =
+                            product.options.map(option => option[1]);
+
+                        const lowest =
+                            Math.min(...prices);
+
+                        const highest =
+                            Math.max(...prices);
+
+                        let priceText;
+
+                        if (lowest === highest) {
+                            priceText = peso(lowest);
+                        } else {
+                            priceText =
+                                peso(lowest) +
+                                " - " +
+                                peso(highest);
+                        }
+
+                        return `
+
+                <article
+                    class="menu-item"
+                    data-index="${originalIndex}"
+                >
+
+                    <div class="menu-image">
+                        ${productImage(product)}
+                    </div>
+
+                    <div class="menu-info">
+
+                        <div class="menu-category">
+                            ${escapeHTML(product.category)}
+                        </div>
+
+                        <div class="menu-name">
+                            ${escapeHTML(product.name)}
+                        </div>
+
+                        <div class="menu-description">
+                            ${escapeHTML(product.description)}
+                        </div>
+
+                        <div class="menu-bottom">
+
+                            <div class="menu-price">
+                                ${priceText}
+                            </div>
+
+                            <button
+                                class="select-button"
+                                type="button"
+                                data-index="${originalIndex}"
+                            >
+                                Select
+                            </button>
+
+                        </div>
+
+                    </div>
+
+                </article>
+
+            `;
+                    })
+                    .join("");
+
+                menuCount.textContent =
+                    products.length +
+                    (products.length === 1 ? " item" : " items");
+
+                menuList.querySelectorAll(".menu-item")
+                    .forEach(card => {
+                        card.addEventListener(
+                            "click",
+                            event => {
+                                if (event.target.closest(".select-button")) {
+                                    return;
+                                }
+
+                                openProduct(
+                                    Number(card.dataset.index)
+                                );
+                            }
+                        );
+                    });
+
+                menuList.querySelectorAll(".select-button")
+                    .forEach(button => {
+                        button.addEventListener(
+                            "click",
+                            () => {
+                                openProduct(
+                                    Number(button.dataset.index)
+                                );
+                            }
+                        );
+                    });
+
+            }
+
+
+            /* =========================================================
+               PRODUCT MODAL
+            ========================================================= */
+
+            function openProduct(index) {
+
+                selectedProduct = menu[index];
+                selectedVariant = 0;
+                selectedQuantity = 1;
+
+                productOverlay.classList.add("active");
+                document.body.classList.add("modal-open");
+
+                detailImage.innerHTML = productImage(selectedProduct);
+                detailTitle.textContent = selectedProduct.name;
+                detailDescription.textContent = selectedProduct.description;
+
+                renderVariants();
+                updateProduct();
+
+            }
+
+
+            function closeProduct() {
+
+                productOverlay.classList.remove("active");
+                document.body.classList.remove("modal-open");
+
+            }
+
+
+            function renderVariants() {
+
+                if (selectedProduct.options.length <= 1) {
+
+                    variantSection.style.display = "none";
+                    variantList.innerHTML = "";
+
+                    return;
+                }
+
+                variantSection.style.display = "block";
+
+                variantList.innerHTML = selectedProduct.options
+                    .map((option, index) => `
+
+            <label class="variant-option">
+
+                <input
+                    type="radio"
+                    name="variant"
+                    value="${index}"
+                    ${index === selectedVariant ? "checked" : ""}
+                >
+
+                <span>
+                    ${escapeHTML(option[0])}
+                </span>
+
+                <strong>
+                    ${peso(option[1])}
+                </strong>
+
+            </label>
+
+        `)
+                    .join("");
+
+                variantList.querySelectorAll("input")
+                    .forEach(input => {
+                        input.addEventListener(
+                            "change",
+                            () => {
+                                selectedVariant =
+                                    Number(input.value);
+
+                                updateProduct();
+                            }
+                        );
+                    });
+
+            }
+
+
+            function updateProduct() {
+
+                const price =
+                    selectedProduct.options[selectedVariant][1];
+
+                detailPrice.textContent = peso(price);
+                quantityValue.textContent = selectedQuantity;
+                detailTotal.textContent =
+                    peso(price * selectedQuantity);
+
+            }
+
+
+            /* =========================================================
+               PRODUCT EVENTS
+            ========================================================= */
+
+            document
+                .getElementById("closeProduct")
+                .addEventListener(
+                    "click",
+                    closeProduct
+                );
+
+            document
+                .getElementById("decreaseQuantity")
+                .addEventListener(
+                    "click",
+                    () => {
+                        if (selectedQuantity > 1) {
+                            selectedQuantity--;
+                            updateProduct();
+                        }
+                    }
+                );
+
+            document
+                .getElementById("increaseQuantity")
+                .addEventListener(
+                    "click",
+                    () => {
+                        selectedQuantity++;
+                        updateProduct();
+                    }
+                );
+
+            document
+                .getElementById("addToCart")
+                .addEventListener(
+                    "click",
+                    addToCart
+                );
+
+            productOverlay.addEventListener(
+                "click",
+                event => {
+                    if (event.target === productOverlay) {
+                        closeProduct();
+                    }
+                }
+            );
+
+
+            /* =========================================================
+               CART
+            ========================================================= */
+
+            function addToCart() {
+
+                const option =
+                    selectedProduct.options[selectedVariant];
+
+                const existing = cart.find(item =>
+                    item.name === selectedProduct.name &&
+                    item.variant === option[0]
+                );
+
+                if (existing) {
+                    existing.quantity += selectedQuantity;
+                } else {
+                    cart.push({
+                        name: selectedProduct.name,
+                        variant: option[0],
+                        price: option[1],
+                        quantity: selectedQuantity
+                    });
+                }
+
+                closeProduct();
+                updateCart();
+                showToast("Added to cart");
+
+            }
+
+
+            function updateCart() {
+
+                const count = cart.reduce(
+                    (sum, item) => sum + item.quantity,
+                    0
+                );
+
+                const total = cart.reduce(
+                    (sum, item) =>
+                        sum + item.price * item.quantity,
+                    0
+                );
+
+                cartCount.textContent = count;
+                floatingItems.textContent =
+                    count + (count === 1 ? " item" : " items");
+                floatingTotal.textContent = peso(total);
+
+                if (count > 0) {
+                    document
+                        .getElementById("floatingCart")
+                        .classList.add("active");
+                } else {
+                    document
+                        .getElementById("floatingCart")
+                        .classList.remove("active");
+                }
+
+                renderCart();
+
+            }
+
+
+            function renderCart() {
+
+                if (cart.length === 0) {
+                    cartList.innerHTML = `
+            <div class="empty-cart">
+                Your cart is empty.
+            </div>
+        `;
+
+                    cartTotal.textContent = peso(0);
+
+                    return;
+                }
+
+                cartList.innerHTML = cart
+                    .map((item, index) => `
+
+            <div class="cart-item">
+
+                <div class="cart-item-info">
+
+                    <strong>
+                        ${escapeHTML(item.name)}
+                    </strong>
+
+                    <span>
+                        ${escapeHTML(item.variant)}
+                    </span>
+
+                    <small>
+                        ${peso(item.price)} each
+                    </small>
+
+                </div>
+
+                <div class="cart-item-actions">
+
+                    <button
+                        type="button"
+                        data-action="decrease"
+                        data-index="${index}"
+                    >
+                        −
+                    </button>
+
+                    <span>
+                        ${item.quantity}
+                    </span>
+
+                    <button
+                        type="button"
+                        data-action="increase"
+                        data-index="${index}"
+                    >
+                        +
+                    </button>
+
+                </div>
+
+                <strong class="cart-item-total">
+                    ${peso(item.price * item.quantity)}
+                </strong>
+
+            </div>
+
+        `)
+                    .join("");
+
+                const total = cart.reduce(
+                    (sum, item) =>
+                        sum + item.price * item.quantity,
+                    0
+                );
+
+                cartTotal.textContent = peso(total);
+
+                cartList.querySelectorAll("button")
+                    .forEach(button => {
+                        button.addEventListener(
+                            "click",
+                            () => {
+                                const index =
+                                    Number(button.dataset.index);
+
+                                const action =
+                                    button.dataset.action;
+
+                                if (action === "increase") {
+                                    cart[index].quantity++;
+                                } else {
+                                    cart[index].quantity--;
+
+                                    if (cart[index].quantity <= 0) {
+                                        cart.splice(index, 1);
+                                    }
+                                }
+
+                                updateCart();
+                            }
+                        );
+                    });
+
+            }
+
+
+            function openCart() {
+
+                cartDrawer.classList.add("active");
+                cartOverlay.classList.add("active");
+                document.body.classList.add("modal-open");
+
+            }
+
+
+            function closeCart() {
+
+                cartDrawer.classList.remove("active");
+                cartOverlay.classList.remove("active");
+                document.body.classList.remove("modal-open");
+
+            }
+
+
+            document
+                .getElementById("headerCart")
+                .addEventListener(
+                    "click",
+                    openCart
+                );
+
+            document
+                .getElementById("closeCart")
+                .addEventListener(
+                    "click",
+                    closeCart
+                );
+
+            cartOverlay.addEventListener(
+                "click",
+                closeCart
+            );
+
+            document
+                .getElementById("floatingCart")
+                .addEventListener(
+                    "click",
+                    openCart
+                );
+
+
+            /* =========================================================
+               SEARCH AND CATEGORIES
+            ========================================================= */
+
+            document
+                .getElementById("searchInput")
+                .addEventListener(
+                    "input",
+                    event => {
+                        searchTerm = event.target.value;
+                        renderMenu();
+                    }
+                );
+
+            document
+                .querySelectorAll(".category")
+                .forEach(button => {
+                    button.addEventListener(
+                        "click",
+                        () => {
+                            activeCategory = button.dataset.category;
+
+                            document
+                                .querySelectorAll(".category")
+                                .forEach(item => {
+                                    item.classList.toggle(
+                                        "active",
+                                        item === button
+                                    );
+                                });
+
+                            menuTitle.textContent = activeCategory;
+                            renderMenu();
+                        }
+                    );
+                });
+
+
+            /* =========================================================
+               CHECKOUT
+            ========================================================= */
+
+            const checkoutOverlay =
+                document.getElementById("checkoutOverlay");
+
+            const checkoutContent =
+                document.getElementById("checkoutContent");
+
+            const success =
+                document.getElementById("success");
+
+            document
+                .getElementById("checkoutButton")
+                .addEventListener(
+                    "click",
+                    openCheckout
+                );
+
+            document
+                .getElementById("closeCheckout")
+                .addEventListener(
+                    "click",
+                    closeCheckout
+                );
+
+            checkoutOverlay.addEventListener(
+                "click",
+                event => {
+                    if (event.target === checkoutOverlay) {
+                        closeCheckout();
+                    }
+                }
+            );
+
+            document
+                .getElementById("checkoutForm")
+                .addEventListener(
+                    "submit",
+                    submitOrder
+                );
+
+            document
+                .getElementById("doneButton")
+                .addEventListener(
+                    "click",
+                    () => {
+                        closeCheckout();
+                        success.classList.remove("active");
+                        checkoutContent.style.display = "block";
+                    }
+                );
+
+            function openCheckout() {
+
+                if (cart.length === 0) {
+                    showToast("Your cart is empty");
+                    return;
+                }
+
+                checkoutOverlay.classList.add("active");
+                document.body.classList.add("modal-open");
+
+            }
+
+
+            function closeCheckout() {
+
+                checkoutOverlay.classList.remove("active");
+                document.body.classList.remove("modal-open");
+
+            }
+
+
+            function submitOrder(event) {
+
+                event.preventDefault();
+
+                const tableGroup =
+                    document.querySelector(
+                        'input[name="tableGroup"]:checked'
+                    );
+
+                const customerName =
+                    document.getElementById("customerName").value;
+
+                const orderType =
+                    document.getElementById("orderType").value;
+
+                const tableNumber =
+                    document.getElementById("tableNumber").value;
+
+                const notes =
+                    document.getElementById("orderNotes").value;
+
+                const orderNumber =
+                    "BFH-" +
+                    Math.floor(1000 + Math.random() * 9000);
+
+                const total = cart.reduce(
+                    (sum, item) =>
+                        sum + item.price * item.quantity,
+                    0
+                );
+
+                const order = {
+                    orderNumber,
+                    customerName,
+                    orderType,
+                    tableGroup: tableGroup ? tableGroup.value : "",
+                    tableNumber,
+                    notes,
+                    total,
+                    items: cart
+                };
+
+                console.log("Order submitted", order);
+
+                document
+                    .getElementById("orderNumber")
+                    .textContent = orderNumber;
+
+                document
+                    .getElementById("successTotal")
+                    .textContent = peso(total);
+
+                checkoutContent.style.display = "none";
+                success.classList.add("active");
+
+            }
+
+
+            /* =========================================================
+               TOAST
+            ========================================================= */
+
+            let toastTimer;
+
+            function showToast(message) {
+
+                toast.textContent = message;
+                toast.classList.add("show");
+
+                clearTimeout(toastTimer);
+
+                toastTimer = window.setTimeout(() => {
+                    toast.classList.remove("show");
+                }, 2200);
+
+            }
+
+
+            /* =========================================================
+               INITIALIZE
+            ========================================================= */
+
+            renderMenu();
+
+            updateCart();
+
+
+        }
+    </script>
+
+</body>
+
+</html>
+<script>
+    /* =========================================================
+       PESO FORMAT
+    ========================================================= */
+
+    function peso(value) {
+
+        return "₱" +
+            Number(value).toLocaleString(
+                "en-PH",
+                {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2
+                }
+            );
+
+    }
+
+
+    /* =========================================================
+       ESCAPE HTML
+    ========================================================= */
+
+    function escapeHTML(value) {
+
+        return String(value)
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#039;");
+
+    }
+
+
+    /* =========================================================
+       PRODUCT IMAGE
+    ========================================================= */
+
+    function productImage(product) {
+
+        return `
+
+        <img
+            src="${product.image}"
+            alt="${escapeHTML(product.name)}"
+            onerror="
+                this.style.display='none';
+                this.parentElement
+                    .querySelector('.image-placeholder')
+                    .style.display='flex';
+            "
+        >
+
+        <div
+            class="image-placeholder"
+            style="display:none;"
+        >
+            ${escapeHTML(product.name)}
+        </div>
+
+    `;
+
+    }
+
+
+    /* =========================================================
+       FILTER
+    ========================================================= */
+
+    function getFilteredProducts() {
+
+        return menu.filter(product => {
+
+            const categoryMatch =
+                activeCategory === "All" ||
+                product.category === activeCategory;
+
+            const searchable = (
+                product.name +
+                " " +
+                product.category +
+                " " +
+                product.description +
+                " " +
+                product.options
+                    .map(option => option[0])
+                    .join(" ")
+            ).toLowerCase();
+
+            const searchMatch =
+                searchable.includes(
+                    searchTerm.toLowerCase()
+                );
+
+            return categoryMatch &&
+                searchMatch;
+
+        });
+
+    }
+
+
+    /* =========================================================
+       RENDER MENU
+    ========================================================= */
+
+    function renderMenu() {
+
+        const products =
+            getFilteredProducts();
+
+
+        menuTitle.textContent =
+            activeCategory === "All"
+                ? "Popular"
+                : activeCategory;
+
+
+        menuCount.textContent =
+            `${products.length} ${products.length === 1
+                ? "item"
+                : "items"
+            }`;
+
+
+        if (!products.length) {
+
+            menuList.innerHTML = `
+
+            <div class="empty">
+
+                <div class="empty-icon">
+                    ⌕
+                </div>
+
+                <h3>
+                    No items found
+                </h3>
+
+                <p>
+                    Try another category or search.
+                </p>
+
+            </div>
+
+        `;
+
+            return;
+        }
+
+
+        menuList.innerHTML =
+            products.map(product => {
+
+                const index =
+                    menu.indexOf(product);
+
+                const prices =
+                    product.options.map(
+                        option => option[1]
+                    );
+
+                const lowest =
+                    Math.min(...prices);
+
+                const highest =
+                    Math.max(...prices);
+
+                let priceText;
+
+                if (lowest === highest) {
+
+                    priceText =
+                        peso(lowest);
+
+                } else {
+
+                    priceText =
+                        `From ${peso(lowest)}`;
+
+                }
+
+
+                return `
+
+                <article
+                    class="menu-item"
+                    data-index="${index}"
+                >
+
+                    <div class="menu-image">
+
+                        ${productImage(product)}
+
+                        ${product.options.length > 1
+                        ? `
+                                <span class="badge">
+                                    Options
+                                </span>
+                            `
+                        : ""
+                    }
+
+                    </div>
+
+
+                    <div class="menu-info">
+
+                        <div class="menu-category">
+                            ${escapeHTML(
+                        product.category
+                    )}
+                        </div>
+
+
+                        <div class="menu-name">
+                            ${escapeHTML(
+                        product.name
+                    )}
+                        </div>
+
+
+                        <div class="menu-description">
+                            ${escapeHTML(
+                        product.description
+                    )}
+                        </div>
+
+
+                        <div class="menu-bottom">
+
+                            <div class="menu-price">
+
+                                ${priceText}
+
+                                ${product.options.length > 1
+                        ? `
+                                        <small>
+                                            · ${product.options.length} options
+                                        </small>
+                                    `
+                        : ""
+                    }
+
+                            </div>
+
+
+                            <button
+                                class="select-button"
+                                type="button"
+                                data-index="${index}"
+                            >
+                                ${product.options.length > 1
+                        ? "Choose"
+                        : "Add"
+                    }
+                            </button>
+
+                        </div>
+
+                    </div>
+
+                </article>
+
+            `;
+
+            }).join("");
+
+
+        document
+            .querySelectorAll(".menu-item")
+            .forEach(card => {
+
+                card.addEventListener(
+                    "click",
+                    event => {
+
+                        if (
+                            event.target.closest(
+                                ".select-button"
+                            )
+                        ) {
+                            return;
+                        }
+
+                        openProduct(
+                            Number(
+                                card.dataset.index
+                            )
+                        );
+
+                    }
+                );
+
+            });
+
+
+        document
+            .querySelectorAll(".select-button")
+            .forEach(button => {
+
+                button.addEventListener(
+                    "click",
+                    event => {
+
+                        event.stopPropagation();
+
+                        openProduct(
+                            Number(
+                                button.dataset.index
+                            )
+                        );
+
+                    }
+                );
+
+            });
+
+    }
+
+
+    /* =========================================================
+       OPEN PRODUCT
+    ========================================================= */
+
+    function openProduct(index) {
+
+        selectedProduct =
+            menu[index];
+
+        selectedVariant = 0;
+
+        selectedQuantity = 1;
+
+
+        detailTitle.textContent =
+            selectedProduct.name;
+
+
+        detailDescription.textContent =
+            selectedProduct.description;
+
+
+        detailImage.innerHTML = `
+
+        <button
+            class="detail-back"
+            id="closeProductButton"
+            type="button"
+        >
+            ←
+        </button>
+
+        <button
+            class="detail-favorite"
+            type="button"
+        >
+            ♡
+        </button>
+
+        ${productImage(selectedProduct)}
+
+    `;
+
+
+        document
+            .getElementById(
+                "closeProductButton"
+            )
+            .addEventListener(
+                "click",
+                closeProduct
+            );
+
+
+        renderVariants();
+
+        updateProduct();
+
+
+        productOverlay.classList.add(
+            "active"
+        );
+
+        document.body.style.overflow =
+            "hidden";
+
+    }
+
+
+    /* =========================================================
+       CLOSE PRODUCT
+    ========================================================= */
+
+    function closeProduct() {
+
+        productOverlay.classList.remove(
+            "active"
+        );
+
+        document.body.style.overflow =
+            "";
+
+    }
+
+
+    /* =========================================================
+       VARIANTS
+    ========================================================= */
+
+    function renderVariants() {
+
+        if (
+            selectedProduct.options.length <= 1
+        ) {
+
+            variantSection.style.display =
+                "none";
+
+            variantList.innerHTML =
+                "";
+
+            return;
+        }
+
+
+        variantSection.style.display =
+            "block";
+
+
+        variantList.innerHTML =
+            selectedProduct.options
+                .map(
+                    (option, index) => {
+
+                        return `
+
+                        <div class="variant">
+
+                            <input
+                                type="radio"
+                                name="productVariant"
+                                id="variant-${index}"
+                                value="${index}"
+                                ${index === 0
+                                ? "checked"
+                                : ""
+                            }
+                            >
+
+                            <label
+                                for="variant-${index}"
+                            >
+
+                                <span
+                                    class="variant-left"
+                                >
+
+                                    <span
+                                        class="radio"
+                                    ></span>
+
+                                    <span>
+                                        ${escapeHTML(
+                                option[0]
+                            )}
+                                    </span>
+
+                                </span>
+
+                                <span
+                                    class="variant-price"
+                                >
+                                    ${peso(
+                                option[1]
+                            )}
+                                </span>
+
+                            </label>
+
+                        </div>
+
+                    `;
+
+                    }
+                )
+                .join("");
+
+
+        document
+            .querySelectorAll(
+                'input[name="productVariant"]'
+            )
+            .forEach(input => {
+
+                input.addEventListener(
+                    "change",
+                    () => {
+
+                        selectedVariant =
+                            Number(
+                                input.value
+                            );
+
+                        updateProduct();
+
+                    }
+                );
+
+            });
+
+    }
+
+
+    /* =========================================================
+       UPDATE PRODUCT
+    ========================================================= */
+
+    function updateProduct() {
+
+        if (!selectedProduct) {
+            return;
+        }
+
+
+        const option =
+            selectedProduct.options[
+            selectedVariant
+            ];
+
+
+        detailPrice.textContent =
+            peso(option[1]);
+
+
+        detailTotal.textContent =
+            peso(
+                option[1] *
+                selectedQuantity
+            );
+
+
+        quantityValue.textContent =
+            selectedQuantity;
+
+    }
+
+
+    /* =========================================================
+       QUANTITY
+    ========================================================= */
+
+    document
+        .getElementById("quantityMinus")
+        .addEventListener(
+            "click",
+            () => {
+
+                if (
+                    selectedQuantity > 1
+                ) {
+
+                    selectedQuantity--;
+
+                    updateProduct();
+
+                }
+
+            }
+        );
+
+
+    document
+        .getElementById("quantityPlus")
+        .addEventListener(
+            "click",
+            () => {
+
+                if (
+                    selectedQuantity < 99
+                ) {
+
+                    selectedQuantity++;
+
+                    updateProduct();
+
+                }
+
+            }
+        );
+
+
+    /* =========================================================
+       ADD TO ORDER
+    ========================================================= */
+
+    document
+        .getElementById("addToOrder")
+        .addEventListener(
+            "click",
+            () => {
+
+                if (!selectedProduct) {
+                    return;
+                }
+
+
+                const option =
+                    selectedProduct.options[
+                    selectedVariant
+                    ];
+
+
+                const existing =
+                    cart.find(item =>
+                        item.name ===
+                        selectedProduct.name &&
+                        item.variant ===
+                        option[0]
+                    );
+
+
+                if (existing) {
+
+                    existing.quantity +=
+                        selectedQuantity;
+
+                } else {
+
+                    cart.push({
+
+                        name:
+                            selectedProduct.name,
+
+                        variant:
+                            option[0],
+
+                        price:
+                            option[1],
+
+                        quantity:
+                            selectedQuantity
+
+                    });
+
+                }
+
+
+                updateCart();
+
+                closeProduct();
+
+                showToast(
+                    "Added to your order"
+                );
+
+            }
+        );
+
+
+    /* =========================================================
+       UPDATE CART
+    ========================================================= */
+
+    function updateCart() {
+
+        const count =
+            cart.reduce(
+                (sum, item) =>
+                    sum + item.quantity,
+                0
+            );
+
+
+        const total =
+            cart.reduce(
+                (sum, item) =>
+                    sum +
+                    item.price *
+                    item.quantity,
+                0
+            );
+
+
+        cartCount.textContent =
+            count;
+
+        floatingItems.textContent =
+            `${count} ${count === 1
+                ? "item"
+                : "items"
+            }`;
+
+        floatingTotal.textContent =
+            peso(total);
+
+        cartTotal.textContent =
+            peso(total);
+
+
+        renderCart();
+
+    }
+
+
+    /* =========================================================
+       RENDER CART
+    ========================================================= */
+
+    function renderCart() {
+
+        if (!cart.length) {
+
+            cartList.innerHTML = `
+
+            <div class="empty">
+
+                <div class="empty-icon">
+                    🛒
+                </div>
+
+                <h3>
+                    Your order is empty
+                </h3>
+
+                <p>
+                    Add something delicious.
+                </p>
+
+            </div>
+
+        `;
+
+            return;
+        }
+
+
+        cartList.innerHTML =
+            cart.map(
+                (item, index) => `
+
+                <div class="cart-item">
+
+                    <div>
+
+                        <div class="cart-name">
+                            ${escapeHTML(
+                    item.name
+                )}
+                        </div>
+
+                        <div class="cart-variant">
+                            ${escapeHTML(
+                    item.variant
+                )}
+                        </div>
+
+                        <div class="cart-price">
+                            ${peso(
+                    item.price
+                )}
+                        </div>
+
+                    </div>
+
+
+                    <div class="cart-controls">
+
+                        <button
+                            type="button"
+                            data-index="${index}"
+                            data-action="minus"
+                        >
+                            −
+                        </button>
+
+                        <span
+                            class="cart-quantity"
+                        >
+                            ${item.quantity}
+                        </span>
+
+                        <button
+                            type="button"
+                            data-index="${index}"
+                            data-action="plus"
+                        >
+                            +
+                        </button>
+
+                    </div>
+
+                </div>
+
+            `
+            )
+                .join("");
+
+
+        document
+            .querySelectorAll(
+                ".cart-controls button"
+            )
+            .forEach(button => {
+
+                button.addEventListener(
+                    "click",
+                    () => {
+
+                        const index =
+                            Number(
+                                button.dataset.index
+                            );
+
+
+                        if (
+                            button.dataset.action ===
+                            "plus"
+                        ) {
+
+                            cart[index].quantity++;
+
+                        } else {
+
+                            cart[index].quantity--;
+
+                            if (
+                                cart[index].quantity <= 0
+                            ) {
+
+                                cart.splice(
+                                    index,
+                                    1
+                                );
+
+                            }
+
+                        }
+
+
+                        updateCart();
+
+                    }
+                );
+
+            });
+
+    }
+
+
+    /* =========================================================
+       CART OPEN
+    ========================================================= */
+
+    function openCart() {
+
+        cartDrawer.classList.add(
+            "active"
+        );
+
+        cartOverlay.classList.add(
+            "active"
+        );
+
+    }
+
+
+    function closeCart() {
+
+        cartDrawer.classList.remove(
+            "active"
+        );
+
+        cartOverlay.classList.remove(
+            "active"
+        );
+
+    }
+
+
+    document
+        .getElementById("headerCart")
+        .addEventListener(
+            "click",
+            openCart
+        );
+
+
+    document
+        .getElementById("floatingCart")
+        .addEventListener(
+            "click",
+            openCart
+        );
+
+
+    document
+        .getElementById("closeCart")
+        .addEventListener(
+            "click",
+            closeCart
+        );
+
+
+    cartOverlay.addEventListener(
+        "click",
+        closeCart
+    );
+
+
+    /* =========================================================
+       SEARCH
+    ========================================================= */
+
+    document
+        .getElementById("searchInput")
+        .addEventListener(
+            "input",
+            event => {
+
+                searchTerm =
+                    event.target.value.trim();
+
+                renderMenu();
+
+            }
+        );
+
+
+    /* =========================================================
+       CATEGORY FILTER
+    ========================================================= */
+
+    document
+        .querySelectorAll(".category")
+        .forEach(button => {
+
+            button.addEventListener(
+                "click",
+                () => {
+
+                    document
+                        .querySelectorAll(
+                            ".category"
+                        )
+                        .forEach(item => {
+
+                            item.classList.remove(
+                                "active"
+                            );
+
+                        });
+
+
+                    button.classList.add(
+                        "active"
+                    );
+
+
+                    activeCategory =
+                        button.dataset.category;
+
+
+                    renderMenu();
+
+
+                    button.scrollIntoView({
+
+                        behavior: "smooth",
+
+                        block: "nearest",
+
+                        inline: "center"
+
+                    });
+
+                }
+            );
+
+        });
+
+
+    /* =========================================================
+       CHECKOUT
+    ========================================================= */
+
+    const checkoutOverlay =
+        document.getElementById(
+            "checkoutOverlay"
+        );
+
+    const checkoutContent =
+        document.getElementById(
+            "checkoutContent"
+        );
+
+    const success =
+        document.getElementById(
+            "success"
+        );
+
+
+    document
+        .getElementById(
+            "checkoutButton"
+        )
+        .addEventListener(
+            "click",
+            () => {
+
+                if (!cart.length) {
+
+                    showToast(
+                        "Your order is empty."
+                    );
+
+                    return;
+                }
+
+
+                closeCart();
+
+
+                checkoutOverlay.classList.add(
+                    "active"
+                );
+
+            }
+        );
+
+
+    /* =========================================================
+       ORDER TYPE
+    ========================================================= */
+
+    document
+        .getElementById("orderType")
+        .addEventListener(
+            "change",
+            event => {
+
+                const tableGroup =
+                    document.getElementById(
+                        "tableGroup"
+                    );
+
+
+                if (
+                    event.target.value ===
+                    "Dine In"
+                ) {
+
+                    tableGroup.style.display =
+                        "block";
+
+                } else {
+
+                    tableGroup.style.display =
+                        "none";
+
+                }
+
+            }
+        );
+
+
+    /* =========================================================
+       PLACE ORDER
+    ========================================================= */
+
+    document
+        .getElementById("placeOrder")
+        .addEventListener(
+            "click",
+            () => {
+
+                const customerName =
+                    document
+                        .getElementById(
+                            "customerName"
+                        )
+                        .value
+                        .trim();
+
+
+                const orderType =
+                    document
+                        .getElementById(
+                            "orderType"
+                        )
+                        .value;
+
+
+                const tableNumber =
+                    document
+                        .getElementById(
+                            "tableNumber"
+                        )
+                        .value
+                        .trim();
+
+
+                const notes =
+                    document
+                        .getElementById(
+                            "orderNotes"
+                        )
+                        .value
+                        .trim();
+
+
+                if (!customerName) {
+
+                    showToast(
+                        "Please enter your name."
+                    );
+
+                    return;
+                }
+
+
+                if (
+                    orderType === "Dine In" &&
+                    !tableNumber
+                ) {
+
+                    showToast(
+                        "Please enter your table number."
+                    );
+
+                    return;
+                }
+
+
+                const orderNumber =
+                    "BFH-" +
+                    Math.floor(
+                        1000 +
+                        Math.random() *
+                        9000
+                    );
+
+
+                const total =
+                    cart.reduce(
+                        (sum, item) =>
+                            sum +
+                            item.price *
+                            item.quantity,
+                        0
+                    );
+
+
+                const order = {
+
+                    order_number:
+                        orderNumber,
+
+                    customer_name:
+                        customerName,
+
+                    order_type:
+                        orderType,
+
+                    table_number:
+                        tableNumber,
+
+                    notes:
+                        notes,
+
+                    items:
+                        cart.map(item => ({
+                            name: item.name,
+                            variant: item.variant,
+                            price: item.price,
+                            quantity: item.quantity
+                        })),
+
+                    total:
+                        total,
+
+                    status:
+                        "Pending",
+
+                    created_at:
+                        new Date().toISOString()
+
+                };
+
+
+                /*
+                    TEMPORARY FRONTEND ONLY.
+    
+                    Later connect this object
+                    to your FastAPI backend.
+                */
+
+                console.log(
+                    "BLESSIE FOOD HUB ORDER",
+                    order
+                );
+
+
+                document.getElementById(
+                    "orderNumber"
+                ).textContent =
+                    orderNumber;
+
+
+                checkoutContent.style.display =
+                    "none";
+
+
+                success.classList.add(
+                    "active"
+                );
+
+
+                cart = [];
+
+                updateCart();
+
+            }
+        );
+
+
+    /* =========================================================
+       CANCEL CHECKOUT
+    ========================================================= */
+
+    document
+        .getElementById(
+            "cancelCheckout"
+        )
+        .addEventListener(
+            "click",
+            () => {
+
+                checkoutOverlay.classList.remove(
+                    "active"
+                );
+
+            }
+        );
+
+
+    /* =========================================================
+       DONE
+    ========================================================= */
+
+    document
+        .getElementById(
+            "doneButton"
+        )
+        .addEventListener(
+            "click",
+            () => {
+
+                checkoutOverlay.classList.remove(
+                    "active"
+                );
+
+
+                checkoutContent.style.display =
+                    "block";
+
+
+                success.classList.remove(
+                    "active"
+                );
+
+
+                document.getElementById(
+                    "customerName"
+                ).value = "";
+
+
+                document.getElementById(
+                    "tableNumber"
+                ).value = "";
+
+
+                document.getElementById(
+                    "orderNotes"
+                ).value = "";
+
+            }
+        );
+
+
+    /* =========================================================
+       TOAST
+    ========================================================= */
+
+    let toastTimer;
+
+    function showToast(message) {
+
+        toast.textContent =
+            message;
+
+        toast.classList.add(
+            "show"
+        );
+
+
+        clearTimeout(
+            toastTimer
+        );
+
+
+        toastTimer =
+            setTimeout(
+                () => {
+
+                    toast.classList.remove(
+                        "show"
+                    );
+
+                },
+                1800
+            );
+
+    }
+
+
+    /* =========================================================
+       CLICK OUTSIDE PRODUCT
+    ========================================================= */
+
+    productOverlay.addEventListener(
+        "click",
+        event => {
+
+            if (
+                event.target ===
+                productOverlay
+            ) {
+
+                closeProduct();
+
+            }
+
+        }
+    );
+
+
+    /* =========================================================
+       ESCAPE
+    ========================================================= */
+
+    document.addEventListener(
+        "keydown",
+        event => {
+
+            if (
+                event.key ===
+                "Escape"
+            ) {
+
+                closeProduct();
+
+                closeCart();
+
+                checkoutOverlay.classList.remove(
+                    "active"
+                );
+
+            }
+
+        }
+    );
+
+
+    /* =========================================================
+       INITIALIZE
+    ========================================================= */
+
+    renderMenu();
+
+    updateCart();
+
+</script>
+
+</body>
+
+</html>

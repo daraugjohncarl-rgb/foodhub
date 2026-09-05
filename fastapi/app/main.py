@@ -238,6 +238,9 @@ app.include_router(purchase_orders_router, prefix="/api/v1")
 app.include_router(customer_orders_router, prefix="/api/v1")
 app.include_router(shifts_router, prefix="/api/v1")
 
+from app.routers.tables import router as tables_router
+app.include_router(tables_router, prefix="/api/v1")
+
 # Mount static files directories to serve frontend assets using absolute paths
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 if os.path.exists(os.path.join(STATIC_DIR, "assets")):
@@ -299,7 +302,7 @@ def get_kitchen_shell():
 @app.get("/customer.html", response_class=FileResponse)
 @app.get("/costumer", response_class=FileResponse)
 def get_customer_page():
-    return FileResponse(os.path.join(STATIC_DIR, "pages", "customer.html"))
+    return FileResponse(os.path.join(STATIC_DIR, "customer.html"))
 
 
 

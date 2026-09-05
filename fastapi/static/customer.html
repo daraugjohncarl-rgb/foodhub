@@ -1,216 +1,551 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Customer Portal — Blessie FoodHub</title>
-    <!-- Google Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <!-- FontAwesome -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Custom CSS -->
+
+    <title>Blessie Food Hub | Customer Menu</title>
+
     <link rel="stylesheet" href="/static/css/customer.css">
 </head>
+
 <body>
-    <div class="app-container">
-        <!-- Top App Header -->
-        <header class="glass-header">
-            <div class="header-brand">
-                <div class="brand-logo-wrap">
-                    <img src="/static/images/blessie.png" alt="Logo" class="brand-logo" onerror="this.style.display='none'; document.getElementById('logoFallback').style.display='flex';">
-                    <div id="logoFallback" class="logo-fallback" style="display:none;"><i class="fas fa-utensils"></i></div>
-                </div>
-                <div class="brand-text">
-                    <h1>Blessie FoodHub</h1>
-                    <p>Digital QR Menu & Live Order Tracker</p>
-                </div>
+
+
+    <!-- =========================================================
+     LANDING PAGE
+========================================================= -->
+
+    <section class="landing-page" id="landingPage">
+
+        <div class="landing-content">
+
+            <div class="landing-kicker">
+                Welcome to
             </div>
 
-            <!-- View Navigation Switcher -->
-            <div class="view-tabs">
-                <button class="tab-btn active" id="tabMenuBtn" onclick="switchView('menu')">
-                    <i class="fas fa-utensils"></i> <span>Menu</span>
-                </button>
-                <button class="tab-btn" id="tabOrdersBtn" onclick="switchView('orders')">
-                    <i class="fas fa-receipt"></i> <span>My Orders</span>
-                    <span class="active-orders-badge" id="activeOrdersBadge" style="display:none;">0</span>
-                </button>
+            <h1 class="landing-title">
+                Blessie Food Hub
+            </h1>
+
+            <button class="order-button" id="orderButton" type="button">
+                Order now
+            </button>
+
+            <div class="landing-loader" id="landingLoader" role="status" aria-live="polite">
+                Loading menu
             </div>
 
-            <!-- Header Right Actions -->
-            <div class="header-actions">
-                <div id="userBadgeContainer" class="user-badge" style="display:none;">
-                    <span id="customerUserLabel"><i class="fas fa-user-circle"></i> Guest</span>
-                    <button class="btn-logout" id="customerLogoutBtn" title="Sign Out">
-                        <i class="fas fa-sign-out-alt"></i>
-                    </button>
-                </div>
-                <button class="cart-toggle-btn" id="cartToggleBtn" aria-label="View Cart">
-                    <i class="fas fa-shopping-cart"></i>
-                    <span class="cart-badge" id="cartBadge">0</span>
-                </button>
-            </div>
-        </header>
-
-        <!-- Main Content Area -->
-        <main class="main-content">
-            <!-- 1. MENU VIEW -->
-            <section id="menuView" class="view-section active">
-                <!-- Search & Filters Toolbar -->
-                <div class="menu-toolbar glass-panel">
-                    <div class="search-box">
-                        <i class="fas fa-search"></i>
-                        <input type="text" id="menuSearchInput" placeholder="Search delicious food, drinks, desserts..." autocomplete="off">
-                        <button id="clearSearchBtn" class="clear-search-btn" style="display:none;"><i class="fas fa-times"></i></button>
-                    </div>
-                </div>
-
-                <!-- Category Navigation Pills -->
-                <nav class="category-nav" id="categoryNav">
-                    <!-- Category pills dynamically injected here -->
-                </nav>
-
-                <!-- Menu Catalog Sections -->
-                <div class="menu-sections" id="menuSections">
-                    <div class="loader-container">
-                        <div class="spinner"></div>
-                        <p>Loading fresh menu...</p>
-                    </div>
-                </div>
-            </section>
-
-            <!-- 2. MY ORDERS / LIVE TRACKER VIEW -->
-            <section id="ordersView" class="view-section" style="display:none;">
-                <!-- Tracker Search Header -->
-                <div class="tracker-header glass-panel">
-                    <div>
-                        <h2><i class="fas fa-satellite-dish" style="color:var(--primary);"></i> Live Order Tracker</h2>
-                        <p>Track your food preparation status in real-time from the kitchen to your table.</p>
-                    </div>
-                    <div class="track-input-group">
-                        <input type="text" id="orderTrackInput" placeholder="Enter Order # (e.g. CUST-XXXXXX)">
-                        <button class="btn-primary" onclick="trackSpecificOrder()"><i class="fas fa-search"></i> Track</button>
-                    </div>
-                </div>
-
-                <!-- Tracked Single Order Display (if searched) -->
-                <div id="trackedOrderResult" style="display:none; margin-bottom:24px;"></div>
-
-                <!-- Orders History List -->
-                <div class="orders-history-header">
-                    <h3>Recent Orders</h3>
-                    <button class="btn-refresh" onclick="loadOrderHistory()"><i class="fas fa-sync-alt"></i> Refresh</button>
-                </div>
-                <div id="ordersHistoryList" class="orders-history-list">
-                    <div class="loader-container">
-                        <div class="spinner"></div>
-                        <p>Fetching your orders...</p>
-                    </div>
-                </div>
-            </section>
-        </main>
-
-        <!-- Cart Slide-out Sidebar -->
-        <aside class="cart-sidebar glass-sidebar" id="cartSidebar">
-            <div class="cart-header">
-                <div class="cart-title">
-                    <i class="fas fa-shopping-basket"></i>
-                    <h2>Your Tray</h2>
-                </div>
-                <button class="close-cart-btn" id="closeCartBtn" aria-label="Close Cart">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-            
-            <div class="cart-body">
-                <div id="cartItems" class="cart-items-container">
-                    <div class="empty-cart-state">
-                        <i class="fas fa-utensils"></i>
-                        <h4>Your tray is empty</h4>
-                        <p>Select delicious dishes from the menu to start your order.</p>
-                    </div>
-                </div>
-            </div>
-
-            <div class="cart-footer glass-panel">
-                <div class="cart-summary">
-                    <div class="summary-line">
-                        <span>Subtotal</span>
-                        <span id="cartSubtotal">₱0.00</span>
-                    </div>
-                    <div class="summary-line total-line">
-                        <span>Total Amount</span>
-                        <span id="cartTotal">₱0.00</span>
-                    </div>
-                </div>
-                
-                <form id="checkoutForm" class="checkout-form">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label><i class="fas fa-user"></i> Your Name <span class="req">*</span></label>
-                            <input type="text" id="customerName" placeholder="e.g. Maria Santos" required>
-                        </div>
-                        <div class="form-group">
-                            <label><i class="fas fa-chair"></i> Table / Chair #</label>
-                            <input type="text" id="tableNumber" placeholder="e.g. Table 4 (or Takeout)">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label><i class="fas fa-concierge-bell"></i> Dining Preference <span class="req">*</span></label>
-                        <select id="orderType" required>
-                            <option value="Dine-in">🍽️ Dine-in</option>
-                            <option value="Takeout">🛍️ Takeout</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label><i class="fas fa-comment-dots"></i> Special Instructions</label>
-                        <textarea id="orderNotes" rows="2" placeholder="e.g. Less ice, extra gravy, no spicy sauce..."></textarea>
-                    </div>
-                    
-                    <button type="submit" class="submit-order-btn" id="submitOrderBtn">
-                        <span id="submitOrderText">Place Order Now</span>
-                        <i class="fas fa-arrow-right"></i>
-                    </button>
-                </form>
-            </div>
-        </aside>
-        
-        <!-- Backdrop Overlay -->
-        <div class="overlay" id="overlay"></div>
-
-        <!-- Order Success Dialog Modal -->
-        <div class="modal-dialog" id="successModal">
-            <div class="modal-card glass-panel">
-                <div class="modal-icon-success">
-                    <i class="fas fa-check-circle"></i>
-                </div>
-                <h2>Order Sent Successfully!</h2>
-                <p>Your order has been transmitted directly to the kitchen and cashier queue.</p>
-                
-                <div class="order-id-badge">
-                    <span class="lbl">Order Tracking #:</span>
-                    <strong id="createdOrderNumber">—</strong>
-                    <button class="btn-copy" onclick="copyOrderNumber()" title="Copy Order #"><i class="fas fa-copy"></i></button>
-                </div>
-
-                <div class="modal-actions">
-                    <button class="btn-secondary" onclick="viewOrderInTracker()">
-                        <i class="fas fa-satellite-dish"></i> Track Live Status
-                    </button>
-                    <button class="btn-primary" id="newOrderBtn">
-                        <i class="fas fa-plus"></i> Order More Food
-                    </button>
-                </div>
-            </div>
         </div>
 
-        <!-- Toast Notifications Container -->
-        <div id="toastContainer" class="toast-container"></div>
+    </section>
+
+
+    <!-- =========================================================
+     HEADER
+========================================================= -->
+
+    <header class="header">
+
+        <div class="header-inner">
+
+            <div class="brand">
+
+                <div class="logo">
+                    <img src="/static/images/blessie logo.png" alt="Blessie Food Hub logo">
+                </div>
+
+                <div>
+
+                    <div class="brand-name">
+                        BLESSIE FOOD HUB
+                    </div>
+
+                    <div class="brand-subtitle">
+                        REFRESHMENTS & ENTERTAINMENT
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <button class="header-cart" id="headerCart" type="button">
+
+                🛒
+
+                <span>
+                    Cart
+                </span>
+
+                <span class="cart-count" id="cartCount">
+                    0
+                </span>
+
+            </button>
+
+        </div>
+
+    </header>
+
+
+    <!-- =========================================================
+     MAIN
+========================================================= -->
+
+    <main class="main">
+
+
+        <!-- =====================================================
+         ACTUAL RESTAURANT PHOTO
+    ====================================================== -->
+
+        <section class="restaurant-photo">
+
+            <img src="/static/images/box.png" alt="Blessie Food Hub logo">
+            this.style.display='none';
+            this.parentElement.style.background='#ebe7df';
+            ">
+
+        </section>
+
+
+        <!-- =====================================================
+         SEARCH
+    ====================================================== -->
+
+        <div class="search">
+
+            <span class="search-icon">
+                ⌕
+            </span>
+
+            <input id="searchInput" type="search" placeholder="Search our menu..." autocomplete="off">
+
+        </div>
+
+
+        <!-- =====================================================
+         CATEGORIES
+    ====================================================== -->
+
+        <div class="category-scroll" id="categoryScroll">
+
+            <div class="categories" id="categories">
+
+                <button class="category active" data-category="All" type="button">
+                    Popular
+                </button>
+
+                <button class="category" data-category="Snacks" type="button">
+                    Snacks
+                </button>
+
+                <button class="category" data-category="Bilao Snacks" type="button">
+                    Bilao
+                </button>
+
+                <button class="category" data-category="Non-Alcoholic Drinks" type="button">
+                    Drinks
+                </button>
+
+                <button class="category" data-category="Alcoholic Drinks" type="button">
+                    Alcoholic
+                </button>
+
+                <button class="category" data-category="Gen-Z Tower" type="button">
+                    Gen-Z Tower
+                </button>
+
+                <button class="category" data-category="Add-ons" type="button">
+                    Add-ons
+                </button>
+
+                <button class="category" data-category="Milktea w/ Boba Pearls" type="button">
+                    Milktea
+                </button>
+
+                <button class="category" data-category="Sticky Milk" type="button">
+                    Sticky Milk
+                </button>
+
+                <button class="category" data-category="Milky Shake Frappe" type="button">
+                    Frappe
+                </button>
+
+                <button class="category" data-category="Cold Coffee" type="button">
+                    Cold Coffee
+                </button>
+
+                <button class="category" data-category="Hot Coffee" type="button">
+                    Hot Coffee
+                </button>
+
+                <button class="category" data-category="Unli Samgyupsal" type="button">
+                    Samgyupsal
+                </button>
+
+            </div>
+
+        </div>
+
+
+        <!-- =====================================================
+         MENU HEADER
+    ====================================================== -->
+
+        <div class="menu-header">
+
+            <h2 id="menuTitle">
+                Popular
+            </h2>
+
+            <span class="menu-count" id="menuCount">
+                0 items
+            </span>
+
+        </div>
+
+
+        <!-- =====================================================
+         MENU LIST
+    ====================================================== -->
+
+        <div class="menu-list" id="menuList"></div>
+
+    </main>
+
+
+    <!-- =========================================================
+     FLOATING CART
+========================================================= -->
+
+    <div class="floating-cart" id="floatingCart">
+
+        <div class="cart-left">
+
+            <div class="cart-icon">
+                🛒
+            </div>
+
+            <div class="cart-info">
+
+                <strong>
+                    Your Order
+                </strong>
+
+                <small id="floatingItems">
+                    0 items
+                </small>
+
+            </div>
+
+        </div>
+
+        <div class="cart-total" id="floatingTotal">
+            ₱0.00
+        </div>
+
     </div>
 
-    <!-- Scripts -->
+
+    <!-- =========================================================
+     PRODUCT MODAL
+========================================================= -->
+
+    <div class="product-overlay" id="productOverlay">
+
+        <div class="product-modal">
+
+            <div class="detail-image" id="detailImage">
+
+                <button class="detail-back" id="closeProduct" type="button">
+                    ←
+                </button>
+
+                <button class="detail-favorite" type="button">
+                    ♡
+                </button>
+
+            </div>
+
+
+            <div class="detail-content">
+
+                <div class="detail-heading">
+
+                    <h2 class="detail-title" id="detailTitle">
+                        Product
+                    </h2>
+
+                    <div class="detail-price" id="detailPrice">
+                        ₱0.00
+                    </div>
+
+                </div>
+
+
+                <p class="detail-description" id="detailDescription"></p>
+
+
+                <div class="detail-divider"></div>
+
+
+                <div id="variantSection">
+
+                    <div class="variant-title">
+                        Choose your option
+                    </div>
+
+                    <div class="variant-list" id="variantList"></div>
+
+                </div>
+
+
+                <div class="quantity-row">
+
+                    <span class="quantity-label">
+                        Quantity
+                    </span>
+
+                    <div class="quantity">
+
+                        <button id="quantityMinus" type="button">
+                            −
+                        </button>
+
+                        <span id="quantityValue">
+                            1
+                        </span>
+
+                        <button id="quantityPlus" type="button">
+                            +
+                        </button>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <div class="detail-footer">
+
+                <div class="total">
+
+                    <small>
+                        Total
+                    </small>
+
+                    <strong id="detailTotal">
+                        ₱0.00
+                    </strong>
+
+                </div>
+
+                <button class="add-button" id="addToOrder" type="button">
+                    Add to Order
+                </button>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- =========================================================
+     CART OVERLAY
+========================================================= -->
+
+    <div class="cart-overlay" id="cartOverlay"></div>
+
+
+    <!-- =========================================================
+     CART DRAWER
+========================================================= -->
+
+    <aside class="cart-drawer" id="cartDrawer">
+
+        <div class="cart-header">
+
+            <h2>
+                Your Order
+            </h2>
+
+            <button class="close-cart" id="closeCart" type="button">
+                ×
+            </button>
+
+        </div>
+
+
+        <div class="cart-list" id="cartList"></div>
+
+
+        <div class="cart-footer">
+
+            <div class="cart-total-row">
+
+                <span>
+                    Total
+                </span>
+
+                <span id="cartTotal">
+                    ₱0.00
+                </span>
+
+            </div>
+
+            <button class="checkout-button" id="checkoutButton" type="button">
+                Continue to Checkout
+            </button>
+
+        </div>
+
+    </aside>
+
+
+    <!-- =========================================================
+     CHECKOUT
+========================================================= -->
+
+    <div class="checkout-overlay" id="checkoutOverlay">
+
+        <div class="checkout-box">
+
+            <div class="checkout-header">
+
+                <h2>
+                    Checkout
+                </h2>
+
+                <p>
+                    No account required.
+                </p>
+
+            </div>
+
+
+            <div class="checkout-content" id="checkoutContent">
+
+                <div class="form-group">
+
+                    <label>
+                        CUSTOMER NAME
+                    </label>
+
+                    <input id="customerName" type="text" placeholder="Your name">
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label>
+                        ORDER TYPE
+                    </label>
+
+                    <select id="orderType">
+
+                        <option value="Dine In">
+                            Dine In
+                        </option>
+
+                        <option value="Take Out">
+                            Take Out
+                        </option>
+
+                    </select>
+
+                </div>
+
+
+                <div class="form-group" id="tableGroup">
+
+                    <label>
+                        TABLE NUMBER
+                    </label>
+
+                    <input id="tableNumber" type="text" placeholder="Example: Table 5">
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label>
+                        SPECIAL INSTRUCTIONS
+                    </label>
+
+                    <textarea id="orderNotes" rows="3" placeholder="Optional"></textarea>
+
+                </div>
+
+
+                <div class="checkout-actions">
+
+                    <button class="cancel-button" id="cancelCheckout" type="button">
+                        Cancel
+                    </button>
+
+                    <button class="place-button" id="placeOrder" type="button">
+                        Place Order
+                    </button>
+
+                </div>
+
+            </div>
+
+
+            <!-- SUCCESS -->
+
+            <div class="success" id="success">
+
+                <div class="success-icon">
+                    ✓
+                </div>
+
+                <h2>
+                    Order Received
+                </h2>
+
+                <p>
+                    Your order has been received.
+                    Please wait for our staff.
+                </p>
+
+                <div class="order-number">
+
+                    Order Number
+
+                    <br>
+
+                    <strong id="orderNumber">
+                        BFH-0000
+                    </strong>
+
+                </div>
+
+                <button class="done-button" id="doneButton" type="button">
+                    Done
+                </button>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- =========================================================
+     TOAST
+========================================================= -->
+
+    <div class="toast" id="toast"></div>
+
     <script src="/static/js/customer.js"></script>
 </body>
+
 </html>
