@@ -33,3 +33,4 @@ Thumbs.db
 
 # Local database backups
 /backups/
+inbox_pos.sql
