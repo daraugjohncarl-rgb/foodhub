@@ -14,7 +14,7 @@ const Utils = {
     const toast = document.createElement("div");
     toast.className = `toast toast-${type === 'danger' ? 'danger' : type === 'success' ? 'success' : 'info'}`;
     const icon = type === 'success' ? '✓' : type === 'danger' ? '⚠️' : 'ℹ';
-    toast.innerHTML = `<span>${icon}</span> <span>${msg}</span>`;
+    toast.innerHTML = `<span>${esc(icon)}</span> <span>${esc(msg)}</span>`;
     container.appendChild(toast);
 
     setTimeout(() => {
@@ -37,7 +37,7 @@ const Utils = {
     const content = document.getElementById("modal-content");
     content.innerHTML = `
       <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; padding:18px 24px; border-bottom:1px solid rgba(205,190,150,0.25);">
-        <h3 style="font-size:16px; font-weight:700; color:var(--text-main, #18181b);">${title}</h3>
+        <h3 style="font-size:16px; font-weight:700; color:var(--text-main, #18181b);">${esc(title)}</h3>
         <button type="button" class="btn-icon" onclick="Utils.closeModal()" style="border:none; background:transparent; cursor:pointer; font-size:16px; color:var(--text-muted);"><i class="fas fa-times"></i></button>
       </div>
       <div class="modal-body" style="padding:22px 24px;">${bodyHTML}</div>
@@ -59,7 +59,7 @@ const Utils = {
   confirmAction(title, msg, onConfirm) {
     this.openModal(
       title,
-      `<p style="margin: 0.5rem 0; color: var(--text-main); font-size: 0.95rem;">${msg}</p>`,
+      `<p style="margin: 0.5rem 0; color: var(--text-main); font-size: 0.95rem;">${esc(msg)}</p>`,
       `
         <button class="btn btn-outline" onclick="Utils.closeModal()">Cancel</button>
         <button class="btn btn-danger" id="confirm-btn-action">Confirm</button>
@@ -69,6 +69,19 @@ const Utils = {
       this.closeModal();
       onConfirm();
     };
+  },
+
+  /** Human-readable message from a FastAPI error body ({detail: "..."} or a 422 validation list). */
+  errorMessage(body, fallback = "Request failed.") {
+    if (!body) return fallback;
+    if (typeof body.detail === "string") return body.detail;
+    if (Array.isArray(body.detail) && body.detail.length) {
+      return body.detail.map(d => {
+        const field = Array.isArray(d.loc) ? d.loc.filter(p => p !== "body").join(".") : "";
+        return field ? `${field}: ${d.msg}` : d.msg;
+      }).join("; ");
+    }
+    return fallback;
   },
 
   formatCurrency(amount) {
@@ -98,10 +111,10 @@ generateReceiptHTML(order) {
     const itemsHtml = (order.items || []).map(it => `
       <div class="receipt-item">
         <span style="flex:1; padding-right:10px; word-break: break-word;">
-            ${it.name}<br>
-            <small>${it.quantity || 1} x ₱${Number(it.unit_price || it.price).toFixed(2)}</small>
+            ${esc(it.name)}<br>
+            <small>${esc(it.quantity || 1)} x ₱${esc(Number(it.unit_price || it.price).toFixed(2))}</small>
         </span>
-        <span style="white-space:nowrap;">₱${(Number(it.unit_price || it.price) * (it.quantity || 1)).toFixed(2)}</span>
+        <span style="white-space:nowrap;">₱${esc((Number(it.unit_price || it.price) * (it.quantity || 1)).toFixed(2))}</span>
       </div>
     `).join("");
 
@@ -120,9 +133,9 @@ generateReceiptHTML(order) {
             <p style="margin:2px 0;">Bago City, Negros Occidental</p>
           </div>
           <div class="receipt-divider"></div>
-          <p style="margin:2px 0;">Receipt No: ${receiptNo}</p>
-          <p style="margin:2px 0;">Date: ${dateStr}</p>
-          <p style="margin:2px 0;">Cashier: ${cashierName}</p>
+          <p style="margin:2px 0;">Receipt No: ${esc(receiptNo)}</p>
+          <p style="margin:2px 0;">Date: ${esc(dateStr)}</p>
+          <p style="margin:2px 0;">Cashier: ${esc(cashierName)}</p>
           <div class="receipt-divider"></div>
           <div style="font-size:0.85rem;">
             ${itemsHtml}
@@ -130,28 +143,28 @@ generateReceiptHTML(order) {
           <div class="receipt-divider"></div>
           <div class="receipt-totals">
             <span>Subtotal:</span>
-            <span>₱${subtotal.toFixed(2)}</span>
+            <span>₱${esc(subtotal.toFixed(2))}</span>
           </div>
           <div class="receipt-totals">
             <span>Discount:</span>
-            <span>₱${discount.toFixed(2)}</span>
+            <span>₱${esc(discount.toFixed(2))}</span>
           </div>
           <div class="receipt-totals bold">
             <span>TOTAL:</span>
-            <span>₱${total.toFixed(2)}</span>
+            <span>₱${esc(total.toFixed(2))}</span>
           </div>
           <br>
           <div class="receipt-totals">
-            <span>Payment (${order.payment_method || 'Cash'}):</span>
+            <span>Payment (${esc(order.payment_method || 'Cash')}):</span>
             <span></span>
           </div>
           <div class="receipt-totals">
             <span>Amount Received:</span>
-            <span>₱${Number(order.amount_paid || order.total_amount || 0).toFixed(2)}</span>
+            <span>₱${esc(Number(order.amount_paid || order.total_amount || 0).toFixed(2))}</span>
           </div>
           <div class="receipt-totals">
             <span>Change:</span>
-            <span>₱${Math.max(0, Number(order.amount_paid || order.total_amount || 0) - total).toFixed(2)}</span>
+            <span>₱${esc(Math.max(0, Number(order.amount_paid || order.total_amount || 0) - total).toFixed(2))}</span>
           </div>
           <div class="receipt-divider"></div>
           <div class="receipt-header" style="margin-top:16px;">

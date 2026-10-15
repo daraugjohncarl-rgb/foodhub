@@ -160,10 +160,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                         <tr>
                             <td>
                                 <div class="user-cell" style="display:flex; align-items:center; gap:12px;">
-                                    <div class="user-avatar" style="width:36px; height:36px; border-radius:50%; background:linear-gradient(135deg, #c9a227, #eab308); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px;">${initials}</div>
+                                    <div class="user-avatar" style="width:36px; height:36px; border-radius:50%; background:linear-gradient(135deg, #c9a227, #eab308); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px;">${esc(initials)}</div>
                                     <div>
-                                        <div style="font-weight:600; color:var(--text-main); font-size:13px;">${user.username}</div>
-                                        <div style="font-size:12px; color:var(--text-muted);">${user.email || 'No email specified'}</div>
+                                        <div style="font-weight:600; color:var(--text-main); font-size:13px;">${esc(user.username)}</div>
+                                        <div style="font-size:12px; color:var(--text-muted);">${esc(user.email || 'No email specified')}</div>
                                     </div>
                                 </div>
                             </td>
@@ -171,13 +171,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 <span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; padding:4px 10px; border-radius:12px; font-size:11px; font-weight:700;">BRANCH ADMIN</span>
                             </td>
                             <td>
-                                <span style="display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:${user.is_active ? 'var(--success, #10b981)' : 'var(--danger, #ef4444)'}">
+                                <span style="display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:${esc(user.is_active ? 'var(--success, #10b981)' : 'var(--danger, #ef4444)')}">
                                     <i class="fas fa-circle" style="font-size:8px;"></i>
-                                    ${user.is_active ? 'Active' : 'Inactive'}
+                                    ${esc(user.is_active ? 'Active' : 'Inactive')}
                                 </span>
                             </td>
                             <td style="color:var(--text-muted); font-size:13px;">
-                                ${createdDate}
+                                ${esc(createdDate)}
                             </td>
                         </tr>
                     `;
@@ -223,13 +223,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                     return `
                         <tr>
                             <td>
-                                <strong style="color:var(--text-main); font-size:13px;">${r.title}</strong>
-                                <div style="font-size:11px; color:var(--text-muted);">${r.tenant ? r.tenant.name : 'System Core'}</div>
+                                <strong style="color:var(--text-main); font-size:13px;">${esc(r.title)}</strong>
+                                <div style="font-size:11px; color:var(--text-muted);">${esc(r.tenant ? r.tenant.name : 'System Core')}</div>
                             </td>
-                            <td><span style="font-size:12px; color:var(--text-muted);">${r.category}</span></td>
-                            <td><span style="font-size:11px; font-weight:700; color:${priorityColor};">${r.priority}</span></td>
-                            <td><span style="font-size:11px; font-weight:700; color:${statusColor};">${r.status}</span></td>
-                            <td style="font-size:12px; color:var(--text-muted);">${dateStr}</td>
+                            <td><span style="font-size:12px; color:var(--text-muted);">${esc(r.category)}</span></td>
+                            <td><span style="font-size:11px; font-weight:700; color:${esc(priorityColor)};">${esc(r.priority)}</span></td>
+                            <td><span style="font-size:11px; font-weight:700; color:${esc(statusColor)};">${esc(r.status)}</span></td>
+                            <td style="font-size:12px; color:var(--text-muted);">${esc(dateStr)}</td>
                         </tr>
                     `;
                 }).join('');

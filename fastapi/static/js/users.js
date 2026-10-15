@@ -156,21 +156,21 @@ document.addEventListener('DOMContentLoaded', () => {
                         <tr>
                             <td>
                                 <div class="user-cell">
-                                    <div class="user-avatar">${initials}</div>
+                                    <div class="user-avatar">${esc(initials)}</div>
                                     <div>
-                                        <div class="user-info-name">${displayName}</div>
-                                        <div class="user-info-email">${user.email || user.username}</div>
+                                        <div class="user-info-name">${esc(displayName)}</div>
+                                        <div class="user-info-email">${esc(user.email || user.username)}</div>
                                     </div>
                                 </div>
                             </td>
-                            <td>${user.phone || '—'}</td>
-                            <td><span class="badge badge-${roleLower}">${formattedRole}</span></td>
+                            <td>${esc(user.phone || '—')}</td>
+                            <td><span class="badge badge-${esc(roleLower)}">${esc(formattedRole)}</span></td>
                             <td>
-                                <span class="${user.is_active ? 'status-active' : 'status-inactive'}">
-                                    ${user.is_active ? 'Active' : 'Inactive'}
+                                <span class="${esc(user.is_active ? 'status-active' : 'status-inactive')}">
+                                    ${esc(user.is_active ? 'Active' : 'Inactive')}
                                 </span>
                             </td>
-                            <td style="color:var(--text-muted); font-size:13px;">${createdDate}</td>
+                            <td style="color:var(--text-muted); font-size:13px;">${esc(createdDate)}</td>
                             <td>
                                 <div class="action-btns">
                                     <button class="btn btn-outline" style="padding:6px 10px; height:32px; font-size:12px;" onclick="openViewModal(${user.id})" title="View Details">
@@ -182,8 +182,8 @@ document.addEventListener('DOMContentLoaded', () => {
                                     <button class="btn btn-outline" style="padding:6px 10px; height:32px; font-size:12px;" onclick="openResetPwModal(${user.id})" title="Reset Password">
                                         <i class="fas fa-key"></i>
                                     </button>
-                                    <button class="btn btn-outline" style="padding:6px 10px; height:32px; font-size:12px; color:${user.is_active ? 'var(--warning)' : 'var(--success)'};" onclick="openDeactivateModal(${user.id}, ${user.is_active})" title="${user.is_active ? 'Deactivate' : 'Activate'}">
-                                        <i class="fas fa-${user.is_active ? 'user-slash' : 'user-check'}"></i>
+                                    <button class="btn btn-outline" style="padding:6px 10px; height:32px; font-size:12px; color:${esc(user.is_active ? 'var(--warning)' : 'var(--success)')};" onclick="openDeactivateModal(${user.id}, ${user.is_active})" title="${esc(user.is_active ? 'Deactivate' : 'Activate')}">
+                                        <i class="fas fa-${esc(user.is_active ? 'user-slash' : 'user-check')}"></i>
                                     </button>
                                     <button class="btn btn-danger" style="padding:6px 10px; height:32px; font-size:12px;" onclick="openDeleteModal(${user.id})" title="Delete User">
                                         <i class="fas fa-trash"></i>
@@ -216,13 +216,13 @@ document.addEventListener('DOMContentLoaded', () => {
         if (body) {
             body.innerHTML = `
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; font-size:13px;">
-                    <div><strong>Username:</strong> <div>${user.username}</div></div>
-                    <div><strong>Full Name:</strong> <div>${user.first_name || ''} ${user.last_name || ''}</div></div>
-                    <div><strong>Email:</strong> <div>${user.email || '—'}</div></div>
-                    <div><strong>Phone:</strong> <div>${user.phone || '—'}</div></div>
-                    <div><strong>Role:</strong> <div><span class="badge badge-${(user.role || '').toLowerCase()}">${user.role}</span></div></div>
-                    <div><strong>Status:</strong> <div>${user.is_active ? 'Active' : 'Inactive'}</div></div>
-                    <div><strong>Created At:</strong> <div>${new Date(user.created_at).toLocaleString()}</div></div>
+                    <div><strong>Username:</strong> <div>${esc(user.username)}</div></div>
+                    <div><strong>Full Name:</strong> <div>${esc(user.first_name || '')} ${esc(user.last_name || '')}</div></div>
+                    <div><strong>Email:</strong> <div>${esc(user.email || '—')}</div></div>
+                    <div><strong>Phone:</strong> <div>${esc(user.phone || '—')}</div></div>
+                    <div><strong>Role:</strong> <div><span class="badge badge-${esc((user.role || '').toLowerCase())}">${esc(user.role)}</span></div></div>
+                    <div><strong>Status:</strong> <div>${esc(user.is_active ? 'Active' : 'Inactive')}</div></div>
+                    <div><strong>Created At:</strong> <div>${esc(new Date(user.created_at).toLocaleString())}</div></div>
                 </div>
             `;
         }
@@ -248,36 +248,36 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
                     <div class="input-group">
                         <label>First Name</label>
-                        <input class="input-field" id="edit_first_name" value="${user.first_name || ''}" placeholder="First name">
+                        <input class="input-field" id="edit_first_name" value="${esc(user.first_name || '')}" placeholder="First name">
                     </div>
                     <div class="input-group">
                         <label>Last Name</label>
-                        <input class="input-field" id="edit_last_name" value="${user.last_name || ''}" placeholder="Last name">
+                        <input class="input-field" id="edit_last_name" value="${esc(user.last_name || '')}" placeholder="Last name">
                     </div>
                     <div class="input-group">
                         <label>Email</label>
-                        <input class="input-field" type="email" id="edit_email" value="${user.email || ''}" placeholder="Email">
+                        <input class="input-field" type="email" id="edit_email" value="${esc(user.email || '')}" placeholder="Email">
                     </div>
                     <div class="input-group">
                         <label>Phone</label>
-                        <input class="input-field" id="edit_phone" value="${user.phone || ''}" placeholder="Phone">
+                        <input class="input-field" id="edit_phone" value="${esc(user.phone || '')}" placeholder="Phone">
                     </div>
                     <div class="input-group">
                         <label>Role</label>
                         <select class="input-field" id="edit_role">
-                            <option value="ADMIN" ${user.role === 'ADMIN' ? 'selected' : ''}>Admin</option>
-                            <option value="MANAGER" ${user.role === 'MANAGER' ? 'selected' : ''}>Manager</option>
-                            <option value="INVENTORY" ${user.role === 'INVENTORY' ? 'selected' : ''}>Inventory Staff</option>
-                            <option value="CASHIER" ${user.role === 'CASHIER' ? 'selected' : ''}>Cashier</option>
-                            <option value="KITCHEN" ${user.role === 'KITCHEN' ? 'selected' : ''}>Kitchen Staff</option>
-                            <option value="SUPER_ADMIN" ${user.role === 'SUPER_ADMIN' ? 'selected' : ''}>Super Admin</option>
+                            <option value="ADMIN" ${esc(user.role === 'ADMIN' ? 'selected' : '')}>Admin</option>
+                            <option value="MANAGER" ${esc(user.role === 'MANAGER' ? 'selected' : '')}>Manager</option>
+                            <option value="INVENTORY" ${esc(user.role === 'INVENTORY' ? 'selected' : '')}>Inventory Staff</option>
+                            <option value="CASHIER" ${esc(user.role === 'CASHIER' ? 'selected' : '')}>Cashier</option>
+                            <option value="KITCHEN" ${esc(user.role === 'KITCHEN' ? 'selected' : '')}>Kitchen Staff</option>
+                            <option value="SUPER_ADMIN" ${esc(user.role === 'SUPER_ADMIN' ? 'selected' : '')}>Super Admin</option>
                         </select>
                     </div>
                     <div class="input-group">
                         <label>Status</label>
                         <select class="input-field" id="edit_status">
-                            <option value="true" ${user.is_active ? 'selected' : ''}>Active</option>
-                            <option value="false" ${!user.is_active ? 'selected' : ''}>Inactive</option>
+                            <option value="true" ${esc(user.is_active ? 'selected' : '')}>Active</option>
+                            <option value="false" ${esc(!user.is_active ? 'selected' : '')}>Inactive</option>
                         </select>
                     </div>
                 </div>
@@ -332,8 +332,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const newPw = document.getElementById('newPwInput')?.value;
             const confirmPw = document.getElementById('confirmPwInput')?.value;
 
-            if (!newPw || newPw.length < 6) {
-                showToast('Password must be at least 6 characters.', 'error');
+            if (!newPw || newPw.length < 10) {
+                showToast('Password must be at least 10 characters.', 'error');
                 return;
             }
             if (newPw !== confirmPw) {

@@ -9,6 +9,7 @@ from sqlalchemy import func
 from app.db import get_db
 import app.models as models
 import app.schemas as schemas
+from app.core import audit
 from app.core.dependencies import require_inventory_access, get_inventory_tenant_id
 
 router = APIRouter(tags=["Suppliers"])
@@ -28,7 +29,7 @@ def get_suppliers(
     if category:
         query = query.filter(models.Supplier.category == category)
     if search:
-        query = query.filter(models.Supplier.supplier_name.ilike(f"%{search}%"))
+        query = query.filter(models.Supplier.supplier_name.ilike(f"%{search[:100]}%"))
     
     return query.order_by(models.Supplier.supplier_name).all()
 
@@ -143,6 +144,10 @@ def delete_supplier(
     tenant_id: int = Depends(get_inventory_tenant_id),
     current_user: models.User = Depends(require_inventory_access)
 ):
+    """
+    Deletes a supplier that has never been used. Suppliers with purchase orders keep their history: the request is
+    refused with 409 and the supplier should be set to status 'Inactive' instead (H7).
+    """
     supplier = db.query(models.Supplier).filter(
         models.Supplier.id == supplier_id,
         models.Supplier.tenant_id == tenant_id
@@ -150,6 +155,18 @@ def delete_supplier(
     if not supplier:
         raise HTTPException(status_code=404, detail="Supplier not found")
 
+    if db.query(models.PurchaseOrder.id).filter(models.PurchaseOrder.supplier_id == supplier.id).first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"'{supplier.supplier_name}' has purchase orders and cannot be deleted. Set its status to Inactive instead.",
+        )
+
+    audit.record(db, current_user, "Supplier Deleted", tenant_id=tenant_id, details=supplier.supplier_name)
     db.delete(supplier)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="Supplier is referenced by other records. Set its status to Inactive instead.")
     return None

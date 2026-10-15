@@ -34,7 +34,7 @@ async function renderSuppliers(container) {
         <div class="stat-icon gold"><i class="fas fa-truck"></i></div>
         <div class="stat-info">
           <h3>Total Suppliers</h3>
-          <div class="stat-count" style="color:#c9a227;" id="kpi-total">${total}</div>
+          <div class="stat-count" style="color:#c9a227;" id="kpi-total">${esc(total)}</div>
           <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-building"></i> Registered Partners</div>
         </div>
       </div>
@@ -42,7 +42,7 @@ async function renderSuppliers(container) {
         <div class="stat-icon green"><i class="fas fa-check-circle"></i></div>
         <div class="stat-info">
           <h3>Active Suppliers</h3>
-          <div class="stat-count" style="color:#10b981;" id="kpi-active">${active}</div>
+          <div class="stat-count" style="color:#10b981;" id="kpi-active">${esc(active)}</div>
           <div class="stat-trend" style="color:#10b981;"><i class="fas fa-link"></i> Currently Supplying</div>
         </div>
       </div>
@@ -50,7 +50,7 @@ async function renderSuppliers(container) {
         <div class="stat-icon orange"><i class="fas fa-wine-glass"></i></div>
         <div class="stat-info">
           <h3>Beverage Suppliers</h3>
-          <div class="stat-count" style="color:#f97316;" id="kpi-beverage">${beverage}</div>
+          <div class="stat-count" style="color:#f97316;" id="kpi-beverage">${esc(beverage)}</div>
           <div class="stat-trend" style="color:#f97316;"><i class="fas fa-glass-water"></i> Drink Partners</div>
         </div>
       </div>
@@ -58,7 +58,7 @@ async function renderSuppliers(container) {
         <div class="stat-icon red"><i class="fas fa-times-circle"></i></div>
         <div class="stat-info">
           <h3>Pending / Inactive</h3>
-          <div class="stat-count" style="color:#ef4444;" id="kpi-inactive">${inactive}</div>
+          <div class="stat-count" style="color:#ef4444;" id="kpi-inactive">${esc(inactive)}</div>
           <div class="stat-trend" style="color:#ef4444;"><i class="fas fa-pause"></i> Needs Attention</div>
         </div>
       </div>
@@ -117,39 +117,39 @@ function renderSupplierRows(suppliers) {
     const isActive = s.status === "Active";
     const badgeClass = isActive ? 'badge-success' : 'badge-danger';
     
-    return \`
+    return `
       <tr>
         <td>
-          <strong style="color:var(--text-main); font-size:13px;">\${s.supplier_name}</strong>
+          <strong style="color:var(--text-main); font-size:13px;">${esc(s.supplier_name)}</strong>
         </td>
         <td>
-          <span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:11px; font-weight:600;">\${s.category || 'Uncategorized'}</span>
+          <span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:11px; font-weight:600;">${esc(s.category || 'Uncategorized')}</span>
         </td>
-        <td style="color:var(--text-muted); font-size:13px;">\${s.contact_number || 'Not provided'}</td>
-        <td style="color:var(--text-muted); font-size:13px; max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="\${s.products_supplied || ''}">
-          \${s.products_supplied || 'Not provided'}
+        <td style="color:var(--text-muted); font-size:13px;">${esc(s.contact_number || 'Not provided')}</td>
+        <td style="color:var(--text-muted); font-size:13px; max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${esc(s.products_supplied || '')}">
+          ${esc(s.products_supplied || 'Not provided')}
         </td>
         <td>
-          <span class="badge \${badgeClass}" style="font-size:11px; font-weight:700;">\${s.status}</span>
+          <span class="badge ${esc(badgeClass)}" style="font-size:11px; font-weight:700;">${esc(s.status)}</span>
         </td>
         <td style="text-align:right;">
           <div style="display:inline-flex; gap:6px;">
-            <button class="btn btn-outline btn-sm" style="padding:4px 8px; font-size:11px;" onclick="viewSupplierModal(\${s.id})" title="View Details">
+            <button class="btn btn-outline btn-sm" style="padding:4px 8px; font-size:11px;" onclick="viewSupplierModal(${s.id})" title="View Details">
               <i class="fas fa-eye"></i> View
             </button>
-            <button class="btn btn-outline btn-sm" style="padding:4px 8px; font-size:11px;" onclick="editSupplierModal(\${s.id})" title="Edit Supplier">
+            <button class="btn btn-outline btn-sm" style="padding:4px 8px; font-size:11px;" onclick="editSupplierModal(${s.id})" title="Edit Supplier">
               <i class="fas fa-edit"></i> Edit
             </button>
-            <button class="btn btn-primary btn-sm" style="padding:4px 8px; font-size:11px;" onclick="renderView('purchases'); setTimeout(() => openCreatePOModal(\${s.id}), 500);" title="Create PO">
+            <button class="btn btn-primary btn-sm" style="padding:4px 8px; font-size:11px;" onclick="renderView('purchases'); setTimeout(() => openCreatePOModal(${s.id}), 500);" title="Create PO">
               <i class="fas fa-file-invoice"></i> Create PO
             </button>
-            <button class="btn btn-outline btn-sm" style="padding:4px 8px; font-size:11px; color:var(--danger);" onclick="deactivateSupplier(\${s.id}, '\${s.supplier_name.replace(/'/g, "\\'")}', \${isActive})" title="Toggle Status">
-              <i class="fas \${isActive ? 'fa-ban' : 'fa-check'}"></i>
+            <button class="btn btn-outline btn-sm" style="padding:4px 8px; font-size:11px; color:var(--danger);" onclick="deactivateSupplier(${s.id}, '${escJs(s.supplier_name)}', ${esc(isActive)})" title="Toggle Status">
+              <i class="fas ${esc(isActive ? 'fa-ban' : 'fa-check')}"></i>
             </button>
           </div>
         </td>
       </tr>
-    \`;
+    `;
   }).join('');
 }
 
@@ -171,7 +171,7 @@ function filterSuppliersList() {
 }
 
 function openAddSupplierModal() {
-  Utils.openModal("Register New Supplier", \`
+  Utils.openModal("Register New Supplier", `
     <form id="form-add-sup" onsubmit="event.preventDefault(); submitAddSupplier();">
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Supplier Name <span style="color:var(--danger);">*</span></label>
@@ -210,7 +210,7 @@ function openAddSupplierModal() {
         <textarea id="sup-notes" class="input-field" placeholder="Additional notes..." style="width:100%; min-height:60px;"></textarea>
       </div>
     </form>
-  \`, \`<button class="btn btn-primary" onclick="submitAddSupplier()"><i class="fas fa-save"></i> Save Supplier</button>\`);
+  `, `<button class="btn btn-primary" onclick="submitAddSupplier()"><i class="fas fa-save"></i> Save Supplier</button>`);
 }
 
 async function submitAddSupplier() {
@@ -252,84 +252,84 @@ function viewSupplierModal(id) {
   const s = cachedSuppliers.find(x => x.id === id);
   if (!s) return;
 
-  Utils.openModal(\`Supplier Details: \${s.supplier_name}\`, \`
+  Utils.openModal(`Supplier Details: ${s.supplier_name}`, `
     <div style="font-size:13px; color:var(--text-main);">
       <div style="display:grid; grid-template-columns:120px 1fr; gap:10px; margin-bottom:10px; border-bottom:1px solid rgba(205,190,150,0.2); padding-bottom:10px;">
         <strong style="color:var(--text-muted);">Supplier Name:</strong>
-        <span>\${s.supplier_name}</span>
+        <span>${esc(s.supplier_name)}</span>
         
         <strong style="color:var(--text-muted);">Category:</strong>
-        <span><span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:11px;">\${s.category || 'Not provided'}</span></span>
+        <span><span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:11px;">${esc(s.category || 'Not provided')}</span></span>
         
         <strong style="color:var(--text-muted);">Contact Number:</strong>
-        <span>\${s.contact_number || 'Not provided'}</span>
+        <span>${esc(s.contact_number || 'Not provided')}</span>
         
         <strong style="color:var(--text-muted);">Products Supplied:</strong>
-        <span>\${s.products_supplied || 'Not provided'}</span>
+        <span>${esc(s.products_supplied || 'Not provided')}</span>
         
         <strong style="color:var(--text-muted);">Status:</strong>
-        <span><span class="badge \${s.status === 'Active' ? 'badge-success' : 'badge-danger'}" style="font-size:11px;">\${s.status}</span></span>
+        <span><span class="badge ${esc(s.status === 'Active' ? 'badge-success' : 'badge-danger')}" style="font-size:11px;">${esc(s.status)}</span></span>
         
         <strong style="color:var(--text-muted);">Contact Person:</strong>
-        <span>\${s.contact_person || 'Not provided'}</span>
+        <span>${esc(s.contact_person || 'Not provided')}</span>
         
         <strong style="color:var(--text-muted);">Email:</strong>
-        <span>\${s.email || 'Not provided'}</span>
+        <span>${esc(s.email || 'Not provided')}</span>
         
         <strong style="color:var(--text-muted);">Address:</strong>
-        <span>\${s.address || 'Not provided'}</span>
+        <span>${esc(s.address || 'Not provided')}</span>
         
         <strong style="color:var(--text-muted);">Notes:</strong>
-        <span>\${s.notes || 'Not provided'}</span>
+        <span>${esc(s.notes || 'Not provided')}</span>
       </div>
     </div>
-  \`, \`<button class="btn btn-outline" onclick="Utils.closeModal()">Close</button>\`);
+  `, `<button class="btn btn-outline" onclick="Utils.closeModal()">Close</button>`);
 }
 
 function editSupplierModal(id) {
   const s = cachedSuppliers.find(x => x.id === id);
   if (!s) return;
 
-  Utils.openModal(\`Edit Supplier: \${s.supplier_name}\`, \`
-    <form id="form-edit-sup" onsubmit="event.preventDefault(); submitEditSupplier(\${s.id});">
+  Utils.openModal(`Edit Supplier: ${s.supplier_name}`, `
+    <form id="form-edit-sup" onsubmit="event.preventDefault(); submitEditSupplier(${s.id});">
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Supplier Name <span style="color:var(--danger);">*</span></label>
-        <input id="edit-sup-name" class="input-field" required value="\${s.supplier_name.replace(/"/g, '&quot;')}" style="width:100%;">
+        <input id="edit-sup-name" class="input-field" required value="${esc(s.supplier_name)}" style="width:100%;">
       </div>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
         <div class="input-group">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Category</label>
-          <input id="edit-sup-cat" class="input-field" value="\${s.category || ''}" style="width:100%;">
+          <input id="edit-sup-cat" class="input-field" value="${esc(s.category || '')}" style="width:100%;">
         </div>
         <div class="input-group">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Contact Number</label>
-          <input id="edit-sup-contact" class="input-field" value="\${s.contact_number || ''}" style="width:100%;">
+          <input id="edit-sup-contact" class="input-field" value="${esc(s.contact_number || '')}" style="width:100%;">
         </div>
       </div>
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Products Supplied</label>
-        <input id="edit-sup-products" class="input-field" value="\${s.products_supplied || ''}" style="width:100%;">
+        <input id="edit-sup-products" class="input-field" value="${esc(s.products_supplied || '')}" style="width:100%;">
       </div>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
         <div class="input-group">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Contact Person</label>
-          <input id="edit-sup-person" class="input-field" value="\${s.contact_person || ''}" style="width:100%;">
+          <input id="edit-sup-person" class="input-field" value="${esc(s.contact_person || '')}" style="width:100%;">
         </div>
         <div class="input-group">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Email</label>
-          <input type="email" id="edit-sup-email" class="input-field" value="\${s.email || ''}" style="width:100%;">
+          <input type="email" id="edit-sup-email" class="input-field" value="${esc(s.email || '')}" style="width:100%;">
         </div>
       </div>
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Address</label>
-        <input id="edit-sup-address" class="input-field" value="\${s.address || ''}" style="width:100%;">
+        <input id="edit-sup-address" class="input-field" value="${esc(s.address || '')}" style="width:100%;">
       </div>
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Notes</label>
-        <textarea id="edit-sup-notes" class="input-field" style="width:100%; min-height:60px;">\${s.notes || ''}</textarea>
+        <textarea id="edit-sup-notes" class="input-field" style="width:100%; min-height:60px;">${esc(s.notes || '')}</textarea>
       </div>
     </form>
-  \`, \`<button class="btn btn-primary" onclick="submitEditSupplier(\${s.id})"><i class="fas fa-save"></i> Save Changes</button>\`);
+  `, `<button class="btn btn-primary" onclick="submitEditSupplier(${s.id})"><i class="fas fa-save"></i> Save Changes</button>`);
 }
 
 async function submitEditSupplier(id) {
@@ -350,7 +350,7 @@ async function submitEditSupplier(id) {
   }
 
   try {
-    const res = await Auth.fetch(\`/api/v1/suppliers/\${id}\`, {
+    const res = await Auth.fetch(`/api/v1/suppliers/${id}`, {
       method: "PUT",
       body: JSON.stringify(data)
     });
@@ -368,14 +368,14 @@ async function submitEditSupplier(id) {
 
 async function deactivateSupplier(id, name, isActive) {
   const actionStr = isActive ? "deactivate" : "activate";
-  if (!confirm(\`Are you sure you want to \${actionStr} "\${name}"?\`)) return;
+  if (!confirm(`Are you sure you want to ${actionStr} "${name}"?`)) return;
   try {
-    const res = await Auth.fetch(\`/api/v1/suppliers/\${id}\`, {
+    const res = await Auth.fetch(`/api/v1/suppliers/${id}`, {
       method: "PUT",
       body: JSON.stringify({ status: isActive ? "Inactive" : "Active" })
     });
-    if (!res.ok) throw new Error(\`Failed to \${actionStr} supplier.\`);
-    Utils.showToast(\`Supplier \${actionStr}d successfully\`, "success");
+    if (!res.ok) throw new Error(`Failed to ${actionStr} supplier.`);
+    Utils.showToast(`Supplier ${actionStr}d successfully`, "success");
     renderSuppliers();
   } catch (err) {
     Utils.showToast(err.message, "danger");

@@ -24,7 +24,7 @@ async function renderPurchases(container) {
     cachedPurchaseOrders = [];
   }
 
-  container.innerHTML = \`
+  container.innerHTML = `
     <!-- Toolbar -->
     <div class="toolbar fade-up delay-1" style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:18px; flex-wrap:wrap;">
       <div style="display:flex; gap:12px; align-items:center; flex:1; min-width:280px; max-width:480px;">
@@ -56,12 +56,12 @@ async function renderPurchases(container) {
             </tr>
           </thead>
           <tbody id="po-tbody">
-            \${renderPORows(cachedPurchaseOrders)}
+            ${renderPORows(cachedPurchaseOrders)}
           </tbody>
         </table>
       </div>
     </div>
-  \`;
+  `;
 }
 
 function renderPORows(orders) {
@@ -73,37 +73,47 @@ function renderPORows(orders) {
     let badgeClass = 'badge-secondary';
     if (po.status === 'Received') badgeClass = 'badge-success';
     else if (po.status === 'Cancelled') badgeClass = 'badge-danger';
-    else if (po.status === 'Pending' || po.status === 'Ordered') badgeClass = 'badge-warning';
+    else if (['Pending', 'Ordered', 'Partially Received'].includes(po.status)) badgeClass = 'badge-warning';
 
-    return \`
+    return `
       <tr>
         <td>
-          <strong style="color:var(--text-main); font-size:13px;">\${po.po_number}</strong>
+          <strong style="color:var(--text-main); font-size:13px;">${esc(po.po_number)}</strong>
         </td>
         <td>
-          <span style="color:var(--text-main); font-size:13px;">\${po.supplier_name || 'Unknown'}</span>
+          <span style="color:var(--text-main); font-size:13px;">${esc(po.supplier_name || 'Unknown')}</span>
         </td>
-        <td style="color:var(--text-muted); font-size:13px;">\${new Date(po.order_date).toLocaleDateString()}</td>
+        <td style="color:var(--text-muted); font-size:13px;">${esc(new Date(po.order_date).toLocaleDateString())}</td>
         <td>
-          <span class="badge \${badgeClass}" style="font-size:11px; font-weight:700;">\${po.status}</span>
+          <span class="badge ${esc(badgeClass)}" style="font-size:11px; font-weight:700;">${esc(po.status)}</span>
         </td>
         <td>
-          <strong style="color:#c9a227; font-size:13px;">\${Utils.formatCurrency(po.total_amount)}</strong>
+          <strong style="color:#c9a227; font-size:13px;">${esc(Utils.formatCurrency(po.total_amount))}</strong>
         </td>
         <td style="text-align:right;">
           <div style="display:inline-flex; gap:6px;">
-            <button class="btn btn-outline btn-sm" style="padding:4px 8px; font-size:11px;" onclick="viewPOModal(\${po.id})" title="View Details">
+            <button class="btn btn-outline btn-sm" style="padding:4px 8px; font-size:11px;" onclick="viewPOModal(${po.id})" title="View Details">
               <i class="fas fa-eye"></i> View
             </button>
-            \${po.status !== 'Received' && po.status !== 'Cancelled' ? \`
-            <button class="btn btn-primary btn-sm" style="padding:4px 8px; font-size:11px;" onclick="receivePO(\${po.id}, '\${po.po_number}')" title="Receive PO">
+            ${po.status === 'Draft' || po.status === 'Pending' ? `
+            <button class="btn btn-outline btn-sm" style="padding:4px 8px; font-size:11px;" onclick="setPOStatus(${Number(po.id)}, 'Ordered', '${escJs(po.po_number)}')" title="Mark as sent to the supplier">
+              <i class="fas fa-paper-plane"></i> Mark Ordered
+            </button>
+            ` : ''}
+            ${po.status === 'Ordered' || po.status === 'Partially Received' ? `
+            <button class="btn btn-primary btn-sm" style="padding:4px 8px; font-size:11px;" onclick="receivePO(${Number(po.id)}, '${escJs(po.po_number)}')" title="Receive everything still outstanding">
               <i class="fas fa-box-open"></i> Receive
             </button>
-            \` : ''}
+            ` : ''}
+            ${po.status !== 'Received' && po.status !== 'Cancelled' ? `
+            <button class="btn btn-outline btn-sm" style="padding:4px 8px; font-size:11px; color:var(--danger);" onclick="setPOStatus(${Number(po.id)}, 'Cancelled', '${escJs(po.po_number)}')" title="Cancel this purchase order">
+              <i class="fas fa-ban"></i>
+            </button>
+            ` : ''}
           </div>
         </td>
       </tr>
-    \`;
+    `;
   }).join('');
 }
 
@@ -134,14 +144,14 @@ async function openCreatePOModal(preselectedSupplierId = null) {
 
   poItemRows = [];
 
-  Utils.openModal("Create Purchase Order", \`
+  Utils.openModal("Create Purchase Order", `
     <form id="form-create-po" onsubmit="event.preventDefault(); submitCreatePO();">
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
         <div class="input-group">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Supplier <span style="color:var(--danger);">*</span></label>
           <select id="po-supplier" class="input-field" required style="width:100%;">
-            <option value="" disabled \${!preselectedSupplierId ? 'selected' : ''}>Select a supplier...</option>
-            \${availableSuppliers.map(s => \`<option value="\${s.id}" \${s.id === preselectedSupplierId ? 'selected' : ''}>\${s.supplier_name} (\${s.category || 'N/A'})</option>\`).join('')}
+            <option value="" disabled ${esc(!preselectedSupplierId ? 'selected' : '')}>Select a supplier...</option>
+            ${availableSuppliers.map(s => `<option value="${esc(s.id)}" ${esc(s.id === preselectedSupplierId ? 'selected' : '')}>${esc(s.supplier_name)} (${esc(s.category || 'N/A')})</option>`).join('')}
           </select>
         </div>
         <div class="input-group">
@@ -173,7 +183,7 @@ async function openCreatePOModal(preselectedSupplierId = null) {
         <textarea id="po-notes" class="input-field" placeholder="Optional notes for this purchase order..." style="width:100%; min-height:50px;"></textarea>
       </div>
     </form>
-  \`, \`<button class="btn btn-primary" onclick="submitCreatePO()"><i class="fas fa-save"></i> Submit Order</button>\`);
+  `, `<button class="btn btn-primary" onclick="submitCreatePO()"><i class="fas fa-save"></i> Submit Order</button>`);
 
   // Add one initial row
   addPOItemRow();
@@ -204,32 +214,32 @@ function renderPOItemRows() {
   if (!container) return;
 
   if (poItemRows.length === 0) {
-    container.innerHTML = \`<div style="text-align:center; color:var(--text-muted); font-size:12px; padding:10px;">No items added yet.</div>\`;
+    container.innerHTML = `<div style="text-align:center; color:var(--text-muted); font-size:12px; padding:10px;">No items added yet.</div>`;
     return;
   }
 
-  container.innerHTML = poItemRows.map((r, index) => \`
+  container.innerHTML = poItemRows.map((r, index) => `
     <div style="display:flex; gap:10px; align-items:center; margin-bottom:10px; background:#faf8f3; padding:8px; border-radius:8px; border:1px solid rgba(205,190,150,0.2);">
       <div style="flex:2;">
-        <select class="input-field" style="width:100%; font-size:12px;" onchange="updatePOItemRow('\${r.id}', 'invId', this.value)" required>
-          <option value="" disabled \${!r.invId ? 'selected' : ''}>Select Inventory Item</option>
-          \${inventoryCatalog.map(i => \`<option value="\${i.id}" \${r.invId == i.id ? 'selected' : ''}>\${i.name} (\${i.unit})</option>\`).join('')}
+        <select class="input-field" style="width:100%; font-size:12px;" onchange="updatePOItemRow('${escJs(r.id)}', 'invId', this.value)" required>
+          <option value="" disabled ${esc(!r.invId ? 'selected' : '')}>Select Inventory Item</option>
+          ${inventoryCatalog.map(i => `<option value="${esc(i.id)}" ${esc(r.invId == i.id ? 'selected' : '')}>${esc(i.name)} (${esc(i.unit)})</option>`).join('')}
         </select>
       </div>
       <div style="flex:1;">
-        <input type="number" step="0.01" min="0.01" class="input-field" placeholder="Qty" style="width:100%; font-size:12px;" value="\${r.qty}" oninput="updatePOItemRow('\${r.id}', 'qty', parseFloat(this.value) || 0)" required>
+        <input type="number" step="0.01" min="0.01" class="input-field" placeholder="Qty" style="width:100%; font-size:12px;" value="${esc(r.qty)}" oninput="updatePOItemRow('${escJs(r.id)}', 'qty', parseFloat(this.value) || 0)" required>
       </div>
       <div style="flex:1;">
-        <input type="number" step="0.01" min="0" class="input-field" placeholder="Unit Cost (₱)" style="width:100%; font-size:12px;" value="\${r.cost}" oninput="updatePOItemRow('\${r.id}', 'cost', parseFloat(this.value) || 0)" required>
+        <input type="number" step="0.01" min="0" class="input-field" placeholder="Unit Cost (₱)" style="width:100%; font-size:12px;" value="${esc(r.cost)}" oninput="updatePOItemRow('${escJs(r.id)}', 'cost', parseFloat(this.value) || 0)" required>
       </div>
       <div style="width:70px; text-align:right; font-weight:700; font-size:12px; color:var(--text-main);">
-        \${Utils.formatCurrency(r.qty * r.cost)}
+        ${esc(Utils.formatCurrency(r.qty * r.cost))}
       </div>
-      <button type="button" class="btn btn-outline btn-sm" style="padding:4px; color:var(--danger); border:none;" onclick="removePOItemRow('\${r.id}')" title="Remove">
+      <button type="button" class="btn btn-outline btn-sm" style="padding:4px; color:var(--danger); border:none;" onclick="removePOItemRow('${escJs(r.id)}')" title="Remove">
         <i class="fas fa-times"></i>
       </button>
     </div>
-  \`).join('');
+  `).join('');
 }
 
 function calculatePOTotals() {
@@ -310,38 +320,38 @@ function viewPOModal(id) {
   const po = cachedPurchaseOrders.find(x => x.id === id);
   if (!po) return;
 
-  const itemRows = po.items.map(item => \`
+  const itemRows = po.items.map(item => `
     <tr>
-      <td style="padding:6px; border-bottom:1px solid rgba(205,190,150,0.15);">\${item.inventory_item_name || 'Item #'+item.inventory_item_id}</td>
-      <td style="padding:6px; border-bottom:1px solid rgba(205,190,150,0.15); text-align:right;">\${item.quantity}</td>
-      <td style="padding:6px; border-bottom:1px solid rgba(205,190,150,0.15); text-align:right;">\${Utils.formatCurrency(item.unit_cost)}</td>
-      <td style="padding:6px; border-bottom:1px solid rgba(205,190,150,0.15); text-align:right; font-weight:700;">\${Utils.formatCurrency(item.total_cost)}</td>
+      <td style="padding:6px; border-bottom:1px solid rgba(205,190,150,0.15);">${esc(item.inventory_item_name || 'Item #'+item.inventory_item_id)}</td>
+      <td style="padding:6px; border-bottom:1px solid rgba(205,190,150,0.15); text-align:right;">${esc(item.quantity_received)} / ${esc(item.quantity)}</td>
+      <td style="padding:6px; border-bottom:1px solid rgba(205,190,150,0.15); text-align:right;">${esc(Utils.formatCurrency(item.unit_cost))}</td>
+      <td style="padding:6px; border-bottom:1px solid rgba(205,190,150,0.15); text-align:right; font-weight:700;">${esc(Utils.formatCurrency(item.total_cost))}</td>
     </tr>
-  \`).join('');
+  `).join('');
 
-  Utils.openModal(\`Purchase Order: \${po.po_number}\`, \`
+  Utils.openModal(`Purchase Order: ${po.po_number}`, `
     <div style="font-size:13px; color:var(--text-main);">
       <div style="display:grid; grid-template-columns:140px 1fr; gap:10px; margin-bottom:16px;">
         <strong style="color:var(--text-muted);">Supplier:</strong>
-        <span>\${po.supplier_name}</span>
+        <span>${esc(po.supplier_name)}</span>
         
         <strong style="color:var(--text-muted);">Status:</strong>
-        <span><span class="badge" style="font-size:11px;">\${po.status}</span></span>
+        <span><span class="badge" style="font-size:11px;">${esc(po.status)}</span></span>
         
         <strong style="color:var(--text-muted);">Order Date:</strong>
-        <span>\${new Date(po.order_date).toLocaleString()}</span>
+        <span>${esc(new Date(po.order_date).toLocaleString())}</span>
         
         <strong style="color:var(--text-muted);">Expected Delivery:</strong>
-        <span>\${po.expected_delivery_date ? new Date(po.expected_delivery_date).toLocaleDateString() : 'Not set'}</span>
+        <span>${esc(po.expected_delivery_date ? new Date(po.expected_delivery_date).toLocaleDateString() : 'Not set')}</span>
         
         <strong style="color:var(--text-muted);">Received Date:</strong>
-        <span>\${po.received_date ? new Date(po.received_date).toLocaleString() : 'Not received'}</span>
+        <span>${esc(po.received_date ? new Date(po.received_date).toLocaleString() : 'Not received')}</span>
         
         <strong style="color:var(--text-muted);">Notes:</strong>
-        <span>\${po.notes || 'None'}</span>
+        <span>${esc(po.notes || 'None')}</span>
         
         <strong style="color:var(--text-muted);">Created By:</strong>
-        <span>\${po.created_by_username || 'Unknown'}</span>
+        <span>${esc(po.created_by_username || 'Unknown')}</span>
       </div>
       
       <strong style="color:var(--text-main); font-size:14px;">Items</strong>
@@ -350,42 +360,56 @@ function viewPOModal(id) {
           <thead style="background:rgba(205,190,150,0.1);">
             <tr>
               <th style="padding:8px; text-align:left;">Item</th>
-              <th style="padding:8px; text-align:right;">Qty</th>
+              <th style="padding:8px; text-align:right;">Received / Ordered</th>
               <th style="padding:8px; text-align:right;">Unit Cost</th>
               <th style="padding:8px; text-align:right;">Total Cost</th>
             </tr>
           </thead>
           <tbody>
-            \${itemRows}
+            ${itemRows}
           </tbody>
           <tfoot>
             <tr>
               <td colspan="3" style="padding:8px; text-align:right; font-weight:700;">Subtotal:</td>
-              <td style="padding:8px; text-align:right; font-weight:700;">\${Utils.formatCurrency(po.subtotal)}</td>
+              <td style="padding:8px; text-align:right; font-weight:700;">${esc(Utils.formatCurrency(po.subtotal))}</td>
             </tr>
             <tr>
               <td colspan="3" style="padding:8px; text-align:right; font-weight:800; color:var(--text-main);">Total Amount:</td>
-              <td style="padding:8px; text-align:right; font-weight:800; color:#c9a227; font-size:14px;">\${Utils.formatCurrency(po.total_amount)}</td>
+              <td style="padding:8px; text-align:right; font-weight:800; color:#c9a227; font-size:14px;">${esc(Utils.formatCurrency(po.total_amount))}</td>
             </tr>
           </tfoot>
         </table>
       </div>
     </div>
-  \`, \`<button class="btn btn-outline" onclick="Utils.closeModal()">Close</button>\`);
+  `, `<button class="btn btn-outline" onclick="Utils.closeModal()">Close</button>`);
+}
+
+async function setPOStatus(id, status, poNumber) {
+  const verb = status === "Cancelled" ? "cancel" : "mark as Ordered";
+  if (!confirm(`Do you want to ${verb} PO ${poNumber}?`)) return;
+  try {
+    const res = await Auth.fetch(`/api/v1/purchase-orders/${id}`, { method: "PUT", body: JSON.stringify({ status }) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(Utils.errorMessage(body, "Failed to update the purchase order"));
+    Utils.showToast(`PO ${poNumber} is now ${status}.`, "success");
+    renderPurchases();
+  } catch (e) {
+    Utils.showToast(e.message, "danger");
+  }
 }
 
 async function receivePO(id, poNumber) {
-  if (!confirm(\`Are you sure you want to receive PO \${poNumber}? This will automatically increase your inventory stock quantities and cannot be reversed.\`)) return;
+  if (!confirm(`Receive everything still outstanding on PO ${poNumber}? This adds the quantities to inventory.`)) return;
   
   try {
-    const res = await Auth.fetch(\`/api/v1/purchase-orders/\${id}/receive\`, {
+    const res = await Auth.fetch(`/api/v1/purchase-orders/${id}/receive`, {
       method: "POST"
     });
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || "Failed to receive Purchase Order");
+      const err = await res.json().catch(() => ({}));
+      throw new Error(Utils.errorMessage(err, "Failed to receive Purchase Order"));
     }
-    Utils.showToast(\`Purchase Order \${poNumber} successfully received! Inventory updated.\`, "success");
+    Utils.showToast(`Purchase Order ${poNumber} successfully received! Inventory updated.`, "success");
     renderPurchases();
   } catch (e) {
     Utils.showToast(e.message, "danger");

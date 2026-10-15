@@ -1,3 +1,7 @@
+# Official Blessie FoodHub menu. Product names must be unique across the whole menu (products are unique per
+# tenant by name). Items that exist in two categories with different prices carry the category in their name, e.g.
+# "Mango Frappe — 16 oz" vs the Sticky Milk "Mango — 16 oz". The first-listed copy keeps the original name because
+# that is the one earlier seeding runs created; only the copies that were previously skipped were renamed.
 POS_MENU_MASTERLIST = {
     "Snacks": [
         ("Spaghetti w/ Bread — Single", 125.00),
@@ -93,18 +97,18 @@ POS_MENU_MASTERLIST = {
         ("Red Velvet — 22 oz", 95.00),
     ],
     "Milky Shake Frappe": [
-        ("Mango — 16 oz", 80.00),
-        ("Mango — 22 oz", 100.00),
-        ("Choco — 16 oz", 85.00),
-        ("Choco — 22 oz", 105.00),
+        ("Mango Frappe — 16 oz", 80.00),
+        ("Mango Frappe — 22 oz", 100.00),
+        ("Choco Frappe — 16 oz", 85.00),
+        ("Choco Frappe — 22 oz", 105.00),
         ("Caramel Macchiato — 16 oz", 85.00),
         ("Caramel Macchiato — 22 oz", 105.00),
         ("Coffee Crumble — 16 oz", 80.00),
         ("Coffee Crumble — 22 oz", 100.00),
-        ("Melon — 16 oz", 80.00),
-        ("Melon — 22 oz", 100.00),
-        ("Buko — 16 oz", 80.00),
-        ("Buko — 22 oz", 100.00),
+        ("Melon Frappe — 16 oz", 80.00),
+        ("Melon Frappe — 22 oz", 100.00),
+        ("Buko Frappe — 16 oz", 80.00),
+        ("Buko Frappe — 22 oz", 100.00),
     ],
     "Cold Coffee": [
         ("Spanish Latte — 16 oz", 50.00),
@@ -113,8 +117,8 @@ POS_MENU_MASTERLIST = {
         ("French — 22 oz", 75.00),
         ("Salted Caramel — 16 oz", 65.00),
         ("Salted Caramel — 22 oz", 80.00),
-        ("Caramel Macchiato — 16 oz", 60.00),
-        ("Caramel Macchiato — 22 oz", 75.00),
+        ("Iced Caramel Macchiato — 16 oz", 60.00),
+        ("Iced Caramel Macchiato — 22 oz", 75.00),
         ("Iced Americano — 16 oz", 50.00),
         ("Iced Americano — 22 oz", 65.00),
         ("Vietnamese — 16 oz", 55.00),

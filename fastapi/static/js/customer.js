@@ -269,6 +269,17 @@ function peso(amount) {
     return "₱" + parseFloat(amount).toFixed(2);
 }
 
+// The customer page does not load storage.js, so it carries its own copy of the escaper used in templates.
+function esc(value) {
+    if (value === null || value === undefined) return "";
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
 function escapeHTML(str) {
     if (!str) return "";
     return str
@@ -310,7 +321,7 @@ async function fetchMenu() {
                         existing.options.push({
                             id: product.id,
                             label: variantName !== "Regular" ? variantName : product.name,
-                            price: product.price
+                            price: Number(product.price)
                         });
                         if (!existing.image && imagePath) {
                             existing.image = imagePath;
@@ -325,7 +336,7 @@ async function fetchMenu() {
                             options: [{
                                 id: product.id,
                                 label: variantName,
-                                price: product.price
+                                price: Number(product.price)
                             }]
                         });
                     }
@@ -413,15 +424,15 @@ function renderMenu() {
         let priceText = lowest === highest ? peso(lowest) : (peso(lowest) + " - " + peso(highest));
 
         return `
-            <article class="menu-item" data-product-id="${product.id}">
+            <article class="menu-item" data-product-id="${esc(product.id)}">
                 <div class="menu-image">${productImage(product)}</div>
                 <div class="menu-info">
                     <div class="menu-category">${escapeHTML(product.category)}</div>
                     <div class="menu-name">${escapeHTML(product.name)}</div>
                     <div class="menu-description">${escapeHTML(product.description)}</div>
                     <div class="menu-bottom">
-                        <div class="menu-price">${priceText}</div>
-                        <button class="select-button select-product" type="button" data-product-id="${product.id}">Select</button>
+                        <div class="menu-price">${esc(priceText)}</div>
+                        <button class="select-button select-product" type="button" data-product-id="${esc(product.id)}">Select</button>
                     </div>
                 </div>
             </article>
@@ -490,9 +501,9 @@ function renderVariants() {
     variantSection.style.display = "block";
     variantList.innerHTML = selectedProduct.options.map((option, index) => `
         <label class="variant-option">
-            <input type="radio" name="variant" value="${index}" ${index === selectedVariant ? "checked" : ""}>
+            <input type="radio" name="variant" value="${esc(index)}" ${esc(index === selectedVariant ? "checked" : "")}>
             <span>${escapeHTML(option.label)}</span>
-            <strong>${peso(option.price)}</strong>
+            <strong>${esc(peso(option.price))}</strong>
         </label>
     `).join("");
 
@@ -574,14 +585,14 @@ function renderCart() {
             <div class="cart-item-info">
                 <strong>${escapeHTML(item.name)}</strong>
                 <span>${item.variant ? escapeHTML(item.variant) : ""}</span>
-                <small>${peso(item.price)} each</small>
+                <small>${esc(peso(item.price))} each</small>
             </div>
             <div class="cart-item-actions">
-                <button type="button" data-action="decrease" data-index="${index}">−</button>
-                <span>${item.quantity}</span>
-                <button type="button" data-action="increase" data-index="${index}">+</button>
+                <button type="button" data-action="decrease" data-index="${esc(index)}">−</button>
+                <span>${esc(item.quantity)}</span>
+                <button type="button" data-action="increase" data-index="${esc(index)}">+</button>
             </div>
-            <strong class="cart-item-total">${peso(item.price * item.quantity)}</strong>
+            <strong class="cart-item-total">${esc(peso(item.price * item.quantity))}</strong>
         </div>
     `).join("");
 
@@ -674,7 +685,11 @@ async function submitOrder(event) {
         });
 
         if (!response.ok) {
-            throw new Error(`Server returned ${response.status}`);
+            const err = await response.json().catch(() => ({}));
+            const detail = typeof err.detail === "string" ? err.detail : "Please check your order and try again.";
+            const failure = new Error(detail);
+            failure.userMessage = detail;
+            throw failure;
         }
 
         const data = await response.json();
@@ -690,7 +705,7 @@ async function submitOrder(event) {
 
     } catch (error) {
         console.error("Order submission failed:", error);
-        showToast("Failed to place order. Please try again.");
+        showToast(error.userMessage || "Failed to place order. Please try again.");
     } finally {
         if (submitBtn) {
             submitBtn.textContent = originalText;

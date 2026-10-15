@@ -170,8 +170,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 showToast('Please enter your current password.', 'error');
                 return;
             }
-            if (!newPw || newPw.length < 6) {
-                showToast('New password must be at least 6 characters.', 'error');
+            if (!newPw || newPw.length < 10) {
+                showToast('New password must be at least 10 characters.', 'error');
                 return;
             }
             if (newPw !== confirmPw) {
@@ -189,6 +189,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 });
 
                 if (res.ok) {
+                    // The server revokes the old session on password change and returns a fresh token.
+                    const body = await res.json().catch(() => ({}));
+                    if (body.access_token) {
+                        const store = localStorage.getItem('access_token') ? localStorage : sessionStorage;
+                        store.setItem('access_token', body.access_token);
+                    }
                     showToast('Password changed successfully.');
                     document.getElementById('pf_currentPw').value = '';
                     document.getElementById('pf_newPw').value = '';

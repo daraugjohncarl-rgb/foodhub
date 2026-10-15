@@ -6,18 +6,28 @@ services:
     runtime: python
     region: singapore # or oregon / frankfurt
     plan: free
+    # Deploys are triggered by hand AFTER the database migration has been applied (DEPLOYMENT.md). With
+    # autoDeploy on, a push to main could start new code against an old schema.
+    autoDeploy: false
     buildCommand: "pip install --upgrade pip setuptools wheel && pip install -r requirements.txt"
-    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
-    healthCheckPath: "/test-db"
+    # Database migrations are applied by hand BEFORE deploying new code (see DEPLOYMENT.md); never on start-up.
+    # Render's proxy sets X-Forwarded-For; trusting it lets the per-IP login/order limits see real client IPs.
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'"
+    healthCheckPath: "/health"
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      - key: APP_ENV
+        value: production
       - key: DATABASE_URL
         fromDatabase:
           name: inbox-pos-db
           property: connectionString
       - key: JWT_SECRET
         generateValue: true
+      # Optional: comma-separated extra browser origins allowed to call the API (the bundled frontend is same-origin).
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
         value: 720
 

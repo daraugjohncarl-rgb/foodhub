@@ -2,21 +2,34 @@
 Inventory Router — Admin & Manager Module
 ==========================================
 Tenant-scoped stock management for Branch Admins, Managers, and Inventory Officers.
-Includes Masterlist Batch Importer and Automated Inventory Analytics.
+Includes the Masterlist importer, inventory analytics, wastage logging and the stock-movement ledger.
+
+Every quantity change goes through app/services/stock.py: row locks, Decimal arithmetic and a StockMovement row.
+Items referenced by purchase orders, recipes or stock history are deactivated rather than deleted (H7).
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy import func
-from typing import List, Optional, Dict, Any
 from decimal import Decimal
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from app.db import get_db
 import app.models as models
 import app.schemas as schemas
-from app.core.dependencies import require_inventory_access, get_inventory_tenant_id, get_current_user
+from app.core import audit
+from app.core.dependencies import get_inventory_tenant_id, get_tenant_scope, require_permission
+from app.seed import stable_code
+from app.services import stock
 
 router = APIRouter(tags=["Admin — Inventory"])
+
+can_read_inventory = require_permission("inventory.read")
+can_write_inventory = require_permission("inventory.write")
+
+# Masterlist departments whose items are durable equipment rather than consumable stock (M5).
+EQUIPMENT_DEPARTMENTS = {"Office Supplies and Equipments", "KITCHEN UTENSILS & EQUIPMENT", "FURNITURE & FIXTURES"}
 
 # Complete Masterlist Data Dictionary categorized into 10 Department Modules
 MASTERLIST_DATA: Dict[str, List[tuple]] = {
@@ -305,22 +318,40 @@ MASTERLIST_DATA: Dict[str, List[tuple]] = {
 }
 
 
+def _masterlist_entries():
+    """Each item name once (first department wins), so names repeated across departments no longer overwrite
+    each other's category on every import (M5)."""
+    seen = set()
+    for department, rows in MASTERLIST_DATA.items():
+        for name, unit, default_qty, min_qty in rows:
+            key = name.strip().lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            yield department, name.strip(), unit, default_qty, min_qty
+
+
 @router.get(
     "/inventory",
     response_model=List[schemas.InventoryItemResponse],
-    summary="List all stock items for the calling user's tenant"
+    summary="List stock items for the calling user's tenant"
 )
 def list_inventory(
-    low_stock_only: bool = Query(False, description="If true, return only items at or below min_stock"),
-    category: Optional[str] = Query(None, description="Filter by masterlist department category"),
-    search: Optional[str] = Query(None, description="Partial match on item name or SKU"),
-    limit: int = Query(500, le=1000),
+    low_stock_only: bool = Query(False, description="If true, return only consumables at or below min_stock"),
+    category: Optional[str] = Query(None, max_length=100, description="Filter by masterlist department category"),
+    search: Optional[str] = Query(None, max_length=100, description="Partial match on item name or SKU"),
+    item_type: Optional[str] = Query(None, pattern="^(consumable|equipment)$"),
+    include_inactive: bool = Query(False),
+    limit: int = Query(500, ge=1, le=1000),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(can_read_inventory),
+    tenant_id: int = Depends(get_tenant_scope),
 ):
-    q = db.query(models.InventoryItem)
-    if current_user.tenant_id:
-        q = q.filter(models.InventoryItem.tenant_id == current_user.tenant_id)
+    q = db.query(models.InventoryItem).filter(models.InventoryItem.tenant_id == tenant_id)
+    if not include_inactive:
+        q = q.filter(models.InventoryItem.is_active.is_(True))
+    if item_type:
+        q = q.filter(models.InventoryItem.item_type == item_type)
     if category and category.strip():
         q = q.filter(models.InventoryItem.category.ilike(f"%{category.strip()}%"))
     if search:
@@ -331,7 +362,10 @@ def list_inventory(
             models.InventoryItem.category.ilike(term)
         )
     if low_stock_only:
-        q = q.filter(models.InventoryItem.quantity <= models.InventoryItem.min_stock)
+        q = q.filter(
+            models.InventoryItem.item_type != models.InventoryItemType.EQUIPMENT.value,
+            models.InventoryItem.quantity <= models.InventoryItem.min_stock,
+        )
 
     return q.order_by(models.InventoryItem.category, models.InventoryItem.name).limit(limit).all()
 
@@ -345,28 +379,44 @@ def list_inventory(
 def create_inventory_item(
     body: schemas.InventoryItemCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_inventory_access),
+    current_user: models.User = Depends(can_write_inventory),
     tenant_id: int = Depends(get_inventory_tenant_id),
 ):
+    exists = db.query(models.InventoryItem.id).filter(
+        models.InventoryItem.tenant_id == tenant_id,
+        func.lower(models.InventoryItem.name) == body.name.lower(),
+    ).first()
+    if exists:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"An inventory item named '{body.name}' already exists in your tenant."
+        )
+
     item = models.InventoryItem(
         tenant_id=tenant_id,
-        name=body.name.strip(),
+        name=body.name,
         category=body.category.strip() if body.category else "Kitchen",
-        sku=body.sku.strip() if body.sku else f"SKU-{int(func.now())}",
-        quantity=body.quantity,
-        unit=body.unit.strip(),
+        sku=body.sku.strip() if body.sku else stable_code("INV", str(tenant_id), body.name.lower()),
+        quantity=Decimal("0"),
+        unit=body.unit,
         min_stock=body.min_stock,
+        item_type=body.item_type,
     )
     db.add(item)
     try:
-        db.commit()
-        db.refresh(item)
+        db.flush()
     except IntegrityError:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"An inventory item named '{body.name}' already exists in your tenant."
         )
+    if body.quantity > 0:
+        stock.apply_movement(db, item, body.quantity, models.StockMovementType.OPENING, user=current_user,
+                             reason="Opening stock")
+    audit.record(db, current_user, "Inventory Item Created", tenant_id=tenant_id, details=f"{item.name} ({item.sku})")
+    db.commit()
+    db.refresh(item)
     return item
 
 
@@ -377,71 +427,71 @@ def create_inventory_item(
 def import_masterlist(
     selected_category: Optional[str] = Query(None, description="Optional category filter to import"),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_inventory_access),
+    current_user: models.User = Depends(can_write_inventory),
     tenant_id: int = Depends(get_inventory_tenant_id),
 ):
     """
-    Imports standard Masterlist items (Kitchen, Street Foods, Coffee Bar, Beverages, Packaging, etc.).
-    Preserves existing items while updating category metadata or initializing default quantities.
+    Adds the standard Masterlist items that are missing. Existing items are left exactly as they are (their
+    category, unit and thresholds may have been customised), except that an unset unit or zero minimum is filled in.
     """
-    categories_to_import = [selected_category] if selected_category and selected_category in MASTERLIST_DATA else list(MASTERLIST_DATA.keys())
-    
-    # Load existing items into lookup dict
+    if selected_category and selected_category not in MASTERLIST_DATA:
+        raise HTTPException(status_code=422, detail=f"Unknown masterlist category '{selected_category}'.")
+
     existing_items: Dict[str, models.InventoryItem] = {
-        item.name.strip().lower(): item 
+        item.name.strip().lower(): item
         for item in db.query(models.InventoryItem).filter(models.InventoryItem.tenant_id == tenant_id).all()
     }
-    
+
     created_count = 0
     updated_count = 0
+    unchanged_count = 0
+    for department, name, unit, default_qty, min_qty in _masterlist_entries():
+        if selected_category and department != selected_category:
+            continue
+        existing = existing_items.get(name.lower())
+        if existing is not None:
+            changed = False
+            if not existing.unit:
+                existing.unit = unit
+                changed = True
+            if Decimal(existing.min_stock) <= 0:
+                existing.min_stock = Decimal(str(min_qty))
+                changed = True
+            updated_count += 1 if changed else 0
+            unchanged_count += 0 if changed else 1
+            continue
 
-    for cat in categories_to_import:
-        for name, unit, default_qty, min_qty in MASTERLIST_DATA[cat]:
-            key = name.strip().lower()
+        item = models.InventoryItem(
+            tenant_id=tenant_id,
+            name=name,
+            category=department,
+            sku=stable_code(department[:3].upper(), department, name.lower(), length=6),
+            quantity=Decimal("0"),
+            unit=unit,
+            min_stock=Decimal(str(min_qty)),
+            item_type=(models.InventoryItemType.EQUIPMENT.value if department in EQUIPMENT_DEPARTMENTS
+                       else models.InventoryItemType.CONSUMABLE.value),
+        )
+        db.add(item)
+        db.flush()
+        stock.apply_movement(db, item, Decimal(str(default_qty)), models.StockMovementType.OPENING,
+                             user=current_user, reason="Masterlist import")
+        existing_items[name.lower()] = item
+        created_count += 1
 
-            if key in existing_items:
-                existing = existing_items[key]
-                existing.category = cat
-                if not existing.unit:
-                    existing.unit = unit
-                if existing.min_stock <= 0:
-                    existing.min_stock = Decimal(str(min_qty))
-                updated_count += 1
-            else:
-                sku_code = f"{cat[:3].upper()}-{abs(hash(name)) % 10000:04d}"
-                new_item = models.InventoryItem(
-                    tenant_id=tenant_id,
-                    name=name.strip(),
-                    category=cat,
-                    sku=sku_code,
-                    quantity=Decimal(str(default_qty)),
-                    unit=unit,
-                    min_stock=Decimal(str(min_qty))
-                )
-                db.add(new_item)
-                existing_items[key] = new_item
-                created_count += 1
-
+    audit.record(db, current_user, "Master List Imported", tenant_id=tenant_id,
+                 details=f"Imported Master List: {created_count} created, {updated_count} updated, "
+                         f"{unchanged_count} unchanged.")
     db.commit()
 
-    # Log action in activity logs
-    log = models.ActivityLog(
-        tenant_id=tenant_id,
-        user_id=current_user.id,
-        action="Master List Imported",
-        performed_by=current_user.username,
-        role=str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role),
-        details=f"Imported Master List: {created_count} items created, {updated_count} updated."
-    )
-    db.add(log)
-    db.commit()
-
+    categories_imported = [selected_category] if selected_category else list(MASTERLIST_DATA.keys())
     return {
         "success": True,
-        "message": f"Successfully imported master list items ({created_count} created, {updated_count} synced).",
+        "message": f"Master list imported ({created_count} created, {updated_count} updated, {unchanged_count} unchanged).",
         "created_count": created_count,
         "updated_count": updated_count,
-        "categories_imported": categories_to_import
+        "unchanged_count": unchanged_count,
+        "categories_imported": categories_imported
     }
 
 
@@ -451,18 +501,17 @@ def import_masterlist(
 )
 def get_inventory_analytics(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_inventory_access),
-    tenant_id: int = Depends(get_inventory_tenant_id),
+    current_user: models.User = Depends(can_read_inventory),
+    tenant_id: int = Depends(get_tenant_scope),
 ):
     """
-    Computes automated inventory metrics:
-    - Overall stock health score percentage
-    - Total items, low stock warnings, out of stock alerts
-    - Category-wise distribution and shortages
-    - Prioritized restock recommendations
+    Stock health of active consumables (equipment is excluded from low-stock alerts):
+    health score, low/out-of-stock lists, per-category summary and prioritised restock list.
     """
     items = db.query(models.InventoryItem).filter(
-        models.InventoryItem.tenant_id == tenant_id
+        models.InventoryItem.tenant_id == tenant_id,
+        models.InventoryItem.is_active.is_(True),
+        models.InventoryItem.item_type != models.InventoryItemType.EQUIPMENT.value,
     ).all()
 
     total_items = len(items)
@@ -472,12 +521,12 @@ def get_inventory_analytics(
     category_summary: Dict[str, Dict[str, Any]] = {}
 
     for item in items:
-        qty = float(item.quantity)
-        min_s = float(item.min_stock)
+        qty = Decimal(item.quantity)
+        min_s = Decimal(item.min_stock)
         cat = item.category or "General Kitchen"
 
         if cat not in category_summary:
-            category_summary[cat] = {"total_items": 0, "total_units": 0.0, "low_stock": 0, "healthy": 0}
+            category_summary[cat] = {"total_items": 0, "total_units": Decimal("0"), "low_stock": 0, "healthy": 0}
 
         category_summary[cat]["total_items"] += 1
         category_summary[cat]["total_units"] += qty
@@ -487,10 +536,10 @@ def get_inventory_analytics(
             "name": item.name,
             "category": cat,
             "sku": item.sku,
-            "quantity": qty,
+            "quantity": str(qty),
             "unit": item.unit,
-            "min_stock": min_s,
-            "deficit": max(0.0, min_s - qty)
+            "min_stock": str(min_s),
+            "deficit": str(max(Decimal("0"), min_s - qty)),
         }
 
         if qty <= 0:
@@ -503,11 +552,11 @@ def get_inventory_analytics(
             healthy_stock.append(item_dict)
             category_summary[cat]["healthy"] += 1
 
-    # Compute Health Score Percentage (0-100%)
-    health_score = round((len(healthy_stock) / total_items * 100), 1) if total_items > 0 else 100.0
+    for summary in category_summary.values():
+        summary["total_units"] = str(summary["total_units"])
 
-    # Sort urgent restock list by highest deficit
-    urgent_restock = sorted(out_of_stock + low_stock, key=lambda x: x["deficit"], reverse=True)
+    health_score = round((len(healthy_stock) / total_items * 100), 1) if total_items > 0 else 100.0
+    urgent_restock = sorted(out_of_stock + low_stock, key=lambda x: Decimal(x["deficit"]), reverse=True)
 
     return {
         "total_items": total_items,
@@ -530,53 +579,54 @@ def adjust_stock(
     item_id: int,
     body: schemas.InventoryStockAdjust,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_inventory_access),
+    current_user: models.User = Depends(can_write_inventory),
     tenant_id: int = Depends(get_inventory_tenant_id),
 ):
-    item = db.query(models.InventoryItem).filter(
-        models.InventoryItem.id == item_id,
-        models.InventoryItem.tenant_id == tenant_id
-    ).first()
-    if not item:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found.")
-
-    new_qty = float(item.quantity) + float(body.quantity_delta)
-    if new_qty < 0:
+    try:
+        item = stock.lock_items(db, tenant_id, [item_id])[item_id]
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found.")
+        raise
+    old_qty = Decimal(item.quantity)
+    try:
+        stock.apply_movement(db, item, body.quantity_delta, models.StockMovementType.ADJUSTMENT,
+                             user=current_user, reason=body.reason or "Manual Adjustment")
+    except HTTPException:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Adjustment would result in negative stock ({new_qty:.2f}). "
-                   f"Current quantity: {float(item.quantity):.2f}."
+            detail=f"Adjustment would result in negative stock ({old_qty + body.quantity_delta:.2f}). "
+                   f"Current quantity: {old_qty:.2f}."
         )
-
-    old_qty = float(item.quantity)
-    item.quantity = new_qty
-    db.flush()
-
-    # Log the stock movement
-    log = models.ActivityLog(
-        tenant_id=tenant_id,
-        user_id=current_user.id,
-        action="Stock Adjusted",
-        performed_by=current_user.username,
-        target_user=None,
-        role=str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role),
-        details=f"Item '{item.name}' stock adjusted from {old_qty:.2f} to {new_qty:.2f} ({body.reason or 'Manual Adjustment'})"
-    )
-    db.add(log)
+    audit.record(db, current_user, "Stock Adjusted", tenant_id=tenant_id,
+                 details=f"Item '{item.name}' stock adjusted from {old_qty:.2f} to {item.quantity:.2f} "
+                         f"({body.reason or 'Manual Adjustment'})")
     db.commit()
     db.refresh(item)
     return item
 
 
+def _references(db: Session, item: models.InventoryItem) -> List[str]:
+    reasons = []
+    if db.query(models.PurchaseOrderItem.id).filter(models.PurchaseOrderItem.inventory_item_id == item.id).first():
+        reasons.append("purchase orders")
+    if db.query(models.ProductRecipe.id).filter(models.ProductRecipe.inventory_item_id == item.id).first():
+        reasons.append("product recipes")
+    if db.query(models.StockMovement.id).filter(models.StockMovement.inventory_item_id == item.id).first():
+        reasons.append("stock history")
+    return reasons
+
+
 @router.delete(
     "/inventory/{item_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete an inventory item"
+    summary="Delete an unused inventory item (referenced items must be deactivated instead)"
 )
 def delete_inventory_item(
     item_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_inventory_access),
+    current_user: models.User = Depends(can_write_inventory),
     tenant_id: int = Depends(get_inventory_tenant_id),
 ):
     item = db.query(models.InventoryItem).filter(
@@ -586,6 +636,118 @@ def delete_inventory_item(
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found.")
 
+    references = _references(db, item)
+    if references:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"'{item.name}' is used by {', '.join(references)} and cannot be deleted. Deactivate it instead.",
+        )
+    audit.record(db, current_user, "Inventory Item Deleted", tenant_id=tenant_id, details=item.name)
     db.delete(item)
     db.commit()
     return None
+
+
+@router.put(
+    "/inventory/{item_id}/status",
+    response_model=schemas.InventoryItemResponse,
+    summary="Activate or deactivate an inventory item"
+)
+def set_inventory_item_status(
+    item_id: int,
+    is_active: bool = Query(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(can_write_inventory),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    item = db.query(models.InventoryItem).filter(
+        models.InventoryItem.id == item_id, models.InventoryItem.tenant_id == tenant_id
+    ).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found.")
+    item.is_active = is_active
+    audit.record(db, current_user, "Inventory Item " + ("Activated" if is_active else "Deactivated"),
+                 tenant_id=tenant_id, details=item.name)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# WASTAGE (M12) and the stock-movement ledger (M6)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _wastage_view(movement: models.StockMovement, item: models.InventoryItem, user: Optional[models.User]):
+    quantity = abs(Decimal(movement.quantity_delta)).quantize(Decimal("0.01"))
+    cost = (Decimal(movement.unit_cost) * quantity).quantize(Decimal("0.01")) if movement.unit_cost is not None else None
+    reason, _, _ = (movement.reason or "").partition(" | ")
+    return schemas.WastageResponse(
+        id=movement.id, inventory_item_id=item.id, item=item.name, unit=item.unit, quantity=quantity,
+        reason=reason, estimated_cost=cost, logged_by=user.username if user else None, created_at=movement.created_at,
+    )
+
+
+@router.get("/inventory/wastage", response_model=List[schemas.WastageResponse])
+def list_wastage(
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(can_read_inventory),
+    tenant_id: int = Depends(get_tenant_scope),
+):
+    rows = (
+        db.query(models.StockMovement, models.InventoryItem, models.User)
+        .join(models.InventoryItem, models.InventoryItem.id == models.StockMovement.inventory_item_id)
+        .outerjoin(models.User, models.User.id == models.StockMovement.user_id)
+        .filter(
+            models.StockMovement.tenant_id == tenant_id,
+            models.StockMovement.movement_type == models.StockMovementType.WASTAGE.value,
+        )
+        .order_by(models.StockMovement.created_at.desc(), models.StockMovement.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [_wastage_view(m, i, u) for m, i, u in rows]
+
+
+@router.post("/inventory/wastage", response_model=schemas.WastageResponse, status_code=status.HTTP_201_CREATED)
+def record_wastage(
+    body: schemas.WastageCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(can_write_inventory),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    """Records spoilage/wastage and deducts it from stock in the same transaction."""
+    item = stock.lock_items(db, tenant_id, [body.inventory_item_id])[body.inventory_item_id]
+    unit_cost = (body.estimated_cost / body.quantity).quantize(Decimal("0.01")) if body.estimated_cost is not None else None
+    reason = body.reason + (f" | {body.notes.strip()}" if body.notes and body.notes.strip() else "")
+    movement = stock.apply_movement(
+        db, item, -body.quantity, models.StockMovementType.WASTAGE, user=current_user,
+        reason=reason, unit_cost=unit_cost,
+    )
+    audit.record(db, current_user, "Wastage Recorded", tenant_id=tenant_id,
+                 details=f"{body.quantity} {item.unit} of '{item.name}': {body.reason}")
+    db.commit()
+    db.refresh(movement)
+    return _wastage_view(movement, item, current_user)
+
+
+@router.get("/inventory/{item_id}/movements", response_model=List[schemas.StockMovementResponse])
+def list_stock_movements(
+    item_id: int,
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(can_read_inventory),
+    tenant_id: int = Depends(get_tenant_scope),
+):
+    item = db.query(models.InventoryItem.id).filter(
+        models.InventoryItem.id == item_id, models.InventoryItem.tenant_id == tenant_id
+    ).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found.")
+    return (
+        db.query(models.StockMovement)
+        .filter(models.StockMovement.inventory_item_id == item_id)
+        .order_by(models.StockMovement.created_at.desc(), models.StockMovement.id.desc())
+        .limit(limit)
+        .all()
+    )

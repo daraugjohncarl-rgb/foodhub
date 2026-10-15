@@ -1,7 +1,13 @@
 # 🍽️ Blessie FoodHub — Inbox POS System
 
 > **Multi-Tenant FastAPI Backend + Super Admin Web Panel**
-> Version: `1.4.0` | Stack: FastAPI · SQLAlchemy · MySQL · Vanilla JS · HTML/CSS
+> Version: `1.4.0` | Stack: FastAPI · SQLAlchemy · PostgreSQL · Alembic · Vanilla JS · HTML/CSS
+
+> **Current state (October 2026 audit release)** — PostgreSQL + Alembic migrations, JWT (PyJWT) with mandatory
+> `JWT_SECRET`, central role/tenant permissions (`app/core/permissions.py`), no default passwords in production.
+> Setup: `fastapi/.env.example` · Deploying/migrating: `DEPLOYMENT.md` · Findings and status: `FIXES_NEEDED.md` ·
+> Tests: `cd fastapi && TEST_DATABASE_URL=... python -m pytest`. Sections below that mention MySQL, automatic table
+> creation or default credentials describe older versions.
 
 ---
 
@@ -35,8 +41,8 @@ The **Super Admin** has a global view — managing tenants, creating users, moni
 |---------------|-------------------------------------------------|
 | Backend       | FastAPI (Python 3.12+)                          |
 | ORM           | SQLAlchemy                                      |
-| Database      | MySQL (via PyMySQL)                             |
-| Auth          | JWT (python-jose) + bcrypt password hashing     |
+| Database      | PostgreSQL (psycopg 3) + Alembic migrations      |
+| Auth          | JWT (PyJWT) + bcrypt password hashing           |
 | Frontend      | Vanilla HTML · CSS · JavaScript (no frameworks) |
 | Fonts         | Google Fonts (Inter)                            |
 | Icons         | Font Awesome 6.4.0                              |
@@ -442,37 +448,28 @@ pip install -r requirements.txt
 
 ### 2. Configure environment variables
 
-Edit `.env`:
-```env
-DB_HOST=localhost
-DB_PORT=3306
-DB_NAME=inbox_pos
-DB_USER=root
-DB_PASS=your_password
-JWT_SECRET=your_jwt_secret_key
-```
+Copy `fastapi/.env.example` to `fastapi/.env` and fill in at least `DATABASE_URL` (PostgreSQL) and `JWT_SECRET`
+(32+ random characters: `python -c "import secrets; print(secrets.token_urlsafe(48))"`).
 
-### 3. Start the server
+### 3. Create the schema, then start the server
 
 ```bash
-.\venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+cd fastapi
+alembic upgrade head                 # new database (existing pre-Alembic database: see DEPLOYMENT.md)
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-The app will automatically:
-- Create all database tables on first run (including `incident_reports`)
-- Seed the default SUPER_ADMIN account if none exists
-- Serve the frontend at `http://localhost:8000`
-- Serve the interactive API docs at `http://localhost:8000/docs`
+The app does **not** create or alter tables itself; it refuses to start when the schema is behind the code.
+In development (`SEED_DEMO_DATA` on) it seeds the menu and demo accounts, each of which must choose a new password
+at first login. Interactive API docs are at `/docs` outside production.
 
 ---
 
 ## Default Credentials
 
-| Role        | Username     | Password        |
-|-------------|--------------|-----------------|
-| Super Admin | `superadmin` | `superadmin123` |
-
-> ⚠️ **Change the default password immediately after first login in a production environment.**
+There are no default credentials in production. In development the demo accounts (`superadmin`, `admin`, `manager`,
+`cashier`, `inventory`, `kitchen`) are created with temporary passwords and must choose a new password (≥ 10
+characters) at first login. For the first production SUPER_ADMIN set `INITIAL_SUPERADMIN_PASSWORD` for one start-up.
 
 ---
 

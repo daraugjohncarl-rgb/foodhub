@@ -54,7 +54,7 @@ function buildSidebarMenu(role, onNavigate) {
 
   if (navEl) {
     navEl.innerHTML = `
-      <div class="nav-section-title">${normalizedRole === 'cashier' ? 'POS Counter' : 'Operations Menu'}</div>
+      <div class="nav-section-title">${esc(normalizedRole === 'cashier' ? 'POS Counter' : 'Operations Menu')}</div>
       <ul class="nav-menu" id="sidebar-menu"></ul>
     `;
     menuEl = document.getElementById("sidebar-menu");
@@ -71,7 +71,7 @@ function buildSidebarMenu(role, onNavigate) {
     a.href = `#${item.id}`;
     a.className = "nav-link" + (index === 0 ? " active" : "");
     a.setAttribute("data-title", item.label);
-    a.innerHTML = `<i class="${item.icon}"></i><span>${item.label}</span>`;
+    a.innerHTML = `<i class="${esc(item.icon)}"></i><span>${esc(item.label)}</span>`;
     
     a.onclick = (e) => {
       e.preventDefault();
