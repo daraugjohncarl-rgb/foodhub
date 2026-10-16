@@ -5083,8 +5083,8 @@ function renderDrawerTableRows(shifts) {
                 <i class="fas fa-hand-holding-dollar"></i> Cashout
               </button>
             ` : ''}
-            <button class="btn btn-outline btn-sm" onclick="openEditCashInDrawerModal(${s.id}, '${s.cashier_name.replace(/'/g, "\\'")}', ${s.expected_cash})" title="Edit Cash in Drawer on Cashier" style="padding:4px 10px; font-size:11px; font-weight:700; border-radius:8px;">
-              <i class="fas fa-pen-to-square"></i> Edit Cash in Drawer
+            <button class="btn btn-outline btn-sm" onclick="openShiftMovementsModal(${s.id})" title="View Cash Movement History" style="padding:4px 8px; font-size:11px;">
+              <i class="fas fa-list-check"></i> Audit
             </button>
           </div>
         </td>
@@ -5219,67 +5219,6 @@ async function submitAddCashMovement() {
   } catch (err) {
     console.error("Cashout error:", err);
     Utils.showToast(err.message, "danger");
-  }
-function openEditCashInDrawerModal(shiftId, cashierName, currentCash = 0) {
-  Utils.openModal(`Edit Cash in Drawer — ${cashierName}`, `
-    <form id="form-edit-drawer-cash" onsubmit="event.preventDefault(); submitEditCashInDrawer(${shiftId});">
-      <div style="display:flex; justify-content:space-between; margin-bottom:14px; padding:12px 16px; background:rgba(201,162,39,0.08); border-radius:10px; border:1px solid rgba(205,190,150,0.3);">
-        <div>
-          <span style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Cashier</span>
-          <div style="font-size:15px; font-weight:800; color:var(--text-main);">${cashierName}</div>
-        </div>
-        <div>
-          <span style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Current in Drawer</span>
-          <div style="font-size:16px; font-weight:800; color:#c9a227;">${Utils.formatCurrency(currentCash)}</div>
-        </div>
-      </div>
-      <div class="input-group" style="margin-bottom:16px;">
-        <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">
-          New Cash Amount in Drawer (₱) <span style="color:var(--danger);">*</span>
-        </label>
-        <input type="number" step="0.01" min="0" id="edit-drawer-amount" class="input-field" required value="${Number(currentCash || 0).toFixed(2)}" placeholder="0.00" style="width:100%; font-size:22px; font-weight:800; padding:10px 14px; color:#c9a227; border:2px solid #c9a227; border-radius:10px;" autofocus>
-      </div>
-      <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Reason / Notes</label>
-        <input type="text" id="edit-drawer-reason" class="input-field" placeholder="e.g. Starting float adjustment, drawer update" style="width:100%;">
-      </div>
-    </form>
-  `, `<button class="btn btn-primary" onclick="submitEditCashInDrawer(${shiftId})" style="width:100%; justify-content:center; padding:12px; font-size:14px; font-weight:700; border-radius:10px;"><i class="fas fa-check"></i> Save Cash in Drawer</button>`);
-}
-
-async function submitEditCashInDrawer(shiftId) {
-  const amountVal = document.getElementById("edit-drawer-amount")?.value;
-  const newAmount = parseFloat(amountVal);
-  const reason = document.getElementById("edit-drawer-reason")?.value.trim();
-
-  if (isNaN(newAmount) || newAmount < 0) {
-    Utils.showToast("Please enter a valid cash amount.", "danger");
-    return;
-  }
-
-  try {
-    const res = await Auth.fetch(`/api/v1/shifts/${shiftId}/drawer-cash`, {
-      method: "PUT",
-      body: JSON.stringify({
-        new_cash_amount: newAmount,
-        reason: reason || "Manager Drawer Cash Edit"
-      })
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || "Failed to update cash in drawer.");
-    }
-    const data = await res.json();
-    Utils.showToast(data.message || `Cash in drawer updated to ₱${newAmount.toFixed(2)}`, "success");
-    Utils.closeModal();
-
-    try {
-      localStorage.setItem("RESTOTRACK_DRAWER_RESET", Date.now().toString());
-    } catch (_) {}
-
-    renderCashDrawerTracker();
-  } catch (e) {
-    Utils.showToast(e.message, "danger");
   }
 }
 
