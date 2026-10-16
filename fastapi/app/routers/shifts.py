@@ -276,6 +276,92 @@ def add_cash_movement(
     db.refresh(movement)
     return movement
 
+@router.put("/{shift_id}/drawer-cash")
+def update_shift_drawer_cash(
+    shift_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Manager/Admin direct edit of cash in drawer on a cashier:
+    Calculates current expected cash in drawer and applies an adjustment movement
+    so the resulting expected cash in drawer exactly equals new_cash_amount.
+    """
+    tenant_id = _get_user_tenant_id(db, current_user)
+    shift = db.query(models.Shift).filter(
+        models.Shift.id == shift_id,
+        models.Shift.tenant_id == tenant_id
+    ).first()
+
+    if not shift:
+        raise HTTPException(status_code=404, detail="Shift not found.")
+
+    try:
+        new_cash_amount = Decimal(str(body.get("new_cash_amount", 0)))
+        if new_cash_amount < Decimal("0.0"):
+            raise ValueError()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid cash amount provided.")
+
+    from sqlalchemy import func
+    cash_sales = db.query(
+        func.coalesce(func.sum(models.Payment.amount), 0)
+    ).join(models.Transaction).filter(
+        models.Transaction.shift_id == shift.id,
+        models.Payment.status == "completed",
+        ~models.Transaction.status.in_(["cancelled", "rejected"]),
+        func.lower(models.Payment.payment_method).like("%cash%")
+    ).scalar() or Decimal("0.0")
+
+    paid_in = db.query(
+        func.coalesce(func.sum(models.ShiftCashMovement.amount), 0)
+    ).filter(
+        models.ShiftCashMovement.shift_id == shift.id,
+        models.ShiftCashMovement.type == "PAID_IN"
+    ).scalar() or Decimal("0.0")
+
+    paid_out = db.query(
+        func.coalesce(func.sum(models.ShiftCashMovement.amount), 0)
+    ).filter(
+        models.ShiftCashMovement.shift_id == shift.id,
+        models.ShiftCashMovement.type == "PAID_OUT"
+    ).scalar() or Decimal("0.0")
+
+    current_expected = Decimal(str(shift.start_cash or 0)) + Decimal(str(cash_sales)) + Decimal(str(paid_in)) - Decimal(str(paid_out))
+    diff = new_cash_amount - current_expected
+    reason = body.get("reason", "").strip() or "Manager Drawer Cash Edit"
+
+    if diff > Decimal("0.0"):
+        movement = models.ShiftCashMovement(
+            tenant_id=tenant_id,
+            shift_id=shift.id,
+            user_id=current_user.id,
+            type="PAID_IN",
+            amount=diff,
+            reason=f"{reason} (+₱{float(diff):.2f})"
+        )
+        db.add(movement)
+    elif diff < Decimal("0.0"):
+        movement = models.ShiftCashMovement(
+            tenant_id=tenant_id,
+            shift_id=shift.id,
+            user_id=current_user.id,
+            type="PAID_OUT",
+            amount=abs(diff),
+            reason=f"{reason} (-₱{float(abs(diff)):.2f})"
+        )
+        db.add(movement)
+
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Cash in drawer for Shift #{shift.id} updated to ₱{float(new_cash_amount):.2f}",
+        "shift_id": shift.id,
+        "new_cash_amount": float(new_cash_amount)
+    }
+
 @router.post("/cashout")
 def cashout_shift(
     body: dict,
