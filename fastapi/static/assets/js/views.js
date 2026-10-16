@@ -338,36 +338,6 @@ async function renderInventory(c) {
       </div>
     </div>
 
-    <!-- Automated Analysis Banner & Urgent Restock Alerts -->
-    ${cachedAnalytics.urgent_restock && cachedAnalytics.urgent_restock.length > 0 ? `
-      <div class="section-card fade-up delay-1" style="margin-bottom:24px; border-left: 4px solid #f97316;">
-        <div class="section-head" style="background:rgba(249,115,22,0.05); padding:14px 20px;">
-          <div style="display:flex; align-items:center; gap:10px;">
-            <i class="fas fa-chart-pie" style="color:#f97316; font-size:18px;"></i>
-            <h2 style="font-size:15px; margin:0;">Automated Restock & Shortage Analysis (${cachedAnalytics.urgent_restock.length} items prioritized)</h2>
-          </div>
-          <button class="btn btn-outline btn-sm" onclick="openUrgentRestockModal()" style="font-size:12px;">
-            <i class="fas fa-list-check"></i> View Full Audit
-          </button>
-        </div>
-        <div style="padding:16px 20px; overflow-x:auto;">
-          <div style="display:flex; gap:12px; flex-wrap:wrap;">
-            ${cachedAnalytics.urgent_restock.slice(0, 6).map(u => `
-              <div style="background:#ffffff; border:1px solid rgba(205,190,150,0.3); border-radius:12px; padding:10px 14px; min-width:180px; flex:1; display:flex; justify-content:space-between; align-items:center;">
-                <div>
-                  <div style="font-weight:700; font-size:13px; color:var(--text-main);">${u.name}</div>
-                  <div style="font-size:11px; color:var(--text-muted);">${u.category} • Current: <strong style="color:#ef4444;">${u.quantity} ${u.unit}</strong></div>
-                </div>
-                <button class="btn btn-primary btn-sm" style="padding:4px 8px; font-size:11px;" onclick="openStockAdjustModal(${u.id}, '${u.name.replace(/'/g, "\\'")}', ${u.quantity}, ${u.unit_price || 0}, '${u.unit}')">
-                  <i class="fas fa-plus"></i> Restock
-                </button>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      </div>
-    ` : ''}
-
     <!-- Toolbar & Master List Import Actions -->
     <div class="toolbar fade-up delay-1" style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:18px; flex-wrap:wrap;">
       <div style="display:flex; gap:12px; align-items:center; flex:1; min-width:280px; max-width:480px;">
@@ -444,19 +414,20 @@ function renderInventoryRows(items) {
         <td style="color:var(--text-muted); font-size:12px;">#${i.id}</td>
         <td><strong style="color:var(--text-main); font-size:13px;">${i.name}</strong></td>
         <td><span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:11px; font-weight:600;">${catName}</span></td>
-        <td><strong style="font-size:14px; color:${isOut ? '#ef4444' : isLow ? '#f97316' : 'var(--text-main)'};">${i.quantity}</strong> <span style="font-size:11px; color:var(--text-muted);">${i.unit}</span></td>
+        <td>
+          <button type="button" class="btn btn-outline btn-sm" onclick="openStockAdjustModal(${i.id}, '${i.name.replace(/'/g, "\\'")}', ${i.quantity}, ${unitPrice}, '${i.unit}')" title="Click to edit stock quantity & price" style="padding:4px 10px; font-weight:700; border-radius:8px; display:inline-flex; align-items:center; gap:6px; background:rgba(201,162,39,0.06); border:1px dashed rgba(205,190,150,0.6); cursor:pointer;">
+            <span style="font-size:13px; color:${isOut ? '#ef4444' : isLow ? '#f97316' : 'var(--text-main)'};">${i.quantity}</span>
+            <span style="font-size:11px; color:var(--text-muted); font-weight:500;">${i.unit}</span>
+            <i class="fas fa-pen-to-square" style="font-size:11px; color:#c9a227; margin-left:2px;"></i>
+          </button>
+        </td>
         <td style="background:rgba(201,162,39,0.04);"><strong style="color:#c9a227; font-size:13px;">${Utils.formatCurrency(unitPrice)}</strong> <span style="font-size:11px; color:var(--text-muted);">/ ${i.unit}</span></td>
         <td style="background:rgba(16,185,129,0.04);"><strong style="color:#10b981; font-size:13px; font-weight:700;">${Utils.formatCurrency(totalVal)}</strong></td>
         <td><span class="badge ${badgeClass}" style="font-size:11px; font-weight:700;">${badgeText}</span></td>
         <td style="text-align:right;">
-          <div style="display:inline-flex; gap:6px;">
-            <button class="btn btn-primary btn-sm" style="padding:4px 8px; font-size:11px;" onclick="openStockAdjustModal(${i.id}, '${i.name.replace(/'/g, "\\'")}', ${i.quantity}, ${unitPrice}, '${i.unit}')" title="Quick Restock / Adjust / Update Price">
-              <i class="fas fa-sliders-h"></i> Adjust
-            </button>
-            <button class="btn btn-outline btn-sm" style="padding:4px 8px; font-size:11px; color:var(--danger);" onclick="deleteInventoryItem(${i.id}, '${i.name.replace(/'/g, "\\'")}')" title="Delete Item">
-              <i class="fas fa-trash"></i>
-            </button>
-          </div>
+          <button class="btn btn-outline btn-sm" style="padding:5px 9px; font-size:12px; color:var(--danger); border-radius:8px;" onclick="deleteInventoryItem(${i.id}, '${i.name.replace(/'/g, "\\'")}')" title="Delete Item">
+            <i class="fas fa-trash"></i>
+          </button>
         </td>
       </tr>
     `;
@@ -840,15 +811,27 @@ async function submitAddInventory() {
 }
 
 function openStockAdjustModal(id, name, currentQty, currentPrice = 0, currentUnit = '') {
-  Utils.openModal(`Adjust Stock & Price — ${name}`, `
-    <form id="form-stock-adj" onsubmit="event.preventDefault(); submitStockAdjust(${id});">
+  Utils.openModal(`Edit Stock & Price — ${name}`, `
+    <form id="form-stock-adj" onsubmit="event.preventDefault(); submitStockAdjust(${id}, ${currentQty});">
       <div style="display:flex; justify-content:space-between; margin-bottom:14px; padding:10px 14px; background:rgba(201,162,39,0.08); border-radius:10px; border:1px solid rgba(205,190,150,0.3);">
         <div><span style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Current Stock</span><div style="font-size:16px; font-weight:800; color:var(--text-main);">${currentQty} ${currentUnit}</div></div>
         <div><span style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Price per Unit</span><div style="font-size:16px; font-weight:800; color:#c9a227;">₱${Number(currentPrice || 0).toFixed(2)}</div></div>
       </div>
       <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Quantity Delta (+ Restock, - Deduct)</label>
-        <input type="number" step="0.01" id="adj-delta" class="input-field" placeholder="e.g. 20 (Restock) or -5 (Deduction)" style="width:100%;">
+        <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Current Stock Quantity (${currentUnit})</label>
+        <input type="number" step="0.01" id="adj-stock-qty" class="input-field" value="${currentQty}" placeholder="Set new stock quantity" style="width:100%; font-weight:700; font-size:15px;" oninput="
+          const v = parseFloat(this.value);
+          const deltaEl = document.getElementById('adj-delta');
+          if (deltaEl) deltaEl.value = !isNaN(v) ? (v - ${currentQty}).toFixed(2) : '';
+        ">
+      </div>
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Or Quantity Change (+ Restock, - Deduct)</label>
+        <input type="number" step="0.01" id="adj-delta" class="input-field" placeholder="e.g. 20 (Restock) or -5 (Deduction)" style="width:100%;" oninput="
+          const d = parseFloat(this.value);
+          const stockEl = document.getElementById('adj-stock-qty');
+          if (stockEl) stockEl.value = !isNaN(d) ? (${currentQty} + d).toFixed(2) : '${currentQty}';
+        ">
       </div>
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Update Unit Price (₱)</label>
@@ -856,21 +839,35 @@ function openStockAdjustModal(id, name, currentQty, currentPrice = 0, currentUni
       </div>
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Reason / Notes</label>
-        <input type="text" id="adj-reason" class="input-field" placeholder="e.g. Supplier delivery, Weekly audit, Price change" style="width:100%;">
+        <input type="text" id="adj-reason" class="input-field" placeholder="e.g. Stock edit, Supplier delivery, Weekly audit" style="width:100%;">
       </div>
     </form>
-  `, `<button class="btn btn-primary" onclick="submitStockAdjust(${id})"><i class="fas fa-check"></i> Apply Adjustment</button>`);
+  `, `<button class="btn btn-primary" onclick="submitStockAdjust(${id}, ${currentQty})"><i class="fas fa-check"></i> Save Changes</button>`);
 }
 
-async function submitStockAdjust(itemId) {
-  const deltaVal = document.getElementById("adj-delta")?.value;
-  const delta = deltaVal !== "" ? parseFloat(deltaVal) : 0;
+async function submitStockAdjust(itemId, originalQty = 0) {
+  const deltaInput = document.getElementById("adj-delta");
+  const stockQtyInput = document.getElementById("adj-stock-qty");
+  let delta = 0;
+
+  if (stockQtyInput && stockQtyInput.value.trim() !== "") {
+    const directQty = parseFloat(stockQtyInput.value);
+    if (!isNaN(directQty)) {
+      delta = directQty - originalQty;
+    }
+  } else if (deltaInput && deltaInput.value.trim() !== "") {
+    const parsedDelta = parseFloat(deltaInput.value);
+    if (!isNaN(parsedDelta)) {
+      delta = parsedDelta;
+    }
+  }
+
   const priceInput = document.getElementById("adj-price");
   const unitPrice = priceInput && priceInput.value.trim() !== "" ? parseFloat(priceInput.value) : undefined;
   const reason = document.getElementById("adj-reason")?.value.trim();
 
-  if ((isNaN(delta) || delta === 0) && (unitPrice === undefined || isNaN(unitPrice))) {
-    Utils.showToast("Please enter a quantity change or an updated unit price.", "danger");
+  if (delta === 0 && (unitPrice === undefined || isNaN(unitPrice))) {
+    Utils.showToast("Please enter an updated stock quantity or price.", "danger");
     return;
   }
 
@@ -4979,38 +4976,22 @@ function renderCashDrawerTrackerUI(container, data) {
       </div>
     </div>
 
-    <!-- Metrics Cards Grid -->
-    <div class="stats-grid fade-up delay-1" style="margin-bottom:24px;">
+    <!-- Metrics Cards Grid: Cashier Drawer & Overall Income -->
+    <div class="stats-grid fade-up delay-1" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); margin-bottom:24px;">
       <div class="stat-card">
         <div class="stat-icon gold"><i class="fas fa-vault"></i></div>
         <div class="stat-info">
-          <h3>Total Cash in Drawers</h3>
+          <h3>Cashier Drawer</h3>
           <div class="stat-count" style="color:#c9a227;">${Utils.formatCurrency(data.total_cash_in_drawers || 0)}</div>
-          <div class="stat-trend" style="color:var(--success, #10b981);"><i class="fas fa-arrow-up"></i> Across ${data.active_drawers_count || 0} active drawer(s)</div>
+          <div class="stat-trend" style="color:var(--success, #10b981);"><i class="fas fa-cash-register"></i> Live active cashier drawer balance</div>
         </div>
       </div>
       <div class="stat-card">
-        <div class="stat-icon green"><i class="fas fa-receipt"></i></div>
+        <div class="stat-icon green"><i class="fas fa-chart-line"></i></div>
         <div class="stat-info">
-          <h3>Complete Amount of Orders</h3>
-          <div class="stat-count" style="color:#10b981;">${Utils.formatCurrency(data.today_total_orders_amount || (data.today_total_cash_sales || 0))}</div>
-          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-check-circle"></i> Today's completed orders</div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon orange"><i class="fas fa-coins"></i></div>
-        <div class="stat-info">
-          <h3>Today's Cash Sales</h3>
-          <div class="stat-count" style="color:#f97316;">${Utils.formatCurrency(data.today_total_cash_sales || 0)}</div>
-          <div class="stat-trend" style="color:#f97316;"><i class="fas fa-receipt"></i> Cash payment collected</div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon red"><i class="fas fa-arrow-down-long"></i></div>
-        <div class="stat-info">
-          <h3>Total Cashed Out</h3>
-          <div class="stat-count" style="color:#ef4444;">${Utils.formatCurrency(totalDrops)}</div>
-          <div class="stat-trend" style="color:#ef4444;"><i class="fas fa-shield-halved"></i> Deposited to safe</div>
+          <h3>Overall Income</h3>
+          <div class="stat-count" style="color:#10b981;">${Utils.formatCurrency(data.overall_income !== undefined ? data.overall_income : (data.today_total_orders_amount || 0))}</div>
+          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-circle-check"></i> Overall completed orders revenue</div>
         </div>
       </div>
     </div>
@@ -5044,36 +5025,6 @@ function renderCashDrawerTrackerUI(container, data) {
           </thead>
           <tbody>
             ${renderDrawerTableRows(shifts)}
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- Cash Drawer Movements & Audit Log -->
-    <div class="section-card fade-up delay-3">
-      <div class="section-head">
-        <div>
-          <h2><i class="fas fa-money-bill-wave" style="color:#10b981; margin-right:8px;"></i> Cash Movements & Safe Drops Audit Trail</h2>
-          <span style="font-size:12px; color:var(--text-muted);">Detailed ledger of all drawer float injections and mid-shift safe drops</span>
-        </div>
-        <button class="btn btn-outline btn-sm" onclick="openAddCashMovementModal()">
-          <i class="fas fa-plus"></i> New Movement
-        </button>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Shift / Cashier</th>
-              <th>Movement Type</th>
-              <th>Amount</th>
-              <th>Reason / Purpose</th>
-              <th>Recorded By</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${renderMovementsTableRows(allMovements)}
           </tbody>
         </table>
       </div>
