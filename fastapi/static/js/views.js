@@ -1325,15 +1325,29 @@ async function renderPOS(c) {
   c.innerHTML = `
     <style>
       @media (max-width: 1200px) {
-        .pos-container { grid-template-columns: minmax(0, 1fr) 320px !important; }
+        .pos-container { grid-template-columns: minmax(0, 1fr) 300px !important; }
       }
       @media (max-width: 1024px) {
         .pos-container { grid-template-columns: 1fr !important; }
-        .pos-cart { position: static !important; height: auto !important; max-height: 600px !important; margin-top: 20px; }
-        .stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+        .pos-cart { position: static !important; width: 100% !important; height: auto !important; max-height: none !important; margin-top: 16px !important; }
+        .pos-cart .cart-items { max-height: 380px !important; overflow-y: auto !important; }
       }
-      @media (max-width: 576px) {
-        .stats-grid { grid-template-columns: 1fr !important; }
+      @media (max-width: 640px) {
+        .pos-search-row { flex-wrap: wrap !important; gap: 8px !important; }
+        .pos-search-row .search-wrap { min-width: 100% !important; order: 1; }
+        .pos-search-row #pos-voice-order-btn { flex: 1 !important; order: 2; justify-content: center !important; }
+        .pos-search-row #pos-online-orders-btn { order: 3; }
+        #pos-voice-live-strip { flex-wrap: wrap !important; gap: 6px !important; }
+        #pos-voice-live-strip > div:first-child { width: 100% !important; }
+        #pos-voice-live-strip > div:last-child { width: 100% !important; justify-content: space-between !important; }
+      }
+      @media (max-width: 480px) {
+        .stats-grid.pos-stats-grid { grid-template-columns: repeat(3, 1fr) !important; gap: 6px !important; }
+        .pos-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 8px !important; }
+      }
+      @media (max-width: 360px) {
+        .stats-grid.pos-stats-grid { grid-template-columns: 1fr !important; }
+        .pos-grid { grid-template-columns: 1fr !important; }
       }
       .cat-pill {
         white-space: nowrap; border-radius: 20px; padding: 6px 18px; 
@@ -1352,7 +1366,7 @@ async function renderPOS(c) {
       <div class="pos-workspace">
         
         <!-- SEARCH ROW -->
-        <div style="display:flex; gap:10px; width:100%; margin-bottom: 8px;">
+        <div class="pos-search-row" style="display:flex; gap:10px; width:100%; margin-bottom: 8px;">
           <div class="search-wrap" style="position:relative; flex:1;">
             <i class="fas fa-search" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--text-muted); font-size:13px;"></i>
             <input type="text" id="pos-search" class="input-field" placeholder="Search menu products..." style="padding-left:36px; width:100%; font-size:13px; height:38px; border-radius:10px; background:#ffffff;" oninput="filterPOSGrid()">
@@ -1368,7 +1382,7 @@ async function renderPOS(c) {
         </div>
 
         <!-- INLINE LIVE VOICE RECORDING STATUS STRIP -->
-        <div id="pos-voice-live-strip" style="display:none; margin-bottom:8px; padding:8px 12px; background:linear-gradient(90deg, #fef2f2, #fff7ed); border:1px solid #f87171; border-radius:10px; align-items:center; justify-content:space-between; animation:fadeIn 0.2s ease;">
+        <div id="pos-voice-live-strip" class="pos-voice-live-strip" style="display:none; margin-bottom:8px; padding:8px 12px; background:linear-gradient(90deg, #fef2f2, #fff7ed); border:1px solid #f87171; border-radius:10px; align-items:center; justify-content:space-between; animation:fadeIn 0.2s ease;">
           <div style="display:flex; align-items:center; gap:8px; font-size:12px; color:#991b1b; font-weight:600; min-width:0; overflow:hidden;">
             <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#ef4444; animation:voicePulse 1s infinite; flex-shrink:0;"></span>
             <span style="flex-shrink:0;">🔴 Recording Voice Order:</span>
@@ -2458,16 +2472,22 @@ async function renderKitchen(c) {
 
   c.innerHTML = `
     <style>
-      .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 28px; }
-      .stat-card { padding: 24px 22px; display: flex; align-items: center; gap: 18px; background: var(--card-bg, #ffffff); border-radius: var(--radius-card, 16px); border: 1px solid rgba(205, 190, 150, 0.35); box-shadow: 0 4px 15px rgba(0,0,0,0.03); transition: transform 0.3s ease, box-shadow 0.3s ease; }
+      .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 14px; margin-bottom: 24px; }
+      @media (max-width: 600px) {
+        .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+      }
+      @media (max-width: 400px) {
+        .stats-grid { grid-template-columns: 1fr; }
+      }
+      .stat-card { padding: 20px 18px; display: flex; align-items: center; gap: 14px; background: var(--card-bg, #ffffff); border-radius: var(--radius-card, 16px); border: 1px solid rgba(205, 190, 150, 0.35); box-shadow: 0 4px 15px rgba(0,0,0,0.03); transition: transform 0.3s ease, box-shadow 0.3s ease; }
       .stat-card:hover { transform: translateY(-3px); box-shadow: 0 15px 35px rgba(180,140,50,0.12); }
-      .stat-icon { width: 56px; height: 56px; border-radius: 16px; display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; }
+      .stat-icon { width: 50px; height: 50px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
       .stat-icon.gold   { background: rgba(201,162,39,0.12); color: #c9a227; }
       .stat-icon.green  { background: rgba(16,185,129,0.12); color: #10b981; }
       .stat-icon.orange { background: rgba(249,115,22,0.12); color: #f97316; }
       .stat-icon.blue   { background: rgba(59,130,246,0.12); color: #3b82f6; }
-      .stat-info h3 { font-size: 12px; color: var(--text-muted, #71717a); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; margin-top: 0; }
-      .stat-count { font-size: 28px; font-weight: 800; color: var(--text-main, #18181b); line-height: 1.1; }
+      .stat-info h3 { font-size: 11px; color: var(--text-muted, #71717a); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; margin-top: 0; }
+      .stat-count { font-size: 24px; font-weight: 800; color: var(--text-main, #18181b); line-height: 1.1; }
       .stat-trend { font-size: 11px; margin-top: 4px; font-weight: 500; }
     </style>
 
