@@ -221,11 +221,19 @@ def get_drawer_summary(
     if today_cash_val == Decimal("0.0"):
         today_cash_val = today_total_cash_sales
 
+    all_time_income = db.query(
+        func.coalesce(func.sum(models.Transaction.net_amount), 0)
+    ).filter(
+        models.Transaction.tenant_id == tenant_id,
+        models.Transaction.status == "completed"
+    ).scalar() or Decimal("0.0")
+
     return {
         "total_cash_in_drawers": float(total_cash_in_active_drawers),
         "active_drawers_count": active_drawers_count,
         "today_total_cash_sales": float(today_cash_val),
         "today_total_orders_amount": float(today_orders_val),
+        "overall_income": float(all_time_income),
         "shifts": drawer_list
     }
 

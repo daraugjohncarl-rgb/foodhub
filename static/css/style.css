@@ -2096,13 +2096,22 @@ table {
     }
 
     .pos-search-row #pos-voice-order-btn {
-        flex: 1 !important;
+        flex: 1 1 auto !important;
         order: 2;
         justify-content: center !important;
     }
 
     .pos-search-row #pos-online-orders-btn {
         order: 3;
+    }
+
+    .pos-search-row #pos-drinks-orders-btn {
+        order: 4;
+    }
+
+    .pos-voice-live-strip {
+        flex-wrap: wrap !important;
+        gap: 6px !important;
     }
 }
 
