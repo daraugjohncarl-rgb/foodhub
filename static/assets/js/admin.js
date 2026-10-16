@@ -12,29 +12,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     if (!user) return;
 
-    // 2. Sidebar & Mobile Menu Handlers
-    const sidebar = document.getElementById("sidebar");
-    const sidebarToggle = document.getElementById("sidebarToggle");
-    const mobileMenuBtn = document.getElementById("mobileMenuBtn");
-    const sidebarOverlay = document.getElementById("sidebarOverlay");
-
-    if (sidebarToggle && sidebar) {
-        sidebarToggle.addEventListener("click", () => {
-            sidebar.classList.toggle("collapsed");
-        });
-    }
-
-    if (mobileMenuBtn && sidebar && sidebarOverlay) {
-        mobileMenuBtn.addEventListener("click", () => {
-            sidebar.classList.add("open");
-            sidebarOverlay.classList.add("open");
-        });
-
-        sidebarOverlay.addEventListener("click", () => {
-            sidebar.classList.remove("open");
-            sidebarOverlay.classList.remove("open");
-        });
-    }
+    
 
     // 3. Live Clock & Date Header
     function updateClock() {

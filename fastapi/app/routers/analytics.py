@@ -78,9 +78,42 @@ def get_dashboard_stats(
         or 0
     )
 
+    # 4. Total cash in active cashier drawers (Start Cash + Cash Sales + Paid In - Paid Out)
+    open_shifts = db.query(models.Shift).filter(
+        models.Shift.tenant_id == tenant_id,
+        models.Shift.status == "open"
+    ).all()
+
+    cash_in_drawer = Decimal("0.0")
+    for s in open_shifts:
+        c_sales = db.query(
+            func.coalesce(func.sum(models.Payment.amount), 0)
+        ).join(models.Transaction).filter(
+            models.Transaction.shift_id == s.id,
+            models.Payment.status == "completed",
+            func.lower(models.Payment.payment_method).like("%cash%")
+        ).scalar() or Decimal("0.0")
+
+        p_in = db.query(
+            func.coalesce(func.sum(models.ShiftCashMovement.amount), 0)
+        ).filter(
+            models.ShiftCashMovement.shift_id == s.id,
+            models.ShiftCashMovement.type == "PAID_IN"
+        ).scalar() or Decimal("0.0")
+
+        p_out = db.query(
+            func.coalesce(func.sum(models.ShiftCashMovement.amount), 0)
+        ).filter(
+            models.ShiftCashMovement.shift_id == s.id,
+            models.ShiftCashMovement.type == "PAID_OUT"
+        ).scalar() or Decimal("0.0")
+
+        cash_in_drawer += Decimal(str(s.start_cash or 0)) + Decimal(str(c_sales)) + Decimal(str(p_in)) - Decimal(str(p_out))
+
     return schemas.DashboardStats(
         today_sales=today_sales,
         total_transactions_today=total_transactions_today,
         low_stock_count=low_stock_count,
-        active_staff_count=active_staff_count
+        active_staff_count=active_staff_count,
+        cash_in_drawer=cash_in_drawer
     )

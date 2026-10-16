@@ -13,11 +13,29 @@ function togglePassword() {
     }
 }
 
+// Role Dashboard URL helper
+function getRoleDashboardUrl(role) {
+    if (typeof Auth !== "undefined" && typeof Auth.getDashboardUrl === "function") {
+        return Auth.getDashboardUrl(role);
+    }
+    const r = (role || "").toLowerCase();
+    switch (r) {
+        case "super_admin": return "/dashboard";
+        case "admin": return "/admin";
+        case "manager": return "/manager";
+        case "inventory": return "/inventory";
+        case "cashier": return "/cashier";
+        case "kitchen": return "/kitchen";
+        default: return "/dashboard";
+    }
+}
+
 // Authentication Logic
 document.addEventListener("DOMContentLoaded", () => {
-    // If already logged in, redirect directly to dashboard
+    // If already logged in, redirect directly to user's assigned dashboard
     if (localStorage.getItem("access_token")) {
-        window.location.href = "/dashboard";
+        const role = localStorage.getItem("role") || "";
+        window.location.href = getRoleDashboardUrl(role);
         return;
     }
 
@@ -97,8 +115,17 @@ document.addEventListener("DOMContentLoaded", () => {
             localStorage.setItem("role", data.role);
             localStorage.setItem("tenant_id", data.tenant_id !== null ? data.tenant_id : "GLOBAL");
 
-            // Redirect to Dashboard
-            window.location.href = "/dashboard";
+            const userProfile = {
+                username: data.username,
+                name: data.username,
+                role: (data.role || "").toLowerCase(),
+                tenant_id: data.tenant_id
+            };
+            localStorage.setItem("RESTOTRACK_USER", JSON.stringify(userProfile));
+            localStorage.setItem("RESTOTRACK_ROLE", (data.role || "").toLowerCase());
+
+            // Redirect to appropriate Dashboard
+            window.location.href = getRoleDashboardUrl(data.role);
         } catch (err) {
             if (errorMessage) errorMessage.textContent = err.message || "Failed to authenticate.";
             if (errorBanner) {

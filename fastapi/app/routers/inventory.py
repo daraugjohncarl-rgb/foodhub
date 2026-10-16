@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
 from typing import List, Optional, Dict, Any
 from decimal import Decimal
+import time
 
 from app.db import get_db
 import app.models as models
@@ -352,7 +353,7 @@ def create_inventory_item(
         tenant_id=tenant_id,
         name=body.name.strip(),
         category=body.category.strip() if body.category else "Kitchen",
-        sku=body.sku.strip() if body.sku else f"SKU-{int(func.now())}",
+        sku=body.sku.strip() if body.sku else f"SKU-{int(time.time())}",
         quantity=body.quantity,
         unit=body.unit.strip(),
         min_stock=body.min_stock,
@@ -409,12 +410,13 @@ def import_masterlist(
                 updated_count += 1
             else:
                 sku_code = f"{cat[:3].upper()}-{abs(hash(name)) % 10000:04d}"
+                # If importing from master list, do NOT add arbitrary stock; only import item name and metadata
                 new_item = models.InventoryItem(
                     tenant_id=tenant_id,
                     name=name.strip(),
                     category=cat,
                     sku=sku_code,
-                    quantity=Decimal(str(default_qty)),
+                    quantity=Decimal("0.0"),
                     unit=unit,
                     min_stock=Decimal(str(min_qty))
                 )
@@ -438,11 +440,121 @@ def import_masterlist(
 
     return {
         "success": True,
-        "message": f"Successfully imported master list items ({created_count} created, {updated_count} synced).",
+        "message": f"Successfully imported master list items ({created_count} created with 0 initial stock, {updated_count} synced).",
         "created_count": created_count,
         "updated_count": updated_count,
         "categories_imported": categories_to_import
     }
+
+
+@router.post(
+    "/inventory/import-custom",
+    summary="Import custom master list of items (CSV or array)"
+)
+def import_custom_items(
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_inventory_access),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    items = body.get("items", [])
+    if not items:
+        raise HTTPException(status_code=400, detail="No items provided to import")
+
+    existing_items: Dict[str, models.InventoryItem] = {
+        item.name.strip().lower(): item 
+        for item in db.query(models.InventoryItem).filter(models.InventoryItem.tenant_id == tenant_id).all()
+    }
+
+    created_count = 0
+    updated_count = 0
+
+    for it in items:
+        name = str(it.get("name", "")).strip()
+        if not name:
+            continue
+        key = name.lower()
+        category = str(it.get("category", "Kitchen")).strip() or "Kitchen"
+        unit = str(it.get("unit", "units")).strip() or "units"
+        
+        # If no current stock is provided or empty in import list, DO NOT add stock! Default to 0.0
+        raw_qty = it.get("quantity")
+        if raw_qty is None or str(raw_qty).strip() == "":
+            quantity = Decimal("0.0")
+        else:
+            try:
+                quantity = Decimal(str(raw_qty))
+            except:
+                quantity = Decimal("0.0")
+
+        try:
+            min_stock = Decimal(str(it.get("min_stock", 0.0) or 0.0))
+        except:
+            min_stock = Decimal("0.0")
+
+        if key in existing_items:
+            existing = existing_items[key]
+            existing.category = category
+            if unit and not existing.unit:
+                existing.unit = unit
+            # Only update stock if explicitly provided in import file
+            if raw_qty is not None and str(raw_qty).strip() != "":
+                existing.quantity = quantity
+            updated_count += 1
+        else:
+            sku_code = f"{category[:3].upper()}-{abs(hash(name)) % 10000:04d}"
+            new_item = models.InventoryItem(
+                tenant_id=tenant_id,
+                name=name,
+                category=category,
+                sku=sku_code,
+                quantity=quantity,
+                unit=unit,
+                min_stock=min_stock
+            )
+            db.add(new_item)
+            existing_items[key] = new_item
+            created_count += 1
+
+    db.commit()
+    return {
+        "success": True,
+        "message": f"Successfully imported {created_count} items ({updated_count} existing synced).",
+        "created_count": created_count,
+        "updated_count": updated_count
+    }
+
+
+@router.delete(
+    "/inventory/{item_id}",
+    summary="Delete an inventory item"
+)
+def delete_inventory_item(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_inventory_access),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    item = db.query(models.InventoryItem).filter(
+        models.InventoryItem.id == item_id,
+        models.InventoryItem.tenant_id == tenant_id
+    ).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found.")
+
+    from sqlalchemy import text
+    try:
+        db.execute(text("DELETE FROM purchase_order_items WHERE inventory_item_id = :item_id"), {"item_id": item_id})
+        db.execute(text("DELETE FROM product_recipes WHERE inventory_item_id = :item_id"), {"item_id": item_id})
+        db.flush()
+    except Exception:
+        pass
+
+    item_name = item.name
+    db.delete(item)
+    db.commit()
+
+    return {"success": True, "message": f"Inventory item '{item_name}' deleted successfully."}
 
 
 @router.get(
@@ -566,26 +678,3 @@ def adjust_stock(
     db.commit()
     db.refresh(item)
     return item
-
-
-@router.delete(
-    "/inventory/{item_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete an inventory item"
-)
-def delete_inventory_item(
-    item_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_inventory_access),
-    tenant_id: int = Depends(get_inventory_tenant_id),
-):
-    item = db.query(models.InventoryItem).filter(
-        models.InventoryItem.id == item_id,
-        models.InventoryItem.tenant_id == tenant_id
-    ).first()
-    if not item:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found.")
-
-    db.delete(item)
-    db.commit()
-    return None

@@ -78,8 +78,95 @@ def login(
         "username": user.username
     }
 
-from app.schemas import UserResponse, UserUpdate, PasswordChangeRequest
+from app.schemas import UserResponse, UserUpdate, PasswordChangeRequest, CustomerRegisterRequest
 from app.core.security import verify_password, create_access_token, get_password_hash
+from sqlalchemy import func
+
+@router.post("/customer-register", status_code=status.HTTP_201_CREATED, summary="Create a new Customer account")
+@router.post("/register", status_code=status.HTTP_201_CREATED, summary="Register a customer account")
+def register_customer(
+    body: CustomerRegisterRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Allows a customer to create a customer account.
+    Returns immediate JWT access token and user info so they are logged in instantly.
+    """
+    clean_username = body.username.strip()
+    if len(clean_username) < 3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username must be at least 3 characters long."
+        )
+
+    # Check username uniqueness
+    existing_user = db.query(models.User).filter(
+        func.lower(models.User.username) == clean_username.lower()
+    ).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Username '{clean_username}' is already taken. Please choose another username."
+        )
+
+    # Check email uniqueness if provided
+    clean_email = body.email.strip().lower() if body.email and body.email.strip() else None
+    if clean_email:
+        existing_email = db.query(models.User).filter(
+            func.lower(models.User.email) == clean_email
+        ).first()
+        if existing_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Email '{clean_email}' is already registered."
+            )
+
+    # Determine tenant
+    tenant_id = body.tenant_id
+    if not tenant_id:
+        first_tenant = db.query(models.Tenant).first()
+        tenant_id = first_tenant.id if first_tenant else 1
+
+    hashed_pw = get_password_hash(body.password)
+
+    new_user = models.User(
+        tenant_id=tenant_id,
+        username=clean_username,
+        first_name=body.first_name.strip() if body.first_name else None,
+        last_name=body.last_name.strip() if body.last_name else None,
+        email=clean_email,
+        phone=body.phone.strip() if body.phone else None,
+        password_hash=hashed_pw,
+        role=models.UserRole.CUSTOMER,
+        is_active=True
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    # Build customer display name
+    name_parts = [p for p in [new_user.first_name, new_user.last_name] if p]
+    display_name = " ".join(name_parts) if name_parts else new_user.username
+
+    # Generate access token so customer is logged in immediately
+    token_payload = {
+        "sub": str(new_user.id),
+        "username": new_user.username,
+        "role": "CUSTOMER",
+        "tenant_id": new_user.tenant_id
+    }
+    access_token = create_access_token(data=token_payload)
+
+    return {
+        "success": True,
+        "message": f"Welcome, {display_name}! Customer account created successfully.",
+        "access_token": access_token,
+        "token_type": "bearer",
+        "role": "CUSTOMER",
+        "tenant_id": new_user.tenant_id,
+        "username": new_user.username,
+        "customer_name": display_name
+    }
 
 @router.get("/me", response_model=UserResponse)
 def read_users_me(current_user: models.User = Depends(get_current_user)):

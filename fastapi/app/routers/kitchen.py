@@ -27,7 +27,10 @@ def get_kitchen_orders(
     q = db.query(models.Transaction).options(
         joinedload(models.Transaction.items).joinedload(models.TransactionItem.product),
         joinedload(models.Transaction.user)
-    ).filter(models.Transaction.created_at >= since_time)
+    ).filter(
+        models.Transaction.created_at >= since_time,
+        ~models.Transaction.status.in_(["cancelled", "rejected"])
+    )
 
     if current_user.tenant_id:
         q = q.filter(models.Transaction.tenant_id == current_user.tenant_id)
@@ -79,6 +82,12 @@ def update_order_status(
     tx = db.query(models.Transaction).filter(models.Transaction.id == tx_id).first()
     if not tx:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found.")
+
+    if tx.status in ["rejected", "cancelled"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Order #{tx.id} has already been {tx.status.upper()}. Once an order is rejected, its status is locked and cannot be changed."
+        )
 
     tx.status = new_status
     db.commit()

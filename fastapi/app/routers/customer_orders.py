@@ -31,8 +31,16 @@ def submit_customer_order(body: dict, db: Session = Depends(get_db)):
         
     items = body.get("items", [])
 
-    if not customer_name or not items:
-        raise HTTPException(status_code=400, detail="Missing required order fields")
+    if not items:
+        raise HTTPException(status_code=400, detail="Missing order items in order")
+
+    if not customer_name or not str(customer_name).strip():
+        if table_number and str(table_number).strip():
+            customer_name = f"Table {str(table_number).strip()} Guest"
+        else:
+            customer_name = "Guest Customer"
+    else:
+        customer_name = str(customer_name).strip()
         
     if not order_number:
         import uuid
@@ -44,7 +52,18 @@ def submit_customer_order(body: dict, db: Session = Depends(get_db)):
     for item in items:
         prod_id = item.get("product_id")
         qty = int(item.get("quantity", 1))
-        
+
+        if not prod_id:
+            # Fallback: look up by product name
+            item_name = item.get("name")
+            if item_name:
+                found_prod = db.query(models.Product).filter(
+                    models.Product.name.ilike(str(item_name).strip()),
+                    models.Product.tenant_id == tenant_id
+                ).first()
+                if found_prod:
+                    prod_id = found_prod.id
+
         if not prod_id:
             raise HTTPException(status_code=400, detail="Missing product_id in order items")
         if qty <= 0:
@@ -109,11 +128,12 @@ def get_pending_orders(current_user: models.User = Depends(get_current_user), db
     """
     Polled by the POS cashier dashboard to show incoming orders.
     """
+    tenant_id = current_user.tenant_id or 1
     orders = db.query(models.CustomerOrder).options(
         joinedload(models.CustomerOrder.items)
     ).filter(
         models.CustomerOrder.status == "pending",
-        models.CustomerOrder.tenant_id == current_user.tenant_id
+        models.CustomerOrder.tenant_id == tenant_id
     ).order_by(models.CustomerOrder.created_at.asc()).all()
 
     result = []
@@ -243,7 +263,9 @@ def get_public_menu(tenant_id: int = 1, db: Session = Depends(get_db)):
     for cat in categories:
         products = db.query(models.Product).filter(
             models.Product.category_id == cat.id,
-            models.Product.is_active == True,
+            models.Product.is_active != False,
+            models.Product.is_active != 0,
+            models.Product.is_active.isnot(None),
             models.Product.tenant_id == tenant_id
         ).all()
         
@@ -257,8 +279,10 @@ def get_public_menu(tenant_id: int = 1, db: Session = Depends(get_db)):
             "products": [
                 {
                     "id": p.id,
+                    "sku": p.sku,
                     "name": p.name,
                     "price": float(p.price),
+                    "is_active": bool(p.is_active),
                     "image_url": getattr(p, "image_url", None)
                 } for p in products
             ]

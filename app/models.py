@@ -1,6 +1,6 @@
 import enum
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Numeric, UniqueConstraint, CheckConstraint, func, BigInteger, Enum, Text
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, synonym
 from app.db import Base
 
 class UserRole(str, enum.Enum):
@@ -10,6 +10,7 @@ class UserRole(str, enum.Enum):
     CASHIER = "CASHIER"
     INVENTORY = "INVENTORY"
     KITCHEN = "KITCHEN"
+    CUSTOMER = "CUSTOMER"
 
 
 class ReportCategory(str, enum.Enum):
@@ -34,6 +35,15 @@ class ReportStatus(str, enum.Enum):
     REJECTED = "REJECTED"
 
 
+class PurchaseOrderStatus(str, enum.Enum):
+    DRAFT = "Draft"
+    PENDING = "Pending"
+    ORDERED = "Ordered"
+    PARTIALLY_RECEIVED = "Partially Received"
+    RECEIVED = "Received"
+    CANCELLED = "Cancelled"
+
+
 class Tenant(Base):
     __tablename__ = "tenants"
 
@@ -53,6 +63,7 @@ class Tenant(Base):
     shift_cash_movements = relationship("ShiftCashMovement", back_populates="tenant", cascade="all, delete-orphan")
     incident_reports = relationship("IncidentReport", back_populates="tenant", cascade="all, delete-orphan")
     suppliers = relationship("Supplier", back_populates="tenant", cascade="all, delete-orphan")
+    purchase_orders = relationship("PurchaseOrder", back_populates="tenant", cascade="all, delete-orphan")
 
 
 class User(Base):
@@ -77,6 +88,7 @@ class User(Base):
     transactions = relationship("Transaction", back_populates="user", cascade="all, delete-orphan")
     shift_cash_movements = relationship("ShiftCashMovement", back_populates="user", cascade="all, delete-orphan")
     incident_reports = relationship("IncidentReport", back_populates="user", cascade="all, delete-orphan")
+    purchase_orders = relationship("PurchaseOrder", back_populates="created_by_user")
 
 
 class ActivityLog(Base):
@@ -124,6 +136,7 @@ class Product(Base):
     price = Column(Numeric(10, 2), nullable=False)
     cost = Column(Numeric(10, 2), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
+    image_url = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -156,6 +169,7 @@ class InventoryItem(Base):
     # Relationships
     tenant = relationship("Tenant", back_populates="inventory_items")
     recipes = relationship("ProductRecipe", back_populates="inventory_item", cascade="all, delete-orphan")
+    purchase_order_items = relationship("PurchaseOrderItem", back_populates="inventory_item", cascade="all, delete-orphan")
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "name", name="uix_tenant_inventory_name"),
@@ -299,7 +313,6 @@ class IncidentReport(Base):
 
 
 class Supplier(Base):
-    """Supplier model — maps to the existing `suppliers` table in PostgreSQL."""
     __tablename__ = "suppliers"
 
     id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
@@ -318,7 +331,96 @@ class Supplier(Base):
 
     # Relationships
     tenant = relationship("Tenant", back_populates="suppliers")
+    purchase_orders = relationship("PurchaseOrder", back_populates="supplier")
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "supplier_name", name="uix_tenant_supplier_name"),
     )
+
+
+class PurchaseOrder(Base):
+    __tablename__ = "purchase_orders"
+
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    po_number = Column(String(50), nullable=False, index=True)
+    supplier_id = Column(BigInteger, ForeignKey("suppliers.id", ondelete="RESTRICT"), nullable=False, index=True)
+    order_date = Column(DateTime, server_default=func.now(), nullable=False)
+    expected_delivery_date = Column(DateTime, nullable=True)
+    received_date = Column(DateTime, nullable=True)
+    status = Column(Enum(PurchaseOrderStatus), default=PurchaseOrderStatus.DRAFT, nullable=False)
+    subtotal = Column(Numeric(10, 2), default=0.0, nullable=False)
+    total_amount = Column(Numeric(10, 2), default=0.0, nullable=False)
+    notes = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Relationships
+    tenant = relationship("Tenant", back_populates="purchase_orders")
+    supplier = relationship("Supplier", back_populates="purchase_orders")
+    created_by_user = relationship("User", back_populates="purchase_orders")
+    items = relationship("PurchaseOrderItem", back_populates="purchase_order", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "po_number", name="uix_tenant_po_number"),
+    )
+
+
+class PurchaseOrderItem(Base):
+    __tablename__ = "purchase_order_items"
+
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
+    purchase_order_id = Column(BigInteger, ForeignKey("purchase_orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    po_id = synonym("purchase_order_id")
+    inventory_item_id = Column(Integer, ForeignKey("inventory_items.id", ondelete="RESTRICT"), nullable=False)
+    quantity = Column(Numeric(10, 2), nullable=False)
+    quantity_ordered = synonym("quantity")
+    unit_cost = Column(Numeric(10, 2), nullable=False)
+    total_cost = Column(Numeric(10, 2), nullable=False)
+    notes = Column(Text, nullable=True)
+
+    # Relationships
+    purchase_order = relationship("PurchaseOrder", back_populates="items")
+    inventory_item = relationship("InventoryItem", back_populates="purchase_order_items")
+
+
+class CustomerOrder(Base):
+    __tablename__ = "customer_orders"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, default=1)
+    order_number = Column(String(50), unique=True, index=True, nullable=False)
+    customer_name = Column(String(100), nullable=False)
+    order_type = Column(String(50), nullable=False) # Dine In, Take Out
+    table_number = Column(String(50), nullable=True)
+    notes = Column(Text, nullable=True)
+    total_amount = Column(Numeric(10, 2), default=0.0, nullable=False)
+    status = Column(String(20), default="pending", nullable=False) # pending, accepted, rejected
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    items = relationship("CustomerOrderItem", back_populates="customer_order", cascade="all, delete-orphan")
+
+
+class CustomerOrderItem(Base):
+    __tablename__ = "customer_order_items"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    customer_order_id = Column(Integer, ForeignKey("customer_orders.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(100), nullable=False)
+    variant = Column(String(100), nullable=True)
+    price = Column(Numeric(10, 2), nullable=False)
+    quantity = Column(Integer, default=1, nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
+
+    customer_order = relationship("CustomerOrder", back_populates="items")
+
+class RestaurantTable(Base):
+    __tablename__ = "restaurant_tables"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    table_number = Column(String(50), nullable=False)
+    status = Column(String(20), default="active", nullable=False)
+    
+    tenant = relationship("Tenant")

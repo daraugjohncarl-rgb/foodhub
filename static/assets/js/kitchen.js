@@ -18,3 +18,24 @@ document.addEventListener("DOMContentLoaded", () => {
     renderKitchen();
   }, 10000);
 });
+
+// Global Logout Modal Helpers
+function openLogoutModal() {
+    const modal = document.getElementById("logoutModal");
+    if (modal) modal.style.display = "flex";
+    else doLogout();
+}
+function closeLogoutModal() {
+    const modal = document.getElementById("logoutModal");
+    if (modal) modal.style.display = "none";
+}
+function doLogout() {
+    if (typeof Auth !== "undefined" && Auth.logout) {
+        Auth.logout();
+    } else if (typeof logout === "function") {
+        logout();
+    }
+}
+window.openLogoutModal = openLogoutModal;
+window.closeLogoutModal = closeLogoutModal;
+window.doLogout = doLogout;

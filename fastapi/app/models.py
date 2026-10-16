@@ -1,6 +1,6 @@
 import enum
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Numeric, UniqueConstraint, CheckConstraint, func, BigInteger, Enum, Text
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, synonym
 from app.db import Base
 
 class UserRole(str, enum.Enum):
@@ -10,6 +10,7 @@ class UserRole(str, enum.Enum):
     CASHIER = "CASHIER"
     INVENTORY = "INVENTORY"
     KITCHEN = "KITCHEN"
+    CUSTOMER = "CUSTOMER"
 
 
 class ReportCategory(str, enum.Enum):
@@ -370,12 +371,14 @@ class PurchaseOrderItem(Base):
     __tablename__ = "purchase_order_items"
 
     id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
-    po_id = Column(BigInteger, ForeignKey("purchase_orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    purchase_order_id = Column(BigInteger, ForeignKey("purchase_orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    po_id = synonym("purchase_order_id")
     inventory_item_id = Column(Integer, ForeignKey("inventory_items.id", ondelete="RESTRICT"), nullable=False)
-    quantity_ordered = Column(Numeric(10, 2), nullable=False)
-    quantity_received = Column(Numeric(10, 2), default=0.0, nullable=False)
+    quantity = Column(Numeric(10, 2), nullable=False)
+    quantity_ordered = synonym("quantity")
     unit_cost = Column(Numeric(10, 2), nullable=False)
     total_cost = Column(Numeric(10, 2), nullable=False)
+    notes = Column(Text, nullable=True)
 
     # Relationships
     purchase_order = relationship("PurchaseOrder", back_populates="items")

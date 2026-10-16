@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Any
 from decimal import Decimal
 from datetime import datetime
-from app.models import UserRole, ReportCategory, ReportPriority, ReportStatus
+from app.models import UserRole, ReportCategory, ReportPriority, ReportStatus, PurchaseOrderStatus
 
 # Tenant Schemas
 class TenantCreate(BaseModel):
@@ -48,6 +48,15 @@ class PasswordChangeRequest(BaseModel):
 
 class PasswordResetRequest(BaseModel):
     new_password: str = Field(..., min_length=6)
+
+class CustomerRegisterRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50, description="Desired customer username")
+    password: str = Field(..., min_length=6, description="Password (at least 6 characters)")
+    first_name: Optional[str] = Field(None, max_length=50)
+    last_name: Optional[str] = Field(None, max_length=50)
+    email: Optional[str] = Field(None, max_length=100)
+    phone: Optional[str] = Field(None, max_length=30)
+    tenant_id: Optional[int] = Field(None)
 
 class UserResponse(BaseModel):
     id: int
@@ -112,6 +121,7 @@ class ProductResponse(BaseModel):
     price: Decimal
     cost: Decimal
     is_active: bool
+    image_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -138,6 +148,30 @@ class ShiftCashMovementResponse(BaseModel):
     amount: Decimal
     reason: Optional[str]
     created_at: datetime
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
+# Shift Schemas
+class ShiftCreate(BaseModel):
+    start_cash: Decimal = Field(default=0.0, ge=0.0)
+
+class ShiftEnd(BaseModel):
+    end_cash: Decimal = Field(..., ge=0.0)
+
+class ShiftResponse(BaseModel):
+    id: int
+    tenant_id: int
+    user_id: int
+    start_time: datetime
+    end_time: Optional[datetime]
+    start_cash: Decimal
+    end_cash: Optional[Decimal]
+    status: str
+    created_at: datetime
+    updated_at: datetime
 
     model_config = {
         "from_attributes": True
@@ -305,7 +339,8 @@ class AdminProductCreate(BaseModel):
     sku: str = Field(..., max_length=50, description="Stock-Keeping Unit, unique per tenant")
     barcode: Optional[str] = Field(None, max_length=100)
     price: Decimal = Field(..., ge=0, description="Selling price")
-    cost: Decimal = Field(..., ge=0, description="Unit cost / COGS")
+    cost: Optional[Decimal] = Field(Decimal("0.0"), ge=0, description="Unit cost / COGS")
+    image_url: Optional[str] = Field(None)
     is_active: Optional[bool] = Field(True)
 
 
@@ -317,6 +352,7 @@ class AdminProductUpdate(BaseModel):
     barcode: Optional[str] = Field(None, max_length=100)
     price: Optional[Decimal] = Field(None, ge=0)
     cost: Optional[Decimal] = Field(None, ge=0)
+    image_url: Optional[str] = None
     is_active: Optional[bool] = None
 
 
@@ -325,11 +361,13 @@ class AdminProductResponse(BaseModel):
     tenant_id: int
     category_id: Optional[int] = None
     category_name: Optional[str] = None   # Denormalized from Category relationship
+    category: Optional[CategoryResponse] = None
     name: str
     sku: str
     barcode: Optional[str] = None
     price: Decimal
     cost: Decimal
+    image_url: Optional[str] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -405,4 +443,133 @@ class DashboardStats(BaseModel):
     total_transactions_today: int = Field(description="Count of completed transactions today")
     low_stock_count: int = Field(description="Number of inventory items at or below min_stock")
     active_staff_count: int = Field(description="Number of active non-SUPER_ADMIN users in this tenant")
+
+
+# ─────────────────────────────────────────────
+# Supplier Schemas
+# ─────────────────────────────────────────────
+
+class SupplierCreate(BaseModel):
+    supplier_name: str = Field(..., max_length=150)
+    contact_number: Optional[str] = Field(None, max_length=50)
+    category: Optional[str] = Field(None, max_length=100)
+    contact_person: Optional[str] = Field(None, max_length=100)
+    email: Optional[str] = Field(None, max_length=100)
+    address: Optional[str] = None
+    products_supplied: Optional[str] = Field(None, max_length=255)
+    status: Optional[str] = Field("Active", max_length=50)
+    notes: Optional[str] = None
+
+class SupplierUpdate(BaseModel):
+    supplier_name: Optional[str] = Field(None, max_length=150)
+    contact_number: Optional[str] = Field(None, max_length=50)
+    category: Optional[str] = Field(None, max_length=100)
+    contact_person: Optional[str] = Field(None, max_length=100)
+    email: Optional[str] = Field(None, max_length=100)
+    address: Optional[str] = None
+    products_supplied: Optional[str] = Field(None, max_length=255)
+    status: Optional[str] = Field(None, max_length=50)
+    notes: Optional[str] = None
+
+class SupplierResponse(BaseModel):
+    id: int
+    tenant_id: int
+    supplier_name: str
+    contact_number: Optional[str]
+    category: Optional[str]
+    contact_person: Optional[str]
+    email: Optional[str]
+    address: Optional[str]
+    products_supplied: Optional[str]
+    status: str
+    notes: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ─────────────────────────────────────────────
+# Purchase Order Schemas
+# ─────────────────────────────────────────────
+
+class PurchaseOrderItemCreate(BaseModel):
+    inventory_item_id: int
+    quantity: Decimal = Field(..., gt=0)
+    unit_cost: Decimal = Field(..., ge=0.0)
+    notes: Optional[str] = None
+
+class PurchaseOrderItemResponse(BaseModel):
+    id: int
+    purchase_order_id: int
+    inventory_item_id: int
+    inventory_item_name: Optional[str] = None
+    quantity: Decimal
+    unit_cost: Decimal
+    total_cost: Decimal
+    notes: Optional[str]
+
+    model_config = {"from_attributes": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def extract_inventory_name(cls, data: Any) -> Any:
+        if hasattr(data, "__class__"):
+            obj = data.__dict__.copy() if hasattr(data, "__dict__") else {}
+            if hasattr(data, "inventory_item") and data.inventory_item is not None:
+                obj["inventory_item_name"] = data.inventory_item.name
+            if hasattr(data, "po_id"):
+                obj["purchase_order_id"] = data.po_id
+            if hasattr(data, "quantity_ordered"):
+                obj["quantity"] = data.quantity_ordered
+            if not hasattr(data, "notes") and "notes" not in obj:
+                obj["notes"] = None
+            return obj
+        return data
+
+class PurchaseOrderCreate(BaseModel):
+    supplier_id: int
+    expected_delivery_date: Optional[datetime] = None
+    notes: Optional[str] = None
+    items: List[PurchaseOrderItemCreate] = Field(..., min_length=1)
+
+class PurchaseOrderUpdate(BaseModel):
+    expected_delivery_date: Optional[datetime] = None
+    notes: Optional[str] = None
+    status: Optional[PurchaseOrderStatus] = None
+
+class PurchaseOrderResponse(BaseModel):
+    id: int
+    tenant_id: int
+    po_number: str
+    supplier_id: int
+    supplier_name: Optional[str] = None
+    order_date: datetime
+    expected_delivery_date: Optional[datetime]
+    received_date: Optional[datetime]
+    status: PurchaseOrderStatus
+    subtotal: Decimal
+    total_amount: Decimal
+    notes: Optional[str]
+    created_by: Optional[int]
+    created_by_username: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    items: List[PurchaseOrderItemResponse] = []
+
+    model_config = {"from_attributes": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def extract_related_names(cls, data: Any) -> Any:
+        if hasattr(data, "__class__"):
+            obj = data.__dict__.copy() if hasattr(data, "__dict__") else {}
+            if hasattr(data, "supplier") and data.supplier is not None:
+                obj["supplier_name"] = data.supplier.supplier_name
+            if hasattr(data, "created_by_user") and data.created_by_user is not None:
+                obj["created_by_username"] = data.created_by_user.username
+            if hasattr(data, "items"):
+                obj["items"] = data.items
+            return obj
+        return data
 

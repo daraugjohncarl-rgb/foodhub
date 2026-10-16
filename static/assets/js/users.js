@@ -270,6 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <option value="INVENTORY" ${user.role === 'INVENTORY' ? 'selected' : ''}>Inventory Staff</option>
                             <option value="CASHIER" ${user.role === 'CASHIER' ? 'selected' : ''}>Cashier</option>
                             <option value="KITCHEN" ${user.role === 'KITCHEN' ? 'selected' : ''}>Kitchen Staff</option>
+                            <option value="CUSTOMER" ${user.role === 'CUSTOMER' ? 'selected' : ''}>Customer</option>
                         </select>
                     </div>
                     <div class="input-group">

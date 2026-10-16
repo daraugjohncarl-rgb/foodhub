@@ -23,10 +23,18 @@ async function renderView(viewId, container) {
     </div>
   `;
 
+  if (window.posOnlineOrdersInterval) {
+    clearInterval(window.posOnlineOrdersInterval);
+    window.posOnlineOrdersInterval = null;
+  }
+  
   try {
     switch (viewId) {
       case "dashboard":
         await renderDashboard(container);
+        break;
+      case "cash_drawer":
+        await renderCashDrawerTracker(container);
         break;
       case "inventory":
         await renderInventory(container);
@@ -39,6 +47,9 @@ async function renderView(viewId, container) {
         break;
       case "kitchen":
         await renderKitchen(container);
+        break;
+      case "kitchen_logs":
+        await renderKitchenLogs(container);
         break;
       case "transactions":
         await renderTransactions(container);
@@ -55,8 +66,18 @@ async function renderView(viewId, container) {
       case "reports":
         await renderReports(container);
         break;
+      case "tables":
+        await renderTables(container);
+        break;
       case "users":
         await renderUsers(container);
+        break;
+      case "customer_orders":
+        await renderCustomerOrdersView(container);
+        break;
+      case "customer_portal":
+      case "customer":
+        window.open("/customer", "_blank");
         break;
       case "logs":
         await renderLogs(container);
@@ -88,23 +109,40 @@ async function renderView(viewId, container) {
 // 1. DASHBOARD / STATS OVERVIEW
 // ─────────────────────────────────────────────────────────────────────────────
 async function renderDashboard(c) {
-  let stats = { today_sales: 0, total_transactions_today: 0, low_stock_count: 0, active_staff_count: 0 };
+  let stats = { today_sales: 0, total_transactions_today: 0, low_stock_count: 0, active_staff_count: 0, cash_in_drawer: 0 };
+  let drawerSummary = { total_cash_in_drawers: 0, active_drawers_count: 0, today_total_cash_sales: 0, shifts: [] };
   let lowStockItems = [];
 
   try {
-    const res = await Auth.fetch("/api/v1/analytics/dashboard");
+    const [res, drawerRes, invRes] = await Promise.all([
+      Auth.fetch("/api/v1/analytics/dashboard"),
+      Auth.fetch("/api/v1/shifts/drawer-summary"),
+      Auth.fetch("/api/v1/inventory?low_stock_only=true")
+    ]);
     if (res.ok) stats = await res.json();
+    if (drawerRes.ok) {
+      drawerSummary = await drawerRes.json();
+      cachedDrawerData = drawerSummary;
+    }
+    if (invRes.ok) lowStockItems = await invRes.json();
   } catch (e) {
     console.warn("Analytics endpoint unavailable, using defaults", e);
   }
 
-  try {
-    const invRes = await Auth.fetch("/api/v1/inventory?low_stock_only=true");
-    if (invRes.ok) lowStockItems = await invRes.json();
-  } catch (e) {}
+  const liveDrawerCash = (drawerSummary && typeof drawerSummary.total_cash_in_drawers === 'number')
+    ? drawerSummary.total_cash_in_drawers
+    : (stats.cash_in_drawer || 0);
 
   c.innerHTML = `
     <div class="stats-grid">
+      <div class="stat-card" style="cursor:pointer;" onclick="renderView('cash_drawer')" title="Click to view Cash Drawer details">
+        <div class="stat-icon purple" style="background:rgba(123,31,162,0.12); color:#7b1fa2;"><i class="fas fa-vault"></i></div>
+        <div class="stat-info">
+          <h3>Cash in Drawer</h3>
+          <div class="stat-count" style="color:#7b1fa2;">${Utils.formatCurrency(liveDrawerCash)}</div>
+          <div class="stat-trend" style="color:var(--success, #10b981);"><i class="fas fa-cash-register"></i> ${drawerSummary.active_drawers_count || 0} active drawer(s)</div>
+        </div>
+      </div>
       <div class="stat-card">
         <div class="stat-icon gold"><i class="fas fa-peso-sign"></i></div>
         <div class="stat-info">
@@ -139,6 +177,42 @@ async function renderDashboard(c) {
       </div>
     </div>
 
+    <!-- Live Cashier Drawers Tracking Section for Manager and Admin -->
+    <div class="section-card">
+      <div class="section-head">
+        <div>
+          <h2><i class="fas fa-cash-register" style="color:#c9a227; margin-right:8px;"></i> Cashier Cash Drawer Live Tracking</h2>
+          <span style="font-size:12px; color:var(--text-muted);">Real-time monitoring of cash float, cash sales, drops, and expected drawer totals</span>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <button class="btn btn-primary btn-sm" onclick="openAddCashMovementModal()" style="display:inline-flex; align-items:center; gap:6px;">
+            <i class="fas fa-money-bill-transfer"></i> Record Cash Drop / In
+          </button>
+          <a href="#cash_drawer" onclick="renderView('cash_drawer')" class="view-all-link">Full Cash Drawer Hub <i class="fas fa-arrow-right"></i></a>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Cashier Staff</th>
+              <th>Shift Status</th>
+              <th>Started At</th>
+              <th>Starting Float</th>
+              <th>Cash Sales</th>
+              <th>Cash In (+)</th>
+              <th>Cash Drops (-)</th>
+              <th style="background:rgba(201,162,39,0.08);">Expected in Drawer</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${renderDrawerTableRows(drawerSummary.shifts.slice(0, 5))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="section-card">
       <div class="section-head">
         <h2>Stock & Low Inventory Alerts</h2>
@@ -149,9 +223,7 @@ async function renderDashboard(c) {
           <thead>
             <tr>
               <th>Item Name</th>
-              <th>SKU</th>
               <th>Available Qty</th>
-              <th>Min Stock Threshold</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -159,16 +231,14 @@ async function renderDashboard(c) {
             ${lowStockItems.length ? lowStockItems.map(item => `
               <tr>
                 <td><strong style="color:var(--text-main); font-size:13px;">${item.name}</strong></td>
-                <td style="color:var(--text-muted); font-size:13px;">${item.sku || 'N/A'}</td>
                 <td><strong style="font-size:13px;">${item.quantity}</strong> <span style="font-size:12px; color:var(--text-muted);">${item.unit || ''}</span></td>
-                <td style="color:var(--text-muted); font-size:13px;">${item.min_stock} ${item.unit || ''}</td>
                 <td>
                   <span class="badge ${item.quantity <= 0 ? 'badge-danger' : 'badge-warning'}" style="font-size:11px; font-weight:700;">
                     ${item.quantity <= 0 ? 'Out of Stock' : 'Low Stock'}
                   </span>
                 </td>
               </tr>
-            `).join('') : '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:30px;"><i class="fas fa-check-circle" style="color:var(--success, #10b981); margin-right:6px;"></i> All inventory items are currently well-stocked.</td></tr>'}
+            `).join('') : '<tr><td colspan="3" style="text-align:center; color:var(--text-muted); padding:30px;"><i class="fas fa-check-circle" style="color:var(--success, #10b981); margin-right:6px;"></i> All inventory items are currently well-stocked.</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -198,11 +268,8 @@ async function renderInventory(c) {
     urgent_restock: [], category_summary: {}
   };
 
-  const categories = [
-    "ALL", "Kitchen", "Street Foods", "Coffee Bar", "Beverages", 
-    "Packaging", "Cleaning Supplies", "Office Supplies and Equipments",
-    "SAMGYUPSAL", "KITCHEN UTENSILS & EQUIPMENT", "FURNITURE & FIXTURES"
-  ];
+  const uniqueCats = Array.from(new Set(cachedInventory.map(i => i.category || 'Uncategorized'))).sort();
+  const categories = ["ALL", ...uniqueCats];
 
   c.innerHTML = `
     <!-- Top Automated Inventory Health & Metrics Grid -->
@@ -313,9 +380,7 @@ async function renderInventory(c) {
               <th>ID</th>
               <th>Item Name</th>
               <th>Department / Category</th>
-              <th>SKU</th>
               <th>Current Stock</th>
-              <th>Min Threshold</th>
               <th>Health Status</th>
               <th style="text-align:right;">Actions</th>
             </tr>
@@ -331,7 +396,7 @@ async function renderInventory(c) {
 
 function renderInventoryRows(items) {
   if (!items || !items.length) {
-    return `<tr><td colspan="8" style="text-align:center; padding:40px; color:var(--text-muted);"><i class="fas fa-boxes" style="font-size:24px; margin-bottom:8px; display:block; opacity:0.5;"></i>No inventory items match the criteria.<br><button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="openImportMasterlistModal()"><i class="fas fa-file-import"></i> Import Official Master List</button></td></tr>`;
+    return `<tr><td colspan="6" style="text-align:center; padding:40px; color:var(--text-muted);"><i class="fas fa-boxes" style="font-size:24px; margin-bottom:8px; display:block; opacity:0.5;"></i>No inventory items match the criteria.<br><button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="openImportMasterlistModal()"><i class="fas fa-file-import"></i> Import Official Master List</button></td></tr>`;
   }
   return items.map(i => {
     const isOut = Number(i.quantity) <= 0;
@@ -345,9 +410,7 @@ function renderInventoryRows(items) {
         <td style="color:var(--text-muted); font-size:12px;">#${i.id}</td>
         <td><strong style="color:var(--text-main); font-size:13px;">${i.name}</strong></td>
         <td><span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:11px; font-weight:600;">${catName}</span></td>
-        <td style="color:var(--text-muted); font-size:12px; font-family:monospace;">${i.sku || '—'}</td>
         <td><strong style="font-size:14px; color:${isOut ? '#ef4444' : isLow ? '#f97316' : 'var(--text-main)'};">${i.quantity}</strong> <span style="font-size:11px; color:var(--text-muted);">${i.unit}</span></td>
-        <td style="color:var(--text-muted); font-size:13px;">${i.min_stock} ${i.unit}</td>
         <td><span class="badge ${badgeClass}" style="font-size:11px; font-weight:700;">${badgeText}</span></td>
         <td style="text-align:right;">
           <div style="display:inline-flex; gap:6px;">
@@ -397,50 +460,195 @@ function filterInventoryList() {
 
 function openImportMasterlistModal() {
   const categories = [
-    { name: "Kitchen", icon: "fa-utensils", desc: "Rice, cooking oil, sauces, seasonings, meats, spices, burger buns" },
-    { name: "Street Foods", icon: "fa-fire", desc: "Fish balls, squid balls, kikiam, hotdogs, lumpia wrappers, seasoning powders" },
-    { name: "Coffee Bar", icon: "fa-mug-hot", desc: "Coffee powders, syrups, condense, creamer, matcha, boba, fruit powders" },
-    { name: "Beverages", icon: "fa-wine-bottle", desc: "Bottled water, soft drinks, beers, spirits, liquor, canned beverages" },
-    { name: "Packaging", icon: "fa-box", desc: "Cups, lids, plastic & paper bags, food containers, straws, cutlery" },
-    { name: "Cleaning Supplies", icon: "fa-soap", desc: "Dishwashing liquid, bleach, disinfectant, alcohol, sponges, mops, trash bags" },
-    { name: "Office Supplies and Equipments", icon: "fa-laptop", desc: "Paper, printer ink, office tools, stationery, desks, appliances, tech" },
-    { name: "SAMGYUPSAL", icon: "fa-drumstick-bite", desc: "Pork belly, beef, kimchi, gochujang, grill pans, portable stoves, side dishes" },
-    { name: "KITCHEN UTENSILS & EQUIPMENT", icon: "fa-kitchen-set", desc: "Gas stoves, fryers, pots, pans, knives, cutting boards, food processors" },
-    { name: "FURNITURE & FIXTURES", icon: "fa-chair", desc: "Dining tables, chairs, stools, lighting, shelving racks, cabinets" }
+    { name: "Kitchen", icon: "fa-utensils", desc: "Rice, Cooking Oil, Soy Sauce, Seasonings, Meat & Poultry" },
+    { name: "Street Foods", icon: "fa-burger", desc: "Fishballs, Kikiam, Kwek-Kwek, Squid Rolls, Sauces" },
+    { name: "Coffee Bar", icon: "fa-mug-hot", desc: "Espresso Beans, Syrups, Milk, Drizzles, Powders" },
+    { name: "Beverages", icon: "fa-glass-water", desc: "Sodas, Juices, Bottled Water, Concentrates" },
+    { name: "Milktea Supplies", icon: "fa-cocktail", desc: "Tapioca Pearls, Tea Leaves, Flavor Syrups, Creamer" },
+    { name: "Packaging Materials", icon: "fa-box-open", desc: "Takeout Boxes, Paper Bags, Straws, Cups, Lids" },
+    { name: "Cleaning Supplies", icon: "fa-broom", desc: "Detergent, Sanitizer, Trash Bags, Mops, Sponges" },
+    { name: "Office Supplies and Equipments", icon: "fa-stapler", desc: "Receipt Paper Rolls, Pens, Markers, Staplers" },
+    { name: "Samgyupsal Materials", icon: "fa-fire-burner", desc: "Pork Belly, Beef Slices, Kimchi, Dipping Sauces" },
+    { name: "KITCHEN UTENSILS & EQUIPMENT", icon: "fa-blender", desc: "Knives, Cutting Boards, Fryers, Pans, Tongs" },
+    { name: "FURNITURE & FIXTURES", icon: "fa-chair", desc: "Dining Chairs, Tables, Light Fixtures, Shelving" },
   ];
 
-  Utils.openModal("📦 Import Official Master List", `
-    <div style="font-size:13px; color:var(--text-muted); margin-bottom:16px;">
-      Select which department modules you want to import into your inventory. Existing items will have their categories and default thresholds synchronized safely.
-    </div>
-
-    <div style="background:rgba(201,162,39,0.08); border:1px solid rgba(201,162,39,0.25); border-radius:12px; padding:16px; margin-bottom:18px; display:flex; justify-content:space-between; align-items:center;">
-      <div>
-        <strong style="color:var(--text-main); font-size:14px;">⚡ Complete Master Import (All 10 Departments)</strong>
-        <div style="font-size:12px; color:var(--text-muted);">Includes over 150+ standard foodhub items, ingredients, supplies & equipment.</div>
-      </div>
-      <button class="btn btn-primary" onclick="submitImportMasterlist(null)">
-        <i class="fas fa-cloud-arrow-down"></i> Import All
+  Utils.openModal("📦 Import Master List", `
+    <!-- Tabs: Official Departments vs Custom List / Paste Names -->
+    <div style="display:flex; gap:10px; margin-bottom:16px; border-bottom:1px solid rgba(205,190,150,0.3); padding-bottom:8px;">
+      <button id="tab-master-depts" class="btn btn-primary btn-sm" onclick="switchImportTab('depts')" style="font-size:12px;">
+        <i class="fas fa-boxes-stacked"></i> Official Department Master List
+      </button>
+      <button id="tab-master-custom" class="btn btn-outline btn-sm" onclick="switchImportTab('custom')" style="font-size:12px;">
+        <i class="fas fa-file-lines"></i> Import Custom List / Paste Names
       </button>
     </div>
 
-    <h4 style="font-size:13px; text-transform:uppercase; color:var(--text-muted); margin-bottom:12px;">Or Import by Department</h4>
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; max-height:280px; overflow-y:auto; padding-right:4px;">
-      ${categories.map(c => `
-        <div style="border:1px solid rgba(205,190,150,0.3); border-radius:10px; padding:12px; background:#ffffff; display:flex; flex-direction:column; justify-content:space-between; gap:8px;">
-          <div>
-            <div style="font-weight:700; font-size:13px; color:var(--text-main); display:flex; align-items:center; gap:8px;">
-              <i class="fas ${c.icon}" style="color:#c9a227;"></i> ${c.name}
-            </div>
-            <div style="font-size:11px; color:var(--text-muted); margin-top:3px; line-height:1.3;">${c.desc}</div>
-          </div>
-          <button class="btn btn-outline btn-sm" style="align-self:flex-start; font-size:11px;" onclick="submitImportMasterlist('${c.name}')">
-            Import ${c.name}
-          </button>
+    <!-- Tab 1: Official Department Master List -->
+    <div id="import-pane-depts">
+      <div style="font-size:12px; color:var(--text-muted); margin-bottom:14px; background:rgba(201,162,39,0.06); padding:10px 14px; border-radius:8px; border-left:3px solid #c9a227;">
+        <strong><i class="fas fa-info-circle"></i> Zero Current Stock Rule:</strong> When importing, items without existing stock are safely created with <strong>0.0 current stock</strong>. Current stock is NOT added artificially. Existing items preserve their stock.
+      </div>
+
+      <div style="background:rgba(201,162,39,0.08); border:1px solid rgba(201,162,39,0.25); border-radius:12px; padding:14px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <div>
+          <strong style="color:var(--text-main); font-size:13px;">⚡ Complete Master Import (All 11 Departments)</strong>
+          <div style="font-size:11px; color:var(--text-muted);">Imports all standard master catalog items with 0 initial stock.</div>
         </div>
-      `).join('')}
+        <button class="btn btn-primary btn-sm" onclick="submitImportMasterlist(null)">
+          <i class="fas fa-cloud-arrow-down"></i> Import All
+        </button>
+      </div>
+
+      <h4 style="font-size:12px; text-transform:uppercase; color:var(--text-muted); margin-bottom:10px;">Or Import by Department</h4>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; max-height:260px; overflow-y:auto; padding-right:4px;">
+        ${categories.map(c => `
+          <div style="border:1px solid rgba(205,190,150,0.3); border-radius:10px; padding:10px; background:#ffffff; display:flex; flex-direction:column; justify-content:space-between; gap:6px;">
+            <div>
+              <div style="font-weight:700; font-size:12px; color:var(--text-main); display:flex; align-items:center; gap:6px;">
+                <i class="fas ${c.icon}" style="color:#c9a227;"></i> ${c.name}
+              </div>
+              <div style="font-size:10px; color:var(--text-muted); margin-top:2px; line-height:1.3;">${c.desc}</div>
+            </div>
+            <button class="btn btn-outline btn-sm" style="align-self:flex-start; font-size:11px; padding:3px 8px;" onclick="submitImportMasterlist('${c.name}')">
+              Import ${c.name}
+            </button>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    <!-- Tab 2: Custom List / Paste Item Names -->
+    <div id="import-pane-custom" style="display:none;">
+      <div style="font-size:12px; color:var(--text-muted); margin-bottom:12px; background:rgba(16,185,129,0.06); padding:10px 14px; border-radius:8px; border-left:3px solid #10b981;">
+        <strong><i class="fas fa-check-circle"></i> Item Name Only Import:</strong> Paste item names below (one per line). If there is no current stock, stock will NOT be added and stays at <strong>0.0</strong>.
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+        <div class="input-group">
+          <label style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Department Category</label>
+          <select id="custom-import-cat" class="input-field" style="width:100%;">
+            ${categories.map(c => `<option value="${c.name}">${c.name}</option>`).join('')}
+          </select>
+        </div>
+        <div class="input-group">
+          <label style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Default Unit</label>
+          <select id="custom-import-unit" class="input-field" style="width:100%;">
+            <option value="units">units (pieces)</option>
+            <option value="kg">kg (kilograms)</option>
+            <option value="L">L (liters)</option>
+            <option value="packs">packs</option>
+            <option value="bottles">bottles</option>
+            <option value="cans">cans</option>
+            <option value="boxes">boxes</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="input-group" style="margin-bottom:12px;">
+        <label style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Paste Item Names (One per line)</label>
+        <textarea id="custom-import-text" class="input-field" rows="6" placeholder="Example:
+Beef Sirloin Slices
+Japanese Mayo
+Brown Sugar
+Pork Chop" style="width:100%; font-family:monospace; font-size:12px;"></textarea>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <label class="btn btn-outline btn-sm" style="cursor:pointer; font-size:11px; display:inline-flex; align-items:center; gap:6px;">
+          <i class="fas fa-file-csv"></i> Load from CSV File
+          <input type="file" accept=".csv,.txt" style="display:none;" onchange="handleImportCSVFile(this)">
+        </label>
+        <button class="btn btn-primary" onclick="submitCustomListImport()" style="font-size:12px;">
+          <i class="fas fa-cloud-arrow-up"></i> Import Items (0 Initial Stock)
+        </button>
+      </div>
     </div>
   `, `<button class="btn btn-outline" onclick="Utils.closeModal()">Close</button>`);
+}
+
+function switchImportTab(tab) {
+  const pDepts = document.getElementById("import-pane-depts");
+  const pCustom = document.getElementById("import-pane-custom");
+  const tDepts = document.getElementById("tab-master-depts");
+  const tCustom = document.getElementById("tab-master-custom");
+  if (!pDepts || !pCustom) return;
+
+  if (tab === 'custom') {
+    pDepts.style.display = "none";
+    pCustom.style.display = "block";
+    tDepts.className = "btn btn-outline btn-sm";
+    tCustom.className = "btn btn-primary btn-sm";
+  } else {
+    pDepts.style.display = "block";
+    pCustom.style.display = "none";
+    tDepts.className = "btn btn-primary btn-sm";
+    tCustom.className = "btn btn-outline btn-sm";
+  }
+}
+
+function handleImportCSVFile(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const text = e.target.result;
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const textarea = document.getElementById("custom-import-text");
+    if (textarea) {
+      const itemNames = lines.map(line => {
+        const parts = line.split(',');
+        return parts[0].replace(/^["']|["']$/g, '').trim();
+      }).filter(n => n.toLowerCase() !== 'name' && n.toLowerCase() !== 'item name' && n);
+      textarea.value = itemNames.join('\n');
+    }
+  };
+  reader.readAsText(file);
+}
+
+async function submitCustomListImport() {
+  const textarea = document.getElementById("custom-import-text");
+  const cat = document.getElementById("custom-import-cat") ? document.getElementById("custom-import-cat").value : "Kitchen";
+  const unit = document.getElementById("custom-import-unit") ? document.getElementById("custom-import-unit").value : "units";
+  if (!textarea || !textarea.value.trim()) {
+    Utils.showToast("Please enter at least one item name to import.", "danger");
+    return;
+  }
+  const rawLines = textarea.value.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (!rawLines.length) {
+    Utils.showToast("No valid item names found.", "danger");
+    return;
+  }
+
+  // Parse lines: if user provided just item name, quantity is null/empty so it stays 0.0
+  const items = rawLines.map(line => {
+    const parts = line.split(',');
+    const name = parts[0].replace(/^["']|["']$/g, '').trim();
+    const qty = parts.length > 1 && parts[1].trim() !== "" ? parts[1].trim() : null;
+    return {
+      name: name,
+      category: cat,
+      unit: unit,
+      quantity: qty // null means no current stock -> backend assigns 0.0
+    };
+  }).filter(i => i.name);
+
+  try {
+    const res = await Auth.fetch("/api/v1/inventory/import-custom", {
+      method: "POST",
+      body: JSON.stringify({ items: items })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Custom import failed");
+    }
+    const result = await res.json();
+    Utils.showToast(result.message || `Successfully imported ${result.created_count} items with 0 initial stock!`, "success");
+    Utils.closeModal();
+    renderInventory();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
 }
 
 async function submitImportMasterlist(category) {
@@ -448,7 +656,7 @@ async function submitImportMasterlist(category) {
     const url = category ? `/api/v1/inventory/import-masterlist?selected_category=${encodeURIComponent(category)}` : `/api/v1/inventory/import-masterlist`;
     const res = await Auth.fetch(url, { method: "POST" });
     if (!res.ok) {
-      const err = await res.json();
+      const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || "Import failed");
     }
     const result = await res.json();
@@ -633,7 +841,14 @@ async function deleteInventoryItem(itemId, name) {
   if (!confirm(`Are you sure you want to delete "${name}" from inventory?`)) return;
   try {
     const res = await Auth.fetch(`/api/v1/inventory/${itemId}`, { method: "DELETE" });
-    if (!res.ok) throw new Error("Failed to delete item.");
+    if (!res.ok) {
+      let errMsg = "Failed to delete item.";
+      try {
+        const errJson = await res.json();
+        if (errJson && errJson.detail) errMsg = errJson.detail;
+      } catch (_) {}
+      throw new Error(errMsg);
+    }
     Utils.showToast(`"${name}" deleted from inventory`, "success");
     renderInventory();
   } catch (err) {
@@ -644,7 +859,21 @@ async function deleteInventoryItem(itemId, name) {
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. PRODUCTS & MENU CATALOG
 // ─────────────────────────────────────────────────────────────────────────────
+function getProductCategoryName(p) {
+  if (p.category_name) return p.category_name;
+  if (p.category && p.category.name) return p.category.name;
+  if (window.cachedCategoryMap && window.cachedCategoryMap[p.category_id]) {
+    return window.cachedCategoryMap[p.category_id];
+  }
+  if (window.cachedCategories && Array.isArray(window.cachedCategories)) {
+    const found = window.cachedCategories.find(c => c.id === p.category_id);
+    if (found && found.name) return found.name;
+  }
+  return 'Uncategorized';
+}
+
 async function renderProducts(c) {
+  const target = c || document.getElementById("view-container");
   const [prodRes, catRes] = await Promise.all([
     Auth.fetch("/api/v1/products"),
     Auth.fetch("/api/v1/categories")
@@ -653,12 +882,23 @@ async function renderProducts(c) {
   const products = prodRes.ok ? await prodRes.json() : [];
   const categories = catRes.ok ? await catRes.json() : [];
   cachedProducts = products;
+  window.cachedCategories = categories;
 
-  c.innerHTML = `
-    <div class="toolbar fade-up delay-1" style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; flex-wrap:wrap;">
-      <div class="search-wrap" style="position:relative; flex:1; max-width:320px;">
-        <i class="fas fa-search" style="position:absolute; left:14px; top:50%; transform:translateY(-50%); color:var(--text-muted);"></i>
-        <input type="text" id="prod-search" class="input-field" placeholder="Search menu products..." style="padding-left:38px; width:100%;" oninput="filterProductsList()">
+  const catMap = {};
+  categories.forEach(cat => { catMap[cat.id] = cat.name; });
+  window.cachedCategoryMap = catMap;
+
+  target.innerHTML = `
+    <div class="toolbar fade-up delay-1" style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:20px; flex-wrap:wrap;">
+      <div style="display:flex; gap:10px; flex:1; max-width:540px; flex-wrap:wrap;">
+        <div class="search-wrap" style="position:relative; flex:1; min-width:220px;">
+          <i class="fas fa-search" style="position:absolute; left:14px; top:50%; transform:translateY(-50%); color:var(--text-muted);"></i>
+          <input type="text" id="prod-search" class="input-field" placeholder="Search by name, code (e.g. C1), or category..." style="padding-left:38px; width:100%;" oninput="filterProductsList()">
+        </div>
+        <select id="prod-cat-filter" class="input-field" style="max-width:180px;" onchange="filterProductsList()">
+          <option value="all">All Categories</option>
+          ${categories.map(cat => `<option value="${cat.id}">${cat.name}</option>`).join('')}
+        </select>
       </div>
       <button class="btn btn-primary" onclick="openAddProductModal()" style="display:inline-flex; align-items:center; gap:8px;">
         <i class="fas fa-plus"></i> Add Menu Product
@@ -674,13 +914,14 @@ async function renderProducts(c) {
         <table>
           <thead>
             <tr>
-              <th>ID</th>
+              <th style="width:60px;">ID</th>
+              <th style="width:70px; text-align:center;">Photo</th>
+              <th style="width:130px;">Product Code</th>
               <th>Product Name</th>
               <th>Category</th>
-              <th>SKU</th>
               <th>Selling Price</th>
-              <th>Estimated Cost</th>
               <th>Status</th>
+              <th style="text-align:right;">Action</th>
             </tr>
           </thead>
           <tbody id="prod-tbody">
@@ -694,53 +935,185 @@ async function renderProducts(c) {
 
 function renderProductRows(products) {
   if (!products || !products.length) {
-    return `<tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-muted);">No products registered yet.</td></tr>`;
+    return `<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--text-muted);">No products registered yet.</td></tr>`;
   }
-  return products.map(p => `
+  return products.map(p => {
+    const catName = getProductCategoryName(p);
+    const photoHtml = p.image_url ? `
+      <div style="width:40px; height:40px; border-radius:8px; overflow:hidden; border:1px solid rgba(205,190,150,0.35); background:#ffffff; display:flex; align-items:center; justify-content:center; margin:0 auto; box-shadow:0 2px 5px rgba(0,0,0,0.04);">
+        <img src="${p.image_url}" alt="${p.name}" style="width:100%; height:100%; object-fit:cover;" onerror="this.onerror=null; this.parentElement.innerHTML='<i class=\\'fas fa-utensils\\' style=\\'color:#cbd5e1; font-size:16px;\\'></i>';">
+      </div>
+    ` : `
+      <div style="width:40px; height:40px; border-radius:8px; border:1px dashed rgba(205,190,150,0.45); background:rgba(0,0,0,0.02); display:flex; align-items:center; justify-content:center; color:var(--text-muted); margin:0 auto;" title="No picture uploaded">
+        <i class="fas fa-image" style="font-size:15px; opacity:0.35;"></i>
+      </div>
+    `;
+
+    return `
     <tr>
-      <td style="color:var(--text-muted);">#${p.id}</td>
+      <td style="color:var(--text-muted); font-weight:600;">#${p.id}</td>
+      <td style="text-align:center;">${photoHtml}</td>
+      <td>
+        <span style="background:rgba(201,162,39,0.12); color:#c9a227; font-weight:700; font-family:monospace; padding:3px 8px; border-radius:6px; font-size:12px; letter-spacing:0.5px;">${p.sku || '—'}</span>
+      </td>
       <td><strong style="color:var(--text-main); font-size:13px;">${p.name}</strong></td>
-      <td style="color:var(--text-muted); font-size:13px;">${p.category ? p.category.name : '—'}</td>
-      <td style="color:var(--text-muted); font-size:13px;">${p.sku || '—'}</td>
+      <td>
+        <span class="badge" style="background:rgba(205,190,150,0.18); color:var(--text-main); font-size:11px; font-weight:600;">
+          ${catName}
+        </span>
+      </td>
       <td><strong style="color:#c9a227; font-size:13px;">${Utils.formatCurrency(p.price)}</strong></td>
-      <td style="color:var(--text-muted); font-size:13px;">${Utils.formatCurrency(p.cost)}</td>
       <td>
         <span class="badge ${p.is_active ? 'badge-success' : 'badge-danger'}" style="font-size:11px; font-weight:700;">
           ${p.is_active ? 'Active' : 'Inactive'}
         </span>
       </td>
+      <td style="text-align:right; white-space:nowrap;">
+        <button class="btn btn-outline btn-sm" onclick="openEditProductModal(${p.id})" style="font-size:11px; padding:3px 8px; display:inline-flex; align-items:center; gap:4px; cursor:pointer; margin-right:4px;" title="Edit Product">
+          <i class="fas fa-edit"></i> Edit
+        </button>
+        <button class="btn btn-danger btn-sm" onclick="deleteProductPrompt(${p.id}, '${(p.name || '').replace(/'/g, "\\'")}')" style="font-size:11px; padding:3px 8px; display:inline-flex; align-items:center; gap:4px; cursor:pointer; background:#dc3545; border-color:#dc3545; color:#fff;" title="Delete Product">
+          <i class="fas fa-trash"></i> Delete
+        </button>
+      </td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function filterProductsList() {
-  const q = (document.getElementById("prod-search").value || "").toLowerCase();
-  const filtered = cachedProducts.filter(p => 
-    (p.name && p.name.toLowerCase().includes(q)) || 
-    (p.sku && p.sku.toLowerCase().includes(q))
-  );
-  document.getElementById("prod-tbody").innerHTML = renderProductRows(filtered);
+  const q = (document.getElementById("prod-search")?.value || "").toLowerCase().trim();
+  const catFilter = document.getElementById("prod-cat-filter")?.value || "all";
+  const filtered = cachedProducts.filter(p => {
+    const catName = getProductCategoryName(p).toLowerCase();
+    const matchQ = !q || 
+      (p.name && p.name.toLowerCase().includes(q)) || 
+      (p.sku && p.sku.toLowerCase().includes(q)) ||
+      catName.includes(q);
+    const matchCat = catFilter === "all" || (p.category_id && p.category_id == catFilter);
+    return matchQ && matchCat;
+  });
+  const tbody = document.getElementById("prod-tbody");
+  if (tbody) tbody.innerHTML = renderProductRows(filtered);
 }
 
+window.handleProductImageSelect = async function(inputEl, previewId, urlInputId) {
+  const file = inputEl.files && inputEl.files[0];
+  if (!file) return;
+
+  const previewEl = document.getElementById(previewId);
+  const urlEl = document.getElementById(urlInputId);
+  const removeBtn = document.getElementById(previewId.replace('-preview', '-remove-img-btn')) ||
+                    document.getElementById(urlInputId.replace('-url', '-remove-img-btn'));
+
+  // 1. Instant local preview
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    if (previewEl) {
+      previewEl.innerHTML = `<img src="${e.target.result}" style="width:100%; height:100%; object-fit:cover;">`;
+    }
+    if (removeBtn) removeBtn.style.display = 'inline-flex';
+  };
+  reader.readAsDataURL(file);
+
+  // 2. Upload file to server
+  const formData = new FormData();
+  formData.append("file", file);
+
+  try {
+    const res = await Auth.fetch("/api/v1/products/upload-image", {
+      method: "POST",
+      body: formData
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (urlEl) urlEl.value = data.image_url;
+      Utils.showToast("Picture uploaded successfully!", "success");
+    } else {
+      // Fallback: save Base64 data URL
+      reader.onloadend = function() {
+        if (urlEl) urlEl.value = reader.result;
+      };
+    }
+  } catch (err) {
+    console.warn("Upload fallback to data URL:", err);
+    if (urlEl && reader.result) urlEl.value = reader.result;
+  }
+};
+
+window.removeProductImage = function(previewId, urlInputId, fileInputId) {
+  const previewEl = document.getElementById(previewId);
+  const urlEl = document.getElementById(urlInputId);
+  const fileEl = document.getElementById(fileInputId);
+  const removeBtn = document.getElementById(previewId.replace('-preview', '-remove-img-btn')) ||
+                    document.getElementById(urlInputId.replace('-url', '-remove-img-btn'));
+
+  if (urlEl) urlEl.value = "";
+  if (fileEl) fileEl.value = "";
+  if (previewEl) {
+    previewEl.innerHTML = `<i class="fas fa-camera" style="font-size:24px; color:rgba(205,190,150,0.5);"></i>`;
+  }
+  if (removeBtn) removeBtn.style.display = 'none';
+};
+
 function openAddProductModal() {
+  const cats = window.cachedCategories || [];
   Utils.openModal("Create New Menu Product", `
     <form id="form-add-prod" onsubmit="event.preventDefault(); submitAddProduct();">
+      <!-- Category Selection Dropdown -->
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Category <span style="color:var(--danger);">*</span></label>
+        <select id="prod-category" class="input-field" required style="width:100%;">
+          <option value="">-- Select Category --</option>
+          ${cats.map(cat => `<option value="${cat.id}">${cat.name}</option>`).join('')}
+        </select>
+      </div>
+
+      <!-- Product Code (Jollibee-style item code) -->
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Product Code <span style="color:var(--danger);">*</span></label>
+        <input id="prod-sku" class="input-field" required placeholder="e.g. C1 (Chickenjoy), B1 (Burger Steak), Y1 (Yumburger)" style="width:100%;">
+        <small style="font-size:11px; color:var(--text-muted); margin-top:3px; display:block;">Quick menu order code (like Jollibee item codes: C1, C2, B1, S1, or POS-101)</small>
+      </div>
+
+      <!-- Product Name -->
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Product Name <span style="color:var(--danger);">*</span></label>
-        <input id="prod-name" class="input-field" required placeholder="e.g. Crispy Fried Chicken Platter" style="width:100%;">
+        <input id="prod-name" class="input-field" required placeholder="e.g. 1pc Chickenjoy with Rice" style="width:100%;">
       </div>
+
+      <!-- Selling Price -->
       <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">SKU <span style="color:var(--danger);">*</span></label>
-        <input id="prod-sku" class="input-field" required placeholder="e.g. FOOD-CFC-01" style="width:100%;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Selling Price (₱) <span style="color:var(--danger);">*</span></label>
+        <input type="number" step="0.01" id="prod-price" class="input-field" required value="99" style="width:100%;">
       </div>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
-        <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Selling Price (₱) <span style="color:var(--danger);">*</span></label>
-          <input type="number" step="0.01" id="prod-price" class="input-field" required value="150" style="width:100%;">
-        </div>
-        <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Estimated Cost (₱) <span style="color:var(--danger);">*</span></label>
-          <input type="number" step="0.01" id="prod-cost" class="input-field" required value="75" style="width:100%;">
+
+      <!-- Picture / Image Upload -->
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:flex; justify-content:space-between; align-items:center;">
+          <span>Product Picture / Image</span>
+          <span style="font-size:11px; font-weight:normal; text-transform:none; color:var(--text-muted);">PNG, JPG, WEBP</span>
+        </label>
+        
+        <div style="display:flex; align-items:center; gap:14px; padding:12px 14px; border:1px dashed rgba(205,190,150,0.5); border-radius:10px; background:rgba(0,0,0,0.01);">
+          <!-- Live Preview Box -->
+          <div id="add-prod-img-preview" style="width:68px; height:68px; border-radius:10px; border:1px solid rgba(205,190,150,0.3); background:#ffffff; display:flex; align-items:center; justify-content:center; overflow:hidden; flex-shrink:0; box-shadow:0 2px 6px rgba(0,0,0,0.04);">
+            <i class="fas fa-camera" style="font-size:26px; color:rgba(205,190,150,0.5);"></i>
+          </div>
+
+          <div style="flex:1;">
+            <input type="file" id="add-prod-file-input" accept="image/*" style="display:none;" onchange="handleProductImageSelect(this, 'add-prod-img-preview', 'add-prod-img-url')">
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('add-prod-file-input').click()" style="font-size:12px; font-weight:600; display:inline-flex; align-items:center; gap:6px;">
+                <i class="fas fa-upload"></i> Choose Picture
+              </button>
+              <button type="button" class="btn btn-sm" id="add-prod-remove-img-btn" onclick="removeProductImage('add-prod-img-preview', 'add-prod-img-url', 'add-prod-file-input')" style="display:none; font-size:12px; color:#ef4444; border:1px solid rgba(239,68,68,0.3); background:transparent; border-radius:6px; padding:5px 10px;">
+                <i class="fas fa-trash"></i> Remove
+              </button>
+            </div>
+            <input type="hidden" id="add-prod-img-url" value="">
+            <small style="font-size:11px; color:var(--text-muted); margin-top:5px; display:block;">Select a picture to show on the POS cashier terminal and customer QR menu.</small>
+          </div>
         </div>
       </div>
     </form>
@@ -750,24 +1123,178 @@ function openAddProductModal() {
 async function submitAddProduct() {
   const name = document.getElementById("prod-name").value.trim();
   const sku = document.getElementById("prod-sku").value.trim();
+  const catVal = document.getElementById("prod-category").value;
   const price = parseFloat(document.getElementById("prod-price").value) || 0;
-  const cost = parseFloat(document.getElementById("prod-cost").value) || 0;
+  const imageUrl = document.getElementById("add-prod-img-url")?.value?.trim() || null;
 
   if (!name || !sku) {
-    Utils.showToast("Product name and SKU are required.", "danger");
+    Utils.showToast("Product name and Product Code are required.", "danger");
     return;
   }
+  if (!catVal) {
+    Utils.showToast("Please select a category for the product.", "warning");
+    return;
+  }
+
+  const payload = {
+    name,
+    sku,
+    category_id: Number(catVal),
+    price,
+    cost: 0,
+    image_url: imageUrl,
+    is_active: true
+  };
 
   try {
     const res = await Auth.fetch("/api/v1/products", {
       method: "POST",
-      body: JSON.stringify({ name, sku, price, cost, is_active: true })
+      body: JSON.stringify(payload)
     });
     if (!res.ok) {
       const err = await res.json();
       throw new Error(err.detail || "Product creation failed.");
     }
-    Utils.showToast("Product added successfully", "success");
+    Utils.showToast("Product '" + name + "' added successfully!", "success");
+    Utils.closeModal();
+    renderProducts();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+}
+
+function openEditProductModal(id) {
+  const p = cachedProducts.find(item => item.id === id);
+  if (!p) return;
+  const cats = window.cachedCategories || [];
+  
+  Utils.openModal("Edit Menu Product #" + p.id, `
+    <form id="form-edit-prod" onsubmit="event.preventDefault(); submitEditProduct(${p.id});">
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Category</label>
+        <select id="edit-prod-category" class="input-field" style="width:100%;">
+          <option value="">-- No Category --</option>
+          ${cats.map(cat => `<option value="${cat.id}" ${p.category_id === cat.id ? 'selected' : ''}>${cat.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Product Code <span style="color:var(--danger);">*</span></label>
+        <input id="edit-prod-sku" class="input-field" required value="${p.sku || ''}" placeholder="e.g. C1, B1, Y1" style="width:100%;">
+        <small style="font-size:11px; color:var(--text-muted); margin-top:3px; display:block;">Quick menu order code (like Jollibee item codes)</small>
+      </div>
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Product Name <span style="color:var(--danger);">*</span></label>
+        <input id="edit-prod-name" class="input-field" required value="${p.name}" style="width:100%;">
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Selling Price (₱) <span style="color:var(--danger);">*</span></label>
+          <input type="number" step="0.01" id="edit-prod-price" class="input-field" required value="${p.price}" style="width:100%;">
+        </div>
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Status</label>
+          <select id="edit-prod-status" class="input-field" style="width:100%;">
+            <option value="true" ${p.is_active ? 'selected' : ''}>Active</option>
+            <option value="false" ${!p.is_active ? 'selected' : ''}>Inactive</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Picture / Image Upload -->
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:flex; justify-content:space-between; align-items:center;">
+          <span>Product Picture / Image</span>
+          <span style="font-size:11px; font-weight:normal; text-transform:none; color:var(--text-muted);">PNG, JPG, WEBP</span>
+        </label>
+        
+        <div style="display:flex; align-items:center; gap:14px; padding:12px 14px; border:1px dashed rgba(205,190,150,0.5); border-radius:10px; background:rgba(0,0,0,0.01);">
+          <!-- Live Preview Box -->
+          <div id="edit-prod-img-preview" style="width:68px; height:68px; border-radius:10px; border:1px solid rgba(205,190,150,0.3); background:#ffffff; display:flex; align-items:center; justify-content:center; overflow:hidden; flex-shrink:0; box-shadow:0 2px 6px rgba(0,0,0,0.04);">
+            ${p.image_url ? `<img src="${p.image_url}" style="width:100%; height:100%; object-fit:cover;">` : `<i class="fas fa-camera" style="font-size:26px; color:rgba(205,190,150,0.5);"></i>`}
+          </div>
+
+          <div style="flex:1;">
+            <input type="file" id="edit-prod-file-input" accept="image/*" style="display:none;" onchange="handleProductImageSelect(this, 'edit-prod-img-preview', 'edit-prod-img-url')">
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('edit-prod-file-input').click()" style="font-size:12px; font-weight:600; display:inline-flex; align-items:center; gap:6px;">
+                <i class="fas fa-upload"></i> ${p.image_url ? 'Change Picture' : 'Choose Picture'}
+              </button>
+              <button type="button" class="btn btn-sm" id="edit-prod-remove-img-btn" onclick="removeProductImage('edit-prod-img-preview', 'edit-prod-img-url', 'edit-prod-file-input')" style="${p.image_url ? 'display:inline-flex;' : 'display:none;'} font-size:12px; color:#ef4444; border:1px solid rgba(239,68,68,0.3); background:transparent; border-radius:6px; padding:5px 10px;">
+                <i class="fas fa-trash"></i> Remove
+              </button>
+            </div>
+            <input type="hidden" id="edit-prod-img-url" value="${p.image_url || ''}">
+            <small style="font-size:11px; color:var(--text-muted); margin-top:5px; display:block;">Shows on the POS Cashier and customer menu QR ordering.</small>
+          </div>
+        </div>
+      </div>
+    </form>
+  `, `
+    <div style="display:flex; justify-content:space-between; align-items:center; width:100%; gap:12px;">
+      <button type="button" class="btn btn-danger" onclick="deleteProductPrompt(${p.id}, '${(p.name || '').replace(/'/g, "\\'")}')" style="background:#dc3545; border-color:#dc3545; color:#fff; display:inline-flex; align-items:center; gap:6px; cursor:pointer;">
+        <i class="fas fa-trash"></i> Delete Product
+      </button>
+      <button class="btn btn-primary" onclick="submitEditProduct(${p.id})" style="display:inline-flex; align-items:center; gap:6px; cursor:pointer;">
+        <i class="fas fa-save"></i> Save Changes
+      </button>
+    </div>
+  `);
+}
+
+async function submitEditProduct(id) {
+  const name = document.getElementById("edit-prod-name").value.trim();
+  const sku = document.getElementById("edit-prod-sku").value.trim();
+  const catVal = document.getElementById("edit-prod-category").value;
+  const price = parseFloat(document.getElementById("edit-prod-price").value) || 0;
+  const is_active = document.getElementById("edit-prod-status").value === "true";
+  const imageUrl = document.getElementById("edit-prod-img-url")?.value?.trim() || null;
+
+  if (!name || !sku) {
+    Utils.showToast("Product name and Product Code are required.", "danger");
+    return;
+  }
+
+  const payload = {
+    name,
+    sku,
+    category_id: catVal ? Number(catVal) : null,
+    price,
+    cost: 0,
+    image_url: imageUrl,
+    is_active
+  };
+
+  try {
+    const res = await Auth.fetch(`/api/v1/products/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Product update failed.");
+    }
+    Utils.showToast("Product code '" + sku + "' updated successfully!", "success");
+    Utils.closeModal();
+    renderProducts();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+}
+
+async function deleteProductPrompt(id, name) {
+  const confirmed = confirm(`Are you sure you want to delete "${name || 'this product'}"?`);
+  if (!confirmed) return;
+
+  try {
+    const res = await Auth.fetch(`/api/v1/products/${id}`, {
+      method: "DELETE"
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to delete product.");
+    }
+    const data = await res.json().catch(() => ({}));
+    Utils.showToast(data.message || `Product "${name}" was deleted successfully.`, "success");
     Utils.closeModal();
     renderProducts();
   } catch (err) {
@@ -776,135 +1303,218 @@ async function submitAddProduct() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 4. CASHIER POINT OF SALE (POS) - RESPONSIVE & FLUID
+// 4. CASHIER POINT OF SALE (POS)
 // ─────────────────────────────────────────────────────────────────────────────
 async function renderPOS(c) {
-  if (!c) c = document.getElementById("view-container");
-  if (!c) return;
-
   const [prodRes, catRes] = await Promise.all([
     Auth.fetch("/api/v1/products"),
     Auth.fetch("/api/v1/categories")
   ]);
 
-  const products = prodRes.ok ? await prodRes.json() : [];
+  const rawProducts = prodRes.ok ? await prodRes.json() : [];
   const categories = catRes.ok ? await catRes.json() : [];
+  // Exclude inactive products from POS counter & grid!
+  const products = rawProducts.filter(p => p.is_active !== false && p.is_active !== 0 && p.is_active !== "0");
   cachedProducts = products;
+  window.cachedCategories = categories;
+
+  const catMap = {};
+  categories.forEach(cat => { catMap[cat.id] = cat.name; });
+  window.cachedCategoryMap = catMap;
 
   c.innerHTML = `
-    <div class="pos-container fade-up">
-      <!-- Left Column: Menu Catalog -->
-      <div class="pos-products">
+    <style>
+      @media (max-width: 1200px) {
+        .pos-container { grid-template-columns: minmax(0, 1fr) 320px !important; }
+      }
+      @media (max-width: 1024px) {
+        .pos-container { grid-template-columns: 1fr !important; }
+        .pos-cart { position: static !important; height: auto !important; max-height: 600px !important; margin-top: 20px; }
+        .stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+      }
+      @media (max-width: 576px) {
+        .stats-grid { grid-template-columns: 1fr !important; }
+      }
+      .cat-pill {
+        white-space: nowrap; border-radius: 20px; padding: 6px 18px; 
+        background: #ffffff; color: var(--text-main); border: 1px solid rgba(205,190,150,0.4); 
+        cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s ease;
+      }
+      .cat-pill:hover {
+        border-color: #c9a227; color: #c9a227; box-shadow: 0 4px 10px rgba(201,162,39,0.1);
+      }
+      .cat-pill.active-cat {
+        background: #18181b !important; color: #ffffff !important; border-color: #18181b !important; box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      }
+    </style>
+    <div class="pos-container">
+      <!-- LEFT WORKSPACE -->
+      <div class="pos-workspace">
         
-        <!-- Header Toolbar & Search -->
-        <div class="pos-header-bar">
-          <div class="search-wrap" style="position:relative; flex:1; min-width:240px; max-width:380px;">
-            <i class="fas fa-search" style="position:absolute; left:14px; top:50%; transform:translateY(-50%); color:var(--text-muted);"></i>
-            <input type="text" id="pos-search" class="input-field" placeholder="Search menu items..." style="padding-left:38px; width:100%;" oninput="filterPOSGrid()">
+        <!-- SEARCH ROW -->
+        <div style="display:flex; gap:10px; width:100%; margin-bottom: 8px;">
+          <div class="search-wrap" style="position:relative; flex:1;">
+            <i class="fas fa-search" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--text-muted); font-size:13px;"></i>
+            <input type="text" id="pos-search" class="input-field" placeholder="Search menu products..." style="padding-left:36px; width:100%; font-size:13px; height:38px; border-radius:10px; background:#ffffff;" oninput="filterPOSGrid()">
           </div>
-          <div style="display:flex; align-items:center; gap:8px;">
-            <span id="pos-product-count" class="badge badge-info" style="font-size:12px; padding:6px 12px;">
-              ${products.length} Products
-            </span>
-          </div>
-        </div>
-
-        <!-- Horizontal Scrollable Category Bar -->
-        <div class="pos-categories" id="pos-cat-bar">
-          <button class="btn btn-primary btn-sm pos-cat-pill" onclick="selectPOSCategory('all', this)">
-            <i class="fas fa-layer-group"></i> All Items
+          <button id="pos-voice-order-btn" onclick="toggleVoiceOrderDirect()" style="height:38px; padding:0 14px; background:#18181b; color:#fff; border:1px solid #3f3f46; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:8px; white-space:nowrap; transition:all 0.2s;" onmouseover="if(!window.isVoiceListening){this.style.background='#27272a'; this.style.borderColor='#c9a227';}" onmouseout="if(!window.isVoiceListening){this.style.background='#18181b'; this.style.borderColor='#3f3f46';}" title="Click to start/stop Voice Recording (English, Tagalog, Hiligaynon)">
+            <i class="fas fa-microphone" id="pos-voice-btn-mic" style="color:#ef4444; font-size:13px;"></i>
+            <span id="pos-voice-btn-text">VOICE ORDER</span>
           </button>
-          ${categories.map(cat => `
-            <button class="btn btn-outline btn-sm pos-cat-pill" onclick="selectPOSCategory(${cat.id}, this)">
-              ${cat.name}
-            </button>
-          `).join('')}
+          <button id="pos-online-orders-btn" onclick="openOnlineOrdersModal()" style="height:38px; padding:0 10px; background:#f4f4f5; color:#18181b; border:1px solid rgba(205,190,150,0.4); border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:5px; white-space:nowrap;" title="Pending Customer Online Orders">
+            <i class="fas fa-bell"></i>
+            <span id="pos-online-orders-badge" style="background:#ef4444; color:#fff; padding:1px 5px; border-radius:10px; font-size:10px; font-weight:bold; display:none;">0</span>
+          </button>
         </div>
 
-        <!-- Responsive Products Grid -->
-        <div class="pos-grid" id="pos-grid">
+        <!-- INLINE LIVE VOICE RECORDING STATUS STRIP -->
+        <div id="pos-voice-live-strip" style="display:none; margin-bottom:8px; padding:8px 12px; background:linear-gradient(90deg, #fef2f2, #fff7ed); border:1px solid #f87171; border-radius:10px; align-items:center; justify-content:space-between; animation:fadeIn 0.2s ease;">
+          <div style="display:flex; align-items:center; gap:8px; font-size:12px; color:#991b1b; font-weight:600; min-width:0; overflow:hidden;">
+            <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#ef4444; animation:voicePulse 1s infinite; flex-shrink:0;"></span>
+            <span style="flex-shrink:0;">🔴 Recording Voice Order:</span>
+            <span id="pos-voice-transcript-text" style="color:#18181b; font-style:italic; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Speak order (e.g. "isa ka c1 solo", "c1 solo 1", "1 1pc chickenjoy solo")...</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+            <span style="font-size:10px; color:#b91c1c; background:rgba(239,68,68,0.1); padding:2px 6px; border-radius:4px; font-weight:700;">EN • TAGALOG • HILIGAYNON</span>
+            <button type="button" onclick="stopVoiceRecordingDirect()" style="border:none; background:transparent; color:#991b1b; font-size:14px; font-weight:bold; cursor:pointer; padding:0 4px;" title="Stop Voice Recording">✕</button>
+          </div>
+        </div>
+
+        <!-- KPI SUMMARY ROW (Single-row slim strip) -->
+        <div class="stats-grid pos-stats-grid" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:8px;">
+          <div class="stat-card" style="padding:8px 12px; display:flex; align-items:center; gap:10px; background:#ffffff; border-radius:10px; border:1px solid rgba(205,190,150,0.3);">
+            <div style="width:32px; height:32px; border-radius:8px; background:rgba(201,162,39,0.1); color:#c9a227; display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0;"><i class="fas fa-box"></i></div>
+            <div style="min-width:0;">
+              <div style="font-size:9px; color:var(--text-muted); font-weight:600; text-transform:uppercase; line-height:1.1;">Total Items</div>
+              <div style="font-size:16px; font-weight:800; color:var(--text-main); line-height:1.1;">${products.length}</div>
+            </div>
+          </div>
+          <div class="stat-card" style="padding:8px 12px; display:flex; align-items:center; gap:10px; background:#ffffff; border-radius:10px; border:1px solid rgba(205,190,150,0.3);">
+            <div style="width:32px; height:32px; border-radius:8px; background:rgba(16,185,129,0.1); color:#10b981; display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0;"><i class="fas fa-tags"></i></div>
+            <div style="min-width:0;">
+              <div style="font-size:9px; color:var(--text-muted); font-weight:600; text-transform:uppercase; line-height:1.1;">Categories</div>
+              <div style="font-size:16px; font-weight:800; color:var(--text-main); line-height:1.1;">${categories.length}</div>
+            </div>
+          </div>
+
+          <div class="stat-card" style="padding:8px 12px; display:flex; align-items:center; gap:10px; background:#ffffff; border-radius:10px; border:1px solid rgba(205,190,150,0.3);">
+            <div style="width:32px; height:32px; border-radius:8px; background:rgba(59,130,246,0.1); color:#3b82f6; display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0;"><i class="fas fa-chart-line"></i></div>
+            <div style="min-width:0;">
+              <div style="font-size:9px; color:var(--text-muted); font-weight:600; text-transform:uppercase; line-height:1.1;">Today's Sales</div>
+              <div style="font-size:13px; font-weight:700; color:var(--text-main); line-height:1.1;">—</div>
+              <div style="font-size:9px; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Data unavailable</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CATEGORIES HORIZONTAL SCROLL -->
+        <div class="pos-categories" id="pos-cat-bar" style="display:flex; gap:6px; overflow-x:auto; padding-bottom:6px; margin-bottom:8px;">
+          <button class="cat-pill active-cat" onclick="selectPOSCategory('all', this)" style="padding:5px 12px; font-size:11px; border-radius:8px;">All Items</button>
+          ${categories.map(cat => `<button class="cat-pill" onclick="selectPOSCategory(${cat.id}, this)" style="padding:5px 12px; font-size:11px; border-radius:8px;">${cat.name}</button>`).join('')}
+        </div>
+
+        <!-- PRODUCT GRID (Small auto-fit / auto-resize) -->
+        <div class="pos-grid" id="pos-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 125px), 1fr)); gap:10px;">
           ${renderPOSProductCards(products)}
         </div>
       </div>
 
-      <!-- Right Column: Sticky Cart -->
-      <div class="pos-cart section-card" id="pos-cart-panel">
-        <div class="section-head" style="padding:14px 18px;">
-          <div style="display:flex; align-items:center; gap:8px;">
-            <i class="fas fa-shopping-cart" style="color:#c9a227; font-size:16px;"></i>
-            <h2 style="font-size:15px; margin:0;">Order Cart</h2>
-            <span id="cart-badge-count" class="badge badge-info" style="font-size:10px; padding:2px 6px;">0</span>
-          </div>
-          <button class="btn btn-outline btn-sm" onclick="clearCart()" style="font-size:11px; padding:4px 10px;">
-            <i class="fas fa-trash-can"></i> Clear
-          </button>
+      <!-- RIGHT CART (STICKY, COMPACT & SLEEK) -->
+      <div class="pos-cart" style="display:flex; flex-direction:column; background:#ffffff; border:1px solid rgba(205,190,150,0.3); border-radius:14px; height:calc(100vh - 100px); position:sticky; top:80px; box-shadow:0 4px 15px rgba(0,0,0,0.03); overflow:hidden;">
+        
+        <div style="padding:10px 14px; border-bottom:1px solid rgba(205,190,150,0.2); display:flex; justify-content:space-between; align-items:center; background:#faf8f3;">
+          <h2 style="font-size:13px; font-weight:800; color:var(--text-main); margin:0;">Current Cart</h2>
+          <button class="btn btn-outline btn-sm" onclick="clearCart()" style="font-size:11px; padding:2px 8px; border-radius:6px; color:var(--danger); border-color:rgba(239,68,68,0.2); background:rgba(239,68,68,0.05);">Clear All</button>
         </div>
 
-        <div class="cart-items" id="cart-items-container">
+        <div class="cart-items" id="cart-items-container" style="flex:1; overflow-y:auto; padding:0;">
           ${renderCartItems()}
         </div>
 
-        <div class="cart-footer">
-          <div style="display:flex; justify-content:space-between; margin-bottom:6px; font-size:13px; color:var(--text-muted);">
-            <span>Subtotal:</span>
+        <div class="cart-footer" style="padding:12px 14px; border-top:1px dashed rgba(205,190,150,0.4); background:#ffffff;">
+          <div style="display:flex; justify-content:space-between; margin-bottom:4px; font-size:11px; color:var(--text-muted);">
+            <span>Subtotal</span>
             <span id="cart-subtotal" style="font-weight:600; color:var(--text-main);">₱0.00</span>
           </div>
-          <div style="display:flex; justify-content:space-between; margin-bottom:14px; font-size:18px; font-weight:800; color:var(--text-main);">
-            <span>Total Payable:</span>
+          <div style="display:flex; justify-content:space-between; margin-bottom:8px; font-size:11px; color:var(--text-muted);">
+            <span>Discount</span>
+            <span style="font-weight:600; color:var(--text-main);">₱0.00</span>
+          </div>
+          <div style="height:1px; background:rgba(205,190,150,0.2); margin-bottom:8px;"></div>
+          <div style="display:flex; justify-content:space-between; margin-bottom:10px; font-size:14px; font-weight:800; color:var(--text-main);">
+            <span>TOTAL PAYABLE</span>
             <span id="cart-total" style="color:#c9a227;">₱0.00</span>
           </div>
-          <button class="btn btn-primary" style="width:100%; height:46px; font-size:15px; font-weight:700; display:flex; justify-content:center; align-items:center; gap:8px;" onclick="openPaymentModal()">
-            <i class="fas fa-cash-register"></i> Charge & Checkout
+          <button class="btn btn-primary" style="width:100%; height:40px; font-size:13px; font-weight:700; border-radius:10px; background:linear-gradient(135deg, #c9a227, #987719); border:none; box-shadow:0 4px 12px rgba(201,162,39,0.2);" onclick="openPaymentModal()">
+            💵 Charge & Checkout
           </button>
         </div>
       </div>
+
     </div>
   `;
+  
+  window.currentOnlineOrderId = null;
+  startPOSOnlineOrdersPolling();
 }
 
 function renderPOSProductCards(products) {
-  if (!products || !products.length) {
-    return `<div style="grid-column:1/-1; text-align:center; padding:40px; color:var(--text-muted);"><i class="fas fa-utensils" style="font-size:32px; margin-bottom:10px; opacity:0.3; display:block;"></i>No menu items found.</div>`;
+  const activeProducts = (products || []).filter(p => p.is_active !== false && p.is_active !== 0 && p.is_active !== "0");
+  if (!activeProducts || !activeProducts.length) {
+    return `<div style="grid-column:1/-1; text-align:center; padding:30px 16px; color:var(--text-muted); border:1px dashed rgba(205,190,150,0.4); border-radius:12px; background:#ffffff;">
+      <i class="fas fa-box-open" style="font-size:24px; margin-bottom:8px; opacity:0.3; color:#c9a227;"></i><br>
+      <div style="font-size:13px; font-weight:600; color:var(--text-main);">No products found</div>
+      <div style="font-size:11px; margin-top:2px;">Try a different search or category.</div>
+    </div>`;
   }
-  return products.map(p => `
-    <div class="pos-item-card" onclick="addToCart(${p.id}, '${p.name.replace(/'/g, "\\'")}', ${p.price})">
-      <div class="card-top">
-        <span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:10px; padding:2px 8px; font-weight:700;">
-          ${p.category ? p.category.name : 'Food'}
-        </span>
-        <span style="width:24px; height:24px; border-radius:50%; background:rgba(201,162,39,0.12); color:#c9a227; display:flex; align-items:center; justify-content:center; font-size:11px; flex-shrink:0;">
-          <i class="fas fa-plus"></i>
-        </span>
+  return activeProducts.map(p => {
+    return `
+    <div class="pos-item-card" onclick="addToCart(${p.id}, '${p.name.replace(/'/g, "\\'")}', ${p.price})" style="position:relative; background:#ffffff; border:1px solid rgba(205,190,150,0.3); border-radius:10px; overflow:hidden; cursor:pointer; transition:transform 0.15s, box-shadow 0.15s; display:flex; flex-direction:column; box-shadow:0 2px 8px rgba(0,0,0,0.02);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 18px rgba(201,162,39,0.15)';" onmouseout="this.style.transform='none'; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.02)';">
+      
+      <!-- Top Badges -->
+      <div style="position:absolute; top:6px; left:6px; right:6px; display:flex; justify-content:space-between; z-index:2; pointer-events:none;">
+        <span style="background:rgba(255,255,255,0.92); backdrop-filter:blur(4px); color:var(--text-main); font-size:8px; font-weight:700; padding:2px 5px; border-radius:4px; box-shadow:0 2px 6px rgba(0,0,0,0.05); text-transform:uppercase;">${getProductCategoryName(p) !== 'Uncategorized' ? getProductCategoryName(p) : 'FOOD'}</span>
+        <button class="add-btn" onclick="event.stopPropagation(); addToCart(${p.id}, '${p.name.replace(/'/g, "\\'")}', ${p.price})" style="width:22px; height:22px; border-radius:50%; background:#ffffff; color:#c9a227; border:none; box-shadow:0 2px 6px rgba(0,0,0,0.1); cursor:pointer; display:flex; align-items:center; justify-content:center; pointer-events:auto; font-size:9px; transition:background 0.2s;" onmouseover="this.style.background='#f0f0f0';" onmouseout="this.style.background='#ffffff';"><i class="fas fa-plus"></i></button>
       </div>
-      <div class="card-title" title="${p.name}">${p.name}</div>
-      <div class="card-bottom">
-        <span class="card-price">${Utils.formatCurrency(p.price)}</span>
-        <span style="font-size:10px; color:var(--text-muted); font-family:monospace;">${p.sku || ''}</span>
+
+      <!-- Image Area -->
+      <div style="height:80px; background:#f9f9f9; display:flex; align-items:center; justify-content:center; border-bottom:1px solid rgba(205,190,150,0.15); padding:0;">
+        ${p.image_url ? `<img src="${p.image_url}" alt="${p.name}" style="width:100%; height:100%; object-fit:cover;">` : `<i class="fas fa-utensils" style="font-size:20px; color:#e2e2e2;"></i>`}
+      </div>
+
+      <!-- Details -->
+      <div style="padding:8px 10px; display:flex; flex-direction:column; flex:1;">
+        <div style="font-size:11px; font-weight:700; color:var(--text-main); line-height:1.25; height:28px; margin-bottom:6px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${p.name}</div>
+        
+        <div style="margin-top:auto; display:flex; justify-content:space-between; align-items:flex-end;">
+          <span style="font-size:13px; font-weight:800; color:#c9a227;">${Utils.formatCurrency(p.price)}</span>
+          <span style="font-size:9px; color:var(--text-muted); font-family:monospace;">${p.sku || `POS-${p.id}`}</span>
+        </div>
       </div>
     </div>
-  `).join('');
+  `}).join('');
 }
 
 function filterPOSGrid() {
-  const q = (document.getElementById("pos-search")?.value || "").toLowerCase().trim();
-  const filtered = cachedProducts.filter(p => {
-    const matchQ = !q || (p.name && p.name.toLowerCase().includes(q)) || (p.sku && p.sku.toLowerCase().includes(q));
+  const q = (document.getElementById("pos-search").value || "").toLowerCase().trim();
+  const filtered = (cachedProducts || []).filter(p => {
+    if (p.is_active === false || p.is_active === 0 || p.is_active === "0") return false;
+    const matchName = p.name && p.name.toLowerCase().includes(q);
+    const matchSku = p.sku && p.sku.toLowerCase().includes(q);
+    const matchQ = !q || matchName || matchSku;
     const matchCat = currentCategoryFilter === "all" || p.category_id === Number(currentCategoryFilter);
     return matchQ && matchCat;
   });
-
-  const grid = document.getElementById("pos-grid");
-  const countEl = document.getElementById("pos-product-count");
-  if (grid) grid.innerHTML = renderPOSProductCards(filtered);
-  if (countEl) countEl.textContent = `${filtered.length} Products`;
+  document.getElementById("pos-grid").innerHTML = renderPOSProductCards(filtered);
 }
 
 function selectPOSCategory(catId, btn) {
   currentCategoryFilter = catId;
   document.querySelectorAll("#pos-cat-bar button").forEach(b => {
-    b.className = "btn btn-outline btn-sm pos-cat-pill";
+    b.className = "cat-pill";
+    b.removeAttribute("style");
   });
-  btn.className = "btn btn-primary btn-sm pos-cat-pill";
+  btn.classList.add("active-cat");
   filterPOSGrid();
 }
 
@@ -913,12 +1523,9 @@ function addToCart(productId, name, price) {
   if (existing) {
     existing.quantity += 1;
   } else {
-    posCart.push({ product_id: productId, name, price: Number(price), quantity: 1 });
+    posCart.push({ product_id: productId, name, price, quantity: 1 });
   }
   updateCartUI();
-  
-  // Subtle toast or vibration on mobile
-  if (navigator.vibrate) navigator.vibrate(30);
 }
 
 function updateCartItemQty(productId, delta) {
@@ -936,32 +1543,42 @@ function updateCartUI() {
   if (container) container.innerHTML = renderCartItems();
 
   const total = posCart.reduce((sum, i) => sum + (i.price * i.quantity), 0);
-  const totalCount = posCart.reduce((sum, i) => sum + i.quantity, 0);
-
   const subtotalEl = document.getElementById("cart-subtotal");
   const totalEl = document.getElementById("cart-total");
-  const badgeEl = document.getElementById("cart-badge-count");
 
   if (subtotalEl) subtotalEl.textContent = Utils.formatCurrency(total);
   if (totalEl) totalEl.textContent = Utils.formatCurrency(total);
-  if (badgeEl) badgeEl.textContent = totalCount;
 }
 
 function renderCartItems() {
   if (!posCart.length) {
-    return `<div style="text-align:center; padding:36px 12px; color:var(--text-muted); font-size:13px;"><i class="fas fa-shopping-basket" style="font-size:32px; margin-bottom:10px; opacity:0.3; display:block;"></i>Cart is currently empty.<br><span style="font-size:11px;">Click on any menu item to add.</span></div>`;
+    return `
+      <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; padding:24px 14px; color:var(--text-muted); text-align:center;">
+        <div style="width:40px; height:40px; border-radius:50%; background:rgba(201,162,39,0.08); color:#c9a227; display:flex; align-items:center; justify-content:center; margin-bottom:8px; font-size:18px;">
+          <i class="fas fa-shopping-bag"></i>
+        </div>
+        <div style="font-size:13px; font-weight:700; color:var(--text-main); margin-bottom:4px;">Your cart is empty</div>
+        <div style="font-size:11px;">Click on any menu item to add it to cart</div>
+      </div>
+    `;
   }
   return posCart.map((i, idx) => `
-    <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid rgba(205,190,150,0.18); font-size:13px;">
-      <div style="flex:1; padding-right:8px; min-width:0;">
-        <div style="font-weight:600; color:var(--text-main); font-size:13px; line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${i.name}</div>
-        <div style="color:#c9a227; font-weight:700; font-size:12px; margin-top:2px;">${Utils.formatCurrency(i.price * i.quantity)} <span style="color:var(--text-muted); font-weight:400; font-size:11px;">(₱${i.price} ea)</span></div>
-      </div>
-      <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
-        <button type="button" class="btn btn-outline btn-sm" style="padding:2px 8px; font-size:12px; border-radius:6px; min-width:26px;" onclick="updateCartItemQty(${i.product_id}, -1)">-</button>
-        <span style="font-weight:800; min-width:20px; text-align:center; font-size:13px;">${i.quantity}</span>
-        <button type="button" class="btn btn-outline btn-sm" style="padding:2px 8px; font-size:12px; border-radius:6px; min-width:26px;" onclick="updateCartItemQty(${i.product_id}, 1)">+</button>
-        <button type="button" class="btn-icon" onclick="posCart.splice(${idx}, 1); updateCartUI();" style="border:none; background:transparent; color:var(--danger); cursor:pointer; font-size:13px; padding:4px;" title="Remove"><i class="fas fa-trash-can"></i></button>
+    <div style="padding:10px 14px; border-bottom:1px solid rgba(205,190,150,0.15);">
+      <div style="font-weight:700; color:var(--text-main); font-size:12px; line-height:1.25; margin-bottom:4px;">${i.name}</div>
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        
+        <div style="color:var(--text-muted); font-size:11px; min-width:50px;">${Utils.formatCurrency(i.price)}</div>
+        
+        <!-- Quantity Controls -->
+        <div style="display:flex; align-items:center; background:#faf8f3; border:1px solid rgba(205,190,150,0.3); border-radius:6px; overflow:hidden;">
+          <button type="button" onclick="updateCartItemQty(${i.product_id}, -1)" style="width:24px; height:24px; border:none; background:transparent; cursor:pointer; color:var(--text-main); font-size:9px;"><i class="fas fa-minus"></i></button>
+          <span style="font-weight:700; font-size:12px; width:24px; text-align:center; padding-top:2px;">${i.quantity}</span>
+          <button type="button" onclick="updateCartItemQty(${i.product_id}, 1)" style="width:24px; height:24px; border:none; background:transparent; cursor:pointer; color:var(--text-main); font-size:9px;"><i class="fas fa-plus"></i></button>
+        </div>
+        
+        <div style="font-weight:800; color:#c9a227; font-size:13px; text-align:right; min-width:60px;">${Utils.formatCurrency(i.price * i.quantity)}</div>
+        
+        <button type="button" class="btn-icon" onclick="posCart.splice(${idx}, 1); updateCartUI();" style="border:none; background:transparent; color:var(--danger); cursor:pointer; font-size:12px; margin-left:4px;" title="Remove"><i class="fas fa-trash-alt"></i></button>
       </div>
     </div>
   `).join('');
@@ -972,59 +1589,783 @@ function clearCart() {
   updateCartUI();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CASHIER AI VOICE ORDERING SYSTEM (TAGALOG, ENGLISH, HILIGAYNON)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const VOICE_NUMBER_WORDS = {
+  // English
+  'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+  'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
+  // Tagalog
+  'isa': 1, 'isang': 1,
+  'dalawa': 2, 'dalawang': 2,
+  'tatlo': 3, 'tatlong': 3,
+  'apat': 4, 'apat na': 4, 'apatna': 4,
+  'lima': 5, 'limang': 5,
+  'anim': 6, 'anim na': 6, 'animna': 6,
+  'pito': 7, 'pitong': 7,
+  'walo': 8, 'walong': 8,
+  'siyam': 9, 'siyam na': 9, 'siyamna': 9,
+  'sampu': 10, 'sampung': 10,
+  // Hiligaynon (Ilonggo)
+  'isa ka': 1, 'isaka': 1,
+  'duha ka': 2, 'duhaka': 2, 'duha': 2,
+  'tatlo ka': 3, 'tatloka': 3,
+  'apat ka': 4, 'apatka': 4,
+  'lima ka': 5, 'limaka': 5,
+  'anum ka': 6, 'anumka': 6, 'anum': 6, 'anim ka': 6,
+  'pito ka': 7, 'pitoka': 7,
+  'walo ka': 8, 'waloka': 8,
+  'siyam ka': 9, 'siyamka': 9,
+  'napulo ka': 10, 'napuloka': 10, 'napulo': 10
+};
+
+const DIGIT_WORD_MAP = {
+  'zero': '0', 'sero': '0', 'oh': '0',
+  'one': '1', 'wan': '1',
+  'two': '2', 'tu': '2',
+  'three': '3', 'tri': '3',
+  'four': '4', 'for': '4',
+  'five': '5', 'fayb': '5',
+  'six': '6', 'siks': '6',
+  'seven': '7', 'seben': '7',
+  'eight': '8', 'eyt': '8',
+  'nine': '9', 'nayn': '9',
+  // Tagalog digits
+  'isa': '1', 'dalawa': '2', 'tatlo': '3', 'apat': '4',
+  'lima': '5', 'anim': '6', 'pito': '7', 'walo': '8', 'siyam': '9',
+  // Hiligaynon digits
+  'duha': '2', 'anum': '6'
+};
+
+function computeLevenshteinSimilarity(s1, s2) {
+  if (!s1 || !s2) return 0;
+  if (s1 === s2) return 1;
+  const a = s1.toLowerCase().trim();
+  const b = s2.toLowerCase().trim();
+  if (a === b) return 1;
+  const la = a.length, lb = b.length;
+  const d = [];
+  for (let i = 0; i <= la; i++) d[i] = [i];
+  for (let j = 0; j <= lb; j++) d[0][j] = j;
+  for (let i = 1; i <= la; i++) {
+    for (let j = 1; j <= lb; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+    }
+  }
+  const maxLen = Math.max(la, lb);
+  return (maxLen - d[la][lb]) / maxLen;
+}
+
+let posVoiceRecognition = null;
+let isVoiceListening = false;
+let voiceActiveLanguage = 'fil-PH';
+
+function normalizeVoicePhonetics(str) {
+  if (!str) return '';
+  let s = str.toLowerCase().trim();
+
+  // 1. Normalize misheard "POS" variants BEFORE stripping any fillers:
+  // Handles: "PO is what S", "PO is whats", "po is what's", "po is what", "po is", "po s", "p o s"
+  s = s.replace(/\bpo\s+is\s+(?:what\s+)?s\b/gi, 'pos');
+  s = s.replace(/\bpo\s+is\s+whats\b/gi, 'pos');
+  s = s.replace(/\bpo\s+is\s+what\b/gi, 'pos');
+  s = s.replace(/\bpo\s+is\b/gi, 'pos');
+  s = s.replace(/\bp\s+o\s+s\b/gi, 'pos');
+  s = s.replace(/\bp\s*\.?\s*o\s*\.?\s*s\.?\b/gi, 'pos');
+  s = s.replace(/\b(pia\s*os|pi\s*os|pee\s*oh\s*ess|post|pause|pass|boss|fos)\b/gi, 'pos');
+
+  // Commas separating distinct items (e.g. "1 bucket ice, 2 c1") become " and "
+  s = s.replace(/,\s*(?=\d+\s+[a-z]|(?:isang|dalawang|tatlong|isa\s+ka|duha\s+ka)\s+[a-z])/gi, ' and ');
+
+  // Strip punctuation (. , ! ? ; :)
+  s = s.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, ' ');
+
+  // Strip conversational fillers in Tagalog/English/Filipino speech
+  s = s.replace(/\b(ah+|eh+|ay+|um+|uh+|oh+|yung|yun|nga|kuya|ate|miss|bossing)\b/gi, ' ');
+  // Strip standalone 'po' only if not followed by 's'
+  s = s.replace(/\bpo\b(?!\s*s\b)/gi, ' ');
+
+  s = s.replace(/\bpos\s*[-–—]?\s*(\d+)\b/gi, 'pos $1');
+  s = s.replace(/\bsku\s*[-–—]?\s*(\d+)\b/gi, 'sku $1');
+  s = s.replace(/\bcode\s*[-–—]?\s*(\d+)\b/gi, 'pos $1');
+
+  // Common misheard beverage and food words in Filipino English
+  s = s.replace(/\b(ba\s*nila|banila|vanila)\b/gi, 'vanilla');
+  s = s.replace(/\b(makyato|makiyato|machiato)\b/gi, 'macchiato');
+  s = s.replace(/\b(karamel)\b/gi, 'caramel');
+  s = s.replace(/\b(amerikano)\b/gi, 'americano');
+  s = s.replace(/\b(matsa|macha)\b/gi, 'matcha');
+  s = s.replace(/\b(kropec|chicharon|tsitsaron)\b/gi, 'kropek');
+  s = s.replace(/\b(nachofry|nacho\s*fry)\b/gi, 'nachofries');
+  s = s.replace(/\b(espaghetti|spageti|spag)\b/gi, 'spaghetti');
+  s = s.replace(/\b(arozcaldo|arroz\s*caldo)\b/gi, 'arrozcaldo');
+
+  // Phrased code combinations (e.g. Tagalog/English speech engine mishearing "two c two" as "ito si tito")
+  s = s.replace(/\b(?:ito|eto|to)\s+si\s+tito\b/gi, '2 c2');
+  s = s.replace(/\b(?:ito|eto|to)\s+(?:see|si|sea|c)\s*(?:two|tu|to|tito|2)\b/gi, '2 c2');
+  s = s.replace(/\b(?:ito|eto|to)\s+(?:see|si|sea|c)\s*(?:one|wan|juan|1)\b/gi, '2 c1');
+
+  // C1, C2, C3 phonetics and misheard variants (e.g. "si tito", "tito", "si two", "see two")
+  s = s.replace(/\b(?:see|si|sea)\s*tito\b/gi, 'c2');
+  s = s.replace(/\btito\b/gi, 'c2');
+  s = s.replace(/\b(?:see|si|sea)\s*(?:1|one|wan|juan)\b/gi, 'c1');
+  s = s.replace(/\b(?:see|si|sea)\s*(?:2|two|tu|to)\b/gi, 'c2');
+  s = s.replace(/\b(?:see|si|sea)\s*(?:3|three|tri)\b/gi, 'c3');
+  s = s.replace(/\bc\s*(?:1|one|wan|juan)\b/gi, 'c1');
+  s = s.replace(/\bc\s*(?:2|two|tu|to)\b/gi, 'c2');
+  s = s.replace(/\bc\s*(?:3|three|tri)\b/gi, 'c3');
+  s = s.replace(/\b([a-z])\s+(\d{1,2})\b/gi, '$1$2');
+
+  // Convert sequences of digit words into numeric digits (e.g. "nine nine four six" -> "9946", "five three four one" -> "5341")
+  const words = s.split(/\s+/).filter(Boolean);
+  const converted = [];
+  let digitSeq = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (DIGIT_WORD_MAP[w]) {
+      digitSeq.push(DIGIT_WORD_MAP[w]);
+    } else {
+      if (digitSeq.length > 0) {
+        if (digitSeq.length >= 2 || (converted.length > 0 && ['pos', 'sku', 'code'].includes(converted[converted.length - 1]))) {
+          converted.push(digitSeq.join(''));
+        } else {
+          converted.push(...digitSeq);
+        }
+        digitSeq = [];
+      }
+      converted.push(w);
+    }
+  }
+  if (digitSeq.length > 0) {
+    if (digitSeq.length >= 2 || (converted.length > 0 && ['pos', 'sku', 'code'].includes(converted[converted.length - 1]))) {
+      converted.push(digitSeq.join(''));
+    } else {
+      converted.push(...digitSeq);
+    }
+  }
+
+  s = converted.join(' ');
+  s = s.replace(/\s+/g, ' ').trim();
+  return s;
+}
+
+function parseVoiceSegment(seg, pendingQty = null) {
+  let text = normalizeVoicePhonetics(seg);
+  let qty = pendingQty || 1;
+  let itemStr = text;
+  let matchedStart = false;
+
+  const sortedWords = Object.keys(VOICE_NUMBER_WORDS).sort((a, b) => b.length - a.length);
+
+  // Check if text is ONLY a number or quantity phrase (e.g. "3", "isa ka", "tatlo", "five")
+  if (/^\d{1,2}$/.test(text)) {
+    return { qty: parseInt(text, 10), itemStr: '', isOnlyQty: true };
+  }
+  for (const w of sortedWords) {
+    if (text === w) {
+      return { qty: VOICE_NUMBER_WORDS[w], itemStr: '', isOnlyQty: true };
+    }
+  }
+
+  // 1. Check digit at start (1 or 2 digits only, e.g. "1 c1 solo", "3 pos 5341", NOT 4+ digit POS codes)
+  const mDigitStart = text.match(/^(\d{1,2})\s+(.*)$/);
+  if (mDigitStart) {
+    qty = parseInt(mDigitStart[1], 10);
+    itemStr = mDigitStart[2].trim();
+    matchedStart = true;
+  } else {
+    // 2. Check number word at start (e.g. "isa ka pos 7928", "duha ka c1 solo", "isang c1 solo", "three pos 5341")
+    for (const w of sortedWords) {
+      const reg = new RegExp('^' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s+(.*)$', 'i');
+      const m = text.match(reg);
+      if (m) {
+        qty = VOICE_NUMBER_WORDS[w];
+        itemStr = m[1].trim();
+        matchedStart = true;
+        break;
+      }
+    }
+  }
+
+  // 3. Check digit or number word at end
+  if (!matchedStart) {
+    let matchedEnd = false;
+    // 3a. Trailing number words
+    for (const w of sortedWords) {
+      const reg = new RegExp('^(.*?)\\s+' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+      const m = text.match(reg);
+      if (m) {
+        qty = VOICE_NUMBER_WORDS[w];
+        itemStr = m[1].trim();
+        matchedEnd = true;
+        break;
+      }
+    }
+
+    if (!matchedEnd) {
+      // 3b. Code with trailing quantity (e.g. "pos 7928 2", "sku 85372 3", "7928 2")
+      const mCodeWithQty = text.match(/^(pos\s+\d+|sku\s+\d+|\d{4,5}|c\d+)\s+(\d{1,2})$/i);
+      if (mCodeWithQty) {
+        itemStr = mCodeWithQty[1].trim();
+        qty = parseInt(mCodeWithQty[2], 10);
+      } else {
+        // 3c. Regular trailing quantity (e.g. "c1 solo 1", "burger 2")
+        const mDigitEnd = text.match(/^(.*?)\s+(\d{1,2})$/);
+        if (mDigitEnd && !/^(?:pos|sku|code|item|c)$/i.test(mDigitEnd[1].trim())) {
+          qty = parseInt(mDigitEnd[2], 10);
+          itemStr = mDigitEnd[1].trim();
+        }
+      }
+    }
+  }
+
+  // 4. Clean leftover connectors (e.g. "ng", "sang", "ka", "bilog", "pcs")
+  itemStr = itemStr.replace(/^(ng|sang|ka|bilog|ka bilog|pcs|piece|buok)\s+/i, '').trim();
+
+  return { qty: Math.max(1, qty), itemStr, isOnlyQty: false };
+}
+
+function parseFullVoiceOrder(speechText, products, pendingQty = null) {
+  if (!speechText || !speechText.trim()) return [];
+  let cleaned = speechText.toLowerCase().trim();
+
+  // Strip intro filler words in Tagalog, Hiligaynon, and English
+  const introPatterns = [
+    /^(pabili\s+po\s+ng|pabili\s+ng|pabili\s+po|pabili)\s+/i,
+    /^(order\s+ko\s+po|order\s+ko|order)\s+/i,
+    /^(pabakal\s+palihug\s+sang|pabakal\s+sang|pabakal)\s+/i,
+    /^(palihug\s+ko\s+sang|palihug\s+sang|palihug)\s+/i,
+    /^(paki\s+add\s+ng|paki\s+add|add)\s+/i,
+    /^(baklon\s+ko\s+ang|baklon\s+ko|baklon)\s+/i,
+    /^(gusto\s+ko\s+ng|gusto\s+ko)\s+/i,
+    /^(i\s+want\s+to\s+order|i\s+want|can\s+i\s+get|give\s+me)\s+/i
+  ];
+  for (const p of introPatterns) {
+    cleaned = cleaned.replace(p, '').trim();
+  }
+
+  // Split multiple items if separated by conjunctions (kag, at, and, tsaka, saka, +, with)
+  const rawSegments = cleaned.split(/\s+(?:kag|at|and|tsaka|saka|\+|with)\s+/i);
+  const items = [];
+
+  for (const raw of rawSegments) {
+    const s = raw.trim();
+    if (!s) continue;
+    const { qty, itemStr, isOnlyQty } = parseVoiceSegment(s, pendingQty);
+    if (isOnlyQty) {
+      items.push({
+        original: s,
+        qty,
+        itemStr: '',
+        isOnlyQty: true,
+        product: null
+      });
+      continue;
+    }
+    if (!itemStr) continue;
+    const matched = matchVoiceProduct(itemStr, products);
+    items.push({
+      original: s,
+      qty,
+      itemStr,
+      isOnlyQty: false,
+      product: matched
+    });
+  }
+
+  return items;
+}
+
+function matchVoiceProduct(query, products) {
+  if (!products || !products.length || !query) return null;
+  // Exclude inactive products from voice recognition
+  const activeProducts = products.filter(p => p.is_active !== false && p.is_active !== 0 && p.is_active !== "0");
+  if (!activeProducts.length) return null;
+
+  const normQuery = query.toLowerCase().replace(/[\-_,.]/g, ' ').replace(/\s+/g, ' ').trim();
+  const qClean = query.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  const qDigitMatch = query.match(/\d+/);
+  const qDigits = qDigitMatch ? qDigitMatch[0] : '';
+  const isCodeQuery = /^(?:pos|sku|code|item)?\s*\d+$/i.test(query.trim());
+
+  // Incomplete POS code check: All POS codes have 4 digits (e.g. POS-5341, POS-2631, POS-2931).
+  // If query is an incomplete code with < 4 digits (e.g. "pos 2", "pos 26", "pos 263"), NEVER match!
+  if (isCodeQuery && qDigits && qDigits.length < 4) {
+    return null;
+  }
+
+  // 1. Exact match on normalized SKU / Code (e.g. "c1 solo" or "c1solo" matching "C1-SOLO", or "pos 7928", "pos 2631")
+  for (const p of activeProducts) {
+    const sku = (p.sku || '').toLowerCase();
+    const normSku = sku.replace(/[\-_,.]/g, ' ').replace(/\s+/g, ' ').trim();
+    const cleanSku = sku.replace(/[^a-z0-9]/g, '');
+    if ((normSku && normSku === normQuery) || (cleanSku && cleanSku === qClean)) {
+      return p;
+    }
+  }
+
+  // 2. Code digits match (4 digits for POS-XXXX, 5 digits for SKU-XXXXX)
+  if (isCodeQuery && qDigits && qDigits.length >= 4) {
+    for (const p of activeProducts) {
+      const sku = (p.sku || '').toLowerCase();
+      const skuDigitMatch = sku.match(/\d+/);
+      if (skuDigitMatch && skuDigitMatch[0].length >= 4) {
+        const sDigits = skuDigitMatch[0];
+        if (sDigits === qDigits) {
+          return p;
+        }
+      }
+    }
+  }
+
+  // 3. Embedded code in query (e.g. "bucket ice c2", "1 c1", query contains code word "c2" or "c1")
+  for (const p of activeProducts) {
+    const sku = (p.sku || '').toLowerCase().trim();
+    const cleanSku = sku.replace(/[^a-z0-9]/g, '');
+    if (cleanSku.length >= 2) {
+      const reg = new RegExp('\\b' + cleanSku + '\\b', 'i');
+      if (reg.test(normQuery)) {
+        return p;
+      }
+    }
+  }
+
+  // 3b. SKU substring match for longer codes (>=4 chars, e.g. "pos2931" ending with "2931")
+  if (qClean.length >= 4) {
+    for (const p of activeProducts) {
+      const sku = (p.sku || '').toLowerCase();
+      const cleanSku = sku.replace(/[^a-z0-9]/g, '');
+      if (cleanSku && cleanSku.length >= 4 && (cleanSku.endsWith(qClean) || qClean.endsWith(cleanSku))) {
+        return p;
+      }
+    }
+  }
+
+  // 4. Exact Product Name match
+  for (const p of activeProducts) {
+    const normName = (p.name || '').toLowerCase().replace(/[\-_,.]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (normName === normQuery) {
+      return p;
+    }
+  }
+
+  // 5. Product Name contains query or query contains product name (e.g. "french vanilla pos" contains "french vanilla")
+  let bestContains = null;
+  let bestLen = 0;
+  for (const p of activeProducts) {
+    const normName = (p.name || '').toLowerCase().replace(/[\-_,.]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (normName.length > 2 && normQuery.includes(normName) && normName.length > bestLen) {
+      bestContains = p;
+      bestLen = normName.length;
+    } else if (normQuery.length > 3 && normName.includes(normQuery) && normQuery.length > bestLen) {
+      bestContains = p;
+      bestLen = normQuery.length;
+    }
+  }
+  if (bestContains) {
+    return bestContains;
+  }
+
+  // 6. Token overlap match (avoid false positives on generic modifiers like 'solo', 'regular', 'single')
+  const MODIFIER_WORDS = new Set(['solo', 'single', 'regular', 'barkada', 'with', 'w', 'hot', 'cold', 'iced', '16', '22', 'oz', 'pcs', 'pc', 'l']);
+  const qTokens = normQuery.split(' ').filter(t => t.length > 1);
+  const nonModifierTokens = qTokens.filter(t => !MODIFIER_WORDS.has(t));
+  let bestProd = null;
+  let bestScore = 0;
+
+  for (const p of activeProducts) {
+    const normName = (p.name || '').toLowerCase().replace(/[\-_,.]/g, ' ');
+    const sku = (p.sku || '').toLowerCase().replace(/[\-_,.]/g, ' ');
+    const target = `${normName} ${sku}`;
+    let score = 0;
+    for (const t of qTokens) {
+      if (target.includes(t)) score++;
+    }
+    // If there are primary (non-modifier) tokens, at least one MUST match
+    const hasPrimaryMatch = nonModifierTokens.length === 0 || nonModifierTokens.some(t => target.includes(t));
+    if (hasPrimaryMatch && score > bestScore) {
+      bestScore = score;
+      bestProd = p;
+    }
+  }
+
+  const minRequired = qTokens.length <= 2 ? qTokens.length : Math.max(2, Math.floor(qTokens.length * 0.6));
+  if (bestScore >= minRequired) {
+    return bestProd;
+  }
+
+  // 7. Fuzzy string similarity (handles close pronunciations like "french ba nila" -> "French Vanilla")
+  let bestFuzzyProd = null;
+  let bestFuzzyScore = 0.0;
+
+  for (const p of activeProducts) {
+    const pCleanName = (p.name || '').toLowerCase().replace(/[\-_,.()–—]/g, ' ').replace(/\s+/g, ' ').trim();
+    const sku = (p.sku || '').toLowerCase();
+
+    const simName = computeLevenshteinSimilarity(normQuery, pCleanName);
+    const simSku = computeLevenshteinSimilarity(normQuery, sku);
+
+    const qWords = normQuery.split(/\s+/).filter(w => w.length > 2);
+    const pWords = pCleanName.split(/\s+/).filter(w => w.length > 2);
+    let wordOverlap = 0;
+    if (qWords.length > 0 && pWords.length > 0) {
+      for (const qw of qWords) {
+        let bestWSim = 0;
+        for (const pw of pWords) {
+          const ws = computeLevenshteinSimilarity(qw, pw);
+          if (ws > bestWSim) bestWSim = ws;
+        }
+        if (bestWSim >= 0.75) wordOverlap++;
+      }
+      var tokenSim = wordOverlap / Math.max(qWords.length, pWords.length);
+    } else {
+      var tokenSim = 0;
+    }
+
+    const maxSim = Math.max(simName, simSku, tokenSim);
+    if (maxSim > bestFuzzyScore) {
+      bestFuzzyScore = maxSim;
+      bestFuzzyProd = p;
+    }
+  }
+
+  // If >= 65% close to POS product name or code, automatically match!
+  if (bestFuzzyScore >= 0.65) {
+    return bestFuzzyProd;
+  }
+
+  return null;
+}
+
+function playVoiceBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15);
+    gain.gain.setValueAtTime(0.2, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.2);
+  } catch (e) {}
+}
+
+// Direct inline voice recording (no popup modal)
+window.isVoiceListening = false;
+window.pendingVoiceQty = null;
+
+function toggleVoiceOrderDirect() {
+  if (window.isVoiceListening) {
+    stopVoiceRecordingDirect();
+  } else {
+    startVoiceRecordingDirect();
+  }
+}
+
+function startVoiceRecordingDirect() {
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRec) {
+    Utils.showToast("Web Speech API not supported in this browser. Please use Chrome or Edge.", "warning");
+    return;
+  }
+
+  window.isVoiceListening = true;
+  window.pendingVoiceQty = null;
+  updateVoiceButtonUI(true);
+
+  if (posVoiceRecognition) {
+    try { posVoiceRecognition.abort(); } catch(e) {}
+  }
+
+  posVoiceRecognition = new SpeechRec();
+  posVoiceRecognition.continuous = true;
+  posVoiceRecognition.interimResults = true;
+  posVoiceRecognition.lang = voiceActiveLanguage;
+
+  posVoiceRecognition.onstart = function() {
+    window.isVoiceListening = true;
+    updateVoiceButtonUI(true);
+    const textEl = document.getElementById("pos-voice-transcript-text");
+    if (textEl) {
+      textEl.innerHTML = `Listening... Speak order (e.g. "isa ka c1 solo", "3 pos 5341", "1 bucket ice c2")`;
+      textEl.style.color = "#18181b";
+    }
+    Utils.showToast("🎤 Voice recording started. Speak your order...", "info");
+  };
+
+  window.voiceSessionCommitted = window.voiceSessionCommitted || new Set();
+
+  posVoiceRecognition.onresult = function(event) {
+    let interim = '';
+    let finalTranscript = '';
+    for (let i = event.resultIndex; i < event.results.length; ++i) {
+      if (event.results[i].isFinal) {
+        finalTranscript += event.results[i][0].transcript;
+      } else {
+        interim += event.results[i][0].transcript;
+      }
+    }
+
+    const textEl = document.getElementById("pos-voice-transcript-text");
+    const spoken = (finalTranscript || interim).trim();
+    if (textEl && spoken) {
+      textEl.innerHTML = `Heard: <span style="color:#b91c1c;">"${spoken}"</span>`;
+    }
+
+    // Process continuous speech in real-time (both interim & final)
+    if (spoken) {
+      const isFinal = Boolean(finalTranscript.trim());
+      executeVoiceOrderDirect(spoken, isFinal);
+    }
+  };
+
+  posVoiceRecognition.onerror = function(event) {
+    console.warn("Speech recognition error:", event.error);
+    if (event.error === 'not-allowed') {
+      window.isVoiceListening = false;
+      updateVoiceButtonUI(false);
+      Utils.showToast("Microphone access denied. Please allow microphone in browser settings.", "danger");
+    } else if (event.error === 'no-speech') {
+      // Continue listening without stopping
+    }
+  };
+
+  posVoiceRecognition.onend = function() {
+    // If still in listening state, auto-restart so cashier can speak next item
+    if (window.isVoiceListening) {
+      try {
+        posVoiceRecognition.start();
+      } catch(e) {
+        window.isVoiceListening = false;
+        updateVoiceButtonUI(false);
+      }
+    } else {
+      updateVoiceButtonUI(false);
+    }
+  };
+
+  try {
+    posVoiceRecognition.start();
+  } catch(e) {
+    console.warn("Could not start speech recognition:", e);
+    window.isVoiceListening = false;
+    updateVoiceButtonUI(false);
+  }
+}
+
+function stopVoiceRecordingDirect() {
+  window.isVoiceListening = false;
+  window.pendingVoiceQty = null;
+  if (posVoiceRecognition) {
+    try {
+      posVoiceRecognition.stop();
+    } catch(e) {}
+  }
+  if (window.voiceSessionCommitted) {
+    window.voiceSessionCommitted.clear();
+  }
+  updateVoiceButtonUI(false);
+  Utils.showToast("Voice recording stopped.", "info");
+}
+
+function updateVoiceButtonUI(listening) {
+  const btn = document.getElementById("pos-voice-order-btn");
+  const micIcon = document.getElementById("pos-voice-btn-mic");
+  const btnText = document.getElementById("pos-voice-btn-text");
+  const strip = document.getElementById("pos-voice-live-strip");
+
+  if (listening) {
+    if (btn) {
+      btn.className = "mic-active";
+      btn.style.background = "#dc2626";
+      btn.style.borderColor = "#ef4444";
+      btn.style.boxShadow = "0 4px 14px rgba(220,38,38,0.4)";
+    }
+    if (micIcon) {
+      micIcon.className = "fas fa-microphone";
+      micIcon.style.color = "#ffffff";
+    }
+    if (btnText) {
+      btnText.innerHTML = `<i class="fas fa-circle" style="color:#fff; font-size:8px; animation:voicePulse 1s infinite; margin-right:4px;"></i> RECORDING...`;
+    }
+    if (strip) {
+      strip.style.display = "flex";
+    }
+  } else {
+    window.pendingVoiceQty = null;
+    if (btn) {
+      btn.className = "";
+      btn.style.background = "#18181b";
+      btn.style.borderColor = "#3f3f46";
+      btn.style.boxShadow = "none";
+    }
+    if (micIcon) {
+      micIcon.className = "fas fa-microphone";
+      micIcon.style.color = "#ef4444";
+    }
+    if (btnText) {
+      btnText.textContent = "VOICE ORDER";
+    }
+    if (strip) {
+      strip.style.display = "none";
+    }
+  }
+}
+
+window.voiceSessionCommitted = window.voiceSessionCommitted || new Set();
+let voiceCommitResetTimer = null;
+
+function executeVoiceOrderDirect(text, isFinal = true) {
+  if (!text || !text.trim()) return;
+
+  const items = parseFullVoiceOrder(text, cachedProducts, window.pendingVoiceQty);
+  const textEl = document.getElementById("pos-voice-transcript-text");
+
+  // Check if speech was solely a quantity (e.g. "3", "isa ka", "tatlo", "five")
+  if (items.length === 1 && items[0].isOnlyQty) {
+    window.pendingVoiceQty = items[0].qty;
+    if (textEl) {
+      textEl.innerHTML = `<span style="color:#d97706;">⏳ Quantity <strong>${items[0].qty}</strong> noted — speak product name or POS code...</span>`;
+    }
+    return;
+  }
+
+  let addedCount = 0;
+  let summaryNames = [];
+
+  items.forEach(item => {
+    if (item.product) {
+      const prod = item.product;
+      const itemKey = `${prod.id}_${item.qty}_${item.itemStr.toLowerCase().replace(/\s+/g, '')}`;
+
+      if (!window.voiceSessionCommitted.has(itemKey)) {
+        window.voiceSessionCommitted.add(itemKey);
+
+        const existing = posCart.find(i => i.product_id === prod.id);
+        if (existing) {
+          existing.quantity += item.qty;
+        } else {
+          posCart.push({
+            product_id: prod.id,
+            name: prod.name,
+            price: prod.price,
+            quantity: item.qty
+          });
+        }
+        addedCount++;
+        summaryNames.push(`${item.qty}x ${prod.name}`);
+      }
+    }
+  });
+
+  if (addedCount > 0) {
+    window.pendingVoiceQty = null; // Clear pending quantity once fulfilled
+    updateCartUI();
+    playVoiceBeep();
+    if (textEl) {
+      textEl.innerHTML = `<span style="color:#047857;">✅ Inserted ${summaryNames.join(', ')} into Current Cart!</span>`;
+    }
+  } else if (isFinal && (!items.length || !items.some(i => i.product))) {
+    // Only show "Item not found" on final silence, not while typing/speaking interim digits or lone quantities
+    const cleanedText = text.trim();
+    if (!/^\d{1,2}$/.test(cleanedText) && !['pos', 'sku', 'code'].includes(cleanedText.toLowerCase())) {
+      if (textEl) {
+        textEl.innerHTML = `<span style="color:#b91c1c;">⚠️ Item not found: "${text}"</span>`;
+      }
+    }
+  }
+
+  // Clear committed keys after 2.5 seconds of silence so the cashier can order the same item again
+  if (isFinal) {
+    clearTimeout(voiceCommitResetTimer);
+    voiceCommitResetTimer = setTimeout(() => {
+      if (window.voiceSessionCommitted) {
+        window.voiceSessionCommitted.clear();
+      }
+      window.pendingVoiceQty = null;
+    }, 2500);
+  }
+}
+
+// Backward compatibility alias
+window.openVoiceOrderModal = toggleVoiceOrderDirect;
+window.executeVoiceOrder = executeVoiceOrderDirect;
+window.toggleVoiceListeningState = toggleVoiceOrderDirect;
+
 function openPaymentModal() {
   if (!posCart.length) {
     Utils.showToast("Order cart is empty. Please add items to checkout.", "danger");
     return;
   }
   const total = posCart.reduce((sum, i) => sum + (i.price * i.quantity), 0);
+  window.isFirstTenderTap = true;
 
-  Utils.openModal("💳 Process Order Payment & Checkout", `
+  Utils.openModal("Process Order Checkout", `
     <form id="form-payment" onsubmit="event.preventDefault(); submitCheckout();">
-      <!-- Total Payable Banner -->
       <div style="text-align:center; padding:18px; background:rgba(201,162,39,0.08); border-radius:14px; margin-bottom:18px; border:1px solid rgba(205,190,150,0.3);">
         <span style="font-size:12px; text-transform:uppercase; color:var(--text-muted); font-weight:600; letter-spacing:0.5px;">Total Amount Due</span>
-        <div style="font-size:32px; font-weight:800; color:#c9a227; margin-top:4px;">${Utils.formatCurrency(total)}</div>
+        <div style="font-size:28px; font-weight:800; color:#c9a227; margin-top:4px;">${Utils.formatCurrency(total)}</div>
       </div>
-
-      <!-- Payment Method Selection -->
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Payment Method <span style="color:var(--danger);">*</span></label>
         <select id="pay-method" class="input-field" style="width:100%;">
-          <option value="CASH" selected>💵 Cash (Cash Register)</option>
-          <option value="GCASH">📱 GCash E-Wallet</option>
-          <option value="CARD">💳 Debit / Credit Card</option>
+          <option value="CASH" selected>Cash (Cash Register)</option>
+          <option value="GCASH">GCash E-Wallet</option>
+          <option value="CARD">Debit / Credit Card</option>
         </select>
       </div>
-
-      <!-- Amount Tendered Input -->
-      <div class="input-group" style="margin-bottom:12px;">
+      <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Amount Tendered (₱) <span style="color:var(--danger);">*</span></label>
-        <input type="number" step="0.01" id="pay-tendered" class="input-field" required value="${total}" style="width:100%; font-size:18px; font-weight:800;" oninput="calculateChange(${total})">
+        <input type="number" step="0.01" id="pay-tendered" class="input-field" required value="${total}" style="width:100%; font-size:16px; font-weight:700;" oninput="window.isFirstTenderTap=false; calculateChange(${total})">
       </div>
-
+      
       <!-- Quick Denominations for Rapid Touch Input -->
       <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px;">
-        <button type="button" class="btn btn-outline btn-sm" style="flex:1; min-width:60px;" onclick="setTenderedAmount(${total}, ${total})">Exact</button>
-        <button type="button" class="btn btn-outline btn-sm" style="flex:1; min-width:60px;" onclick="setTenderedAmount(100, ${total})">₱100</button>
-        <button type="button" class="btn btn-outline btn-sm" style="flex:1; min-width:60px;" onclick="setTenderedAmount(200, ${total})">₱200</button>
-        <button type="button" class="btn btn-outline btn-sm" style="flex:1; min-width:60px;" onclick="setTenderedAmount(500, ${total})">₱500</button>
-        <button type="button" class="btn btn-outline btn-sm" style="flex:1; min-width:60px;" onclick="setTenderedAmount(1000, ${total})">₱1,000</button>
+        <button type="button" class="btn btn-outline btn-sm" style="flex:1; min-width:60px;" onclick="setTenderedAmount(${total}, ${total})">Clear</button>
+        <button type="button" class="btn btn-outline btn-sm" style="flex:1; min-width:40px;" onclick="addTenderedAmount(1, ${total})">₱1</button>
+        <button type="button" class="btn btn-outline btn-sm" style="flex:1; min-width:40px;" onclick="addTenderedAmount(5, ${total})">₱5</button>
+        <button type="button" class="btn btn-outline btn-sm" style="flex:1; min-width:40px;" onclick="addTenderedAmount(10, ${total})">₱10</button>
+        <button type="button" class="btn btn-outline btn-sm" style="flex:1; min-width:50px;" onclick="addTenderedAmount(50, ${total})">₱50</button>
+        <button type="button" class="btn btn-outline btn-sm" style="flex:1; min-width:50px;" onclick="addTenderedAmount(100, ${total})">₱100</button>
+        <button type="button" class="btn btn-outline btn-sm" style="flex:1; min-width:50px;" onclick="addTenderedAmount(500, ${total})">₱500</button>
+        <button type="button" class="btn btn-outline btn-sm" style="flex:1; min-width:60px;" onclick="addTenderedAmount(1000, ${total})">₱1,000</button>
       </div>
 
-      <!-- Change Calculation Box -->
-      <div id="change-display-box" style="display:flex; justify-content:space-between; align-items:center; padding:14px 18px; background:rgba(16,185,129,0.08); border-radius:12px; border:1px solid rgba(16,185,129,0.25);">
-        <span style="font-size:14px; font-weight:700; color:var(--text-main);">Change to Return:</span>
-        <span id="pay-change" style="font-size:22px; font-weight:800; color:var(--success, #10b981);">₱0.00</span>
+      <div id="change-display-box" style="display:flex; justify-content:space-between; padding:12px 14px; background:rgba(16,185,129,0.08); border-radius:10px; border:1px solid rgba(16,185,129,0.25);">
+        <span style="font-size:13px; font-weight:600; color:var(--text-muted);">Change:</span>
+        <span id="pay-change" style="font-size:16px; font-weight:800; color:var(--success, #10b981);">₱0.00</span>
       </div>
     </form>
-  `, `<button class="btn btn-primary" onclick="submitCheckout()" style="width:100%; height:46px; font-size:15px; font-weight:700;"><i class="fas fa-check-circle"></i> Confirm & Complete Sale</button>`);
+  `, `<button class="btn btn-primary" onclick="submitCheckout()" style="width:100%; height:44px; font-size:14px; font-weight:700;"><i class="fas fa-check-circle"></i> Confirm & Complete Sale</button>`);
 }
 
 function setTenderedAmount(amount, total) {
   const input = document.getElementById("pay-tendered");
   if (input) {
     input.value = amount;
+    window.isFirstTenderTap = true;
+    calculateChange(total);
+  }
+}
+
+function addTenderedAmount(amount, total) {
+  const input = document.getElementById("pay-tendered");
+  if (input) {
+    if (window.isFirstTenderTap) {
+      input.value = amount.toFixed(2);
+      window.isFirstTenderTap = false;
+    } else {
+      const current = parseFloat(input.value) || 0;
+      input.value = (current + amount).toFixed(2);
+    }
     calculateChange(total);
   }
 }
@@ -1065,8 +2406,41 @@ async function submitCheckout() {
     }
     
     const tx = await res.json();
+    
+    // Mark customer online order as completed if applicable
+    if (window.currentOnlineOrderId) {
+      try {
+        await Auth.fetch(`/api/v1/customer-orders/${window.currentOnlineOrderId}/status`, {
+          method: "PUT",
+          body: JSON.stringify({ status: "completed" })
+        });
+        window.currentOnlineOrderId = null;
+      } catch (err) {
+        console.error("Failed to update online order status:", err);
+      }
+    }
+    
     Utils.showToast("Order completed successfully!", "success");
     Utils.closeModal();
+    
+    const currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
+    const orderForReceipt = {
+      id: tx.id,
+      receiptNumber: tx.client_tx_id || tx.id || "N/A",
+      date: tx.created_at || new Date().toISOString(),
+      cashier: currentUser ? (currentUser.name || currentUser.username) : "Cashier",
+      items: posCart.map(i => ({
+        name: i.name,
+        quantity: i.quantity,
+        price: i.price
+      })),
+      total_amount: total,
+      payment_method: method,
+      amount_paid: tendered
+    };
+    
+    Utils.showReceiptModal(orderForReceipt);
+    
     clearCart();
     localStorage.setItem("RESTOTRACK_SYNC_TX", Date.now());
   } catch (err) {
@@ -1078,30 +2452,217 @@ async function submitCheckout() {
 // 5. KITCHEN DISPLAY SYSTEM (KDS)
 // ─────────────────────────────────────────────────────────────────────────────
 async function renderKitchen(c) {
-  const res = await Auth.fetch("/api/v1/kitchen/orders");
+  c = c || document.getElementById('view-container');
+  const res = await Auth.fetch(`/api/v1/kitchen/orders?_t=${Date.now()}`);
   const orders = res.ok ? await res.json() : [];
 
   c.innerHTML = `
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-      <h2 style="font-size:18px; font-weight:700;">Live Kitchen Orders</h2>
-      <button class="btn btn-outline btn-sm" onclick="renderKitchen()"><i class="fas fa-sync"></i> Refresh Orders</button>
+    <style>
+      .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 28px; }
+      .stat-card { padding: 24px 22px; display: flex; align-items: center; gap: 18px; background: var(--card-bg, #ffffff); border-radius: var(--radius-card, 16px); border: 1px solid rgba(205, 190, 150, 0.35); box-shadow: 0 4px 15px rgba(0,0,0,0.03); transition: transform 0.3s ease, box-shadow 0.3s ease; }
+      .stat-card:hover { transform: translateY(-3px); box-shadow: 0 15px 35px rgba(180,140,50,0.12); }
+      .stat-icon { width: 56px; height: 56px; border-radius: 16px; display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; }
+      .stat-icon.gold   { background: rgba(201,162,39,0.12); color: #c9a227; }
+      .stat-icon.green  { background: rgba(16,185,129,0.12); color: #10b981; }
+      .stat-icon.orange { background: rgba(249,115,22,0.12); color: #f97316; }
+      .stat-icon.blue   { background: rgba(59,130,246,0.12); color: #3b82f6; }
+      .stat-info h3 { font-size: 12px; color: var(--text-muted, #71717a); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; margin-top: 0; }
+      .stat-count { font-size: 28px; font-weight: 800; color: var(--text-main, #18181b); line-height: 1.1; }
+      .stat-trend { font-size: 11px; margin-top: 4px; font-weight: 500; }
+    </style>
+
+    <!-- Top Header Toolbar -->
+    <div class="toolbar fade-up" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:24px;">
+      <div>
+        <h2 style="font-size:22px; font-weight:800; color:var(--text-main); margin:0;">Live Kitchen Orders</h2>
+        <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">
+          Monitoring real-time ticket preparation
+        </p>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <button class="btn btn-outline" onclick="renderKitchen()" style="border-color:#c9a227; color:#c9a227; display:inline-flex; align-items:center; gap:6px;">
+          <i class="fas fa-sync-alt"></i> Refresh Board
+        </button>
+      </div>
     </div>
 
-    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:16px;">
-      ${orders.length ? orders.map(ord => `
-        <div class="section-card" style="padding:16px;">
-          <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
-            <strong style="font-size:15px;">#ORD-${ord.id}</strong>
-            <span class="badge badge-warning" style="font-size:11px;">${ord.status || 'PENDING'}</span>
-          </div>
-          <ul style="list-style:none; padding:0; margin:10px 0; font-size:13px; color:var(--text-main);">
-            ${(ord.items || []).map(it => `<li>• ${it.quantity}x ${it.product_name}</li>`).join('')}
-          </ul>
-          <button class="btn btn-primary btn-sm" style="width:100%; margin-top:10px;" onclick="updateOrderStatus(${ord.id}, 'READY')">
-            <i class="fas fa-check"></i> Mark Ready
-          </button>
+    <!-- Kitchen KPIs (Super Admin Style) -->
+    <div class="stats-grid fade-up delay-1">
+        <div class="stat-card">
+            <div class="stat-icon orange"><i class="fas fa-clock"></i></div>
+            <div class="stat-info">
+                <h3>Pending Tickets</h3>
+                <div class="stat-count">${orders.filter(o => o.status === 'PENDING').length}</div>
+                <div class="stat-trend" style="color:#f97316;"><i class="fas fa-exclamation-circle"></i> Needs Attention</div>
+            </div>
         </div>
-      `).join('') : '<div style="grid-column:1/-1; text-align:center; padding:40px; color:var(--text-muted);"><i class="fas fa-utensils" style="font-size:32px; margin-bottom:10px; opacity:0.4;"></i><br>No pending orders in the kitchen.</div>'}
+        <div class="stat-card">
+            <div class="stat-icon blue"><i class="fas fa-fire-burner"></i></div>
+            <div class="stat-info">
+                <h3>Preparing Now</h3>
+                <div class="stat-count">${orders.filter(o => o.status === 'PREPARING').length}</div>
+                <div class="stat-trend" style="color:#3b82f6;"><i class="fas fa-fire"></i> Currently Cooking</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon green"><i class="fas fa-check-double"></i></div>
+            <div class="stat-info">
+                <h3>Completed</h3>
+                <div class="stat-count">${orders.filter(o => o.status === 'COMPLETED' || o.status === 'READY').length}</div>
+                <div class="stat-trend" style="color:#10b981;"><i class="fas fa-thumbs-up"></i> Ready to Serve</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon gold"><i class="fas fa-utensils"></i></div>
+            <div class="stat-info">
+                <h3>Items to Cook</h3>
+                <div class="stat-count">${orders.filter(o => o.status !== 'COMPLETED' && o.status !== 'READY').reduce((sum, o) => sum + (o.items?.length || 0), 0)}</div>
+                <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-list-ol"></i> Total Active Items</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Responsive Grid for Order Tickets -->
+    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:20px; align-items:start;" class="fade-up delay-2">
+      ${(() => {
+        const activeOrders = orders.filter(o => o.status !== 'COMPLETED' && o.status !== 'READY');
+        return activeOrders.length ? activeOrders.map(ord => {
+        // Status Colors & Badges
+        const isCompleted = ord.status === 'COMPLETED' || ord.status === 'READY';
+        let badgeStyle = "background:rgba(249,115,22,0.12); color:#f97316;"; // Pending (Orange)
+        if (isCompleted) {
+            badgeStyle = "background:rgba(16,185,129,0.12); color:#10b981;"; // Completed (Green)
+        } else if (ord.status === 'PREPARING') {
+            badgeStyle = "background:rgba(59,130,246,0.12); color:#3b82f6;"; // Preparing (Blue)
+        }
+
+        return `
+        <div class="section-card" style="padding:0; overflow:hidden; border:1px solid ${isCompleted ? 'rgba(16,185,129,0.3)' : 'rgba(201,162,39,0.3)'};">
+          <!-- Ticket Header -->
+          <div style="background:${isCompleted ? '#f0fdf4' : '#faf8f3'}; padding:16px 20px; border-bottom:1px solid rgba(205,190,150,0.2); display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <strong style="font-size:16px; font-weight:800; color:var(--text-main);">${ord.id || '#ORD-XXXX'}</strong>
+              <div style="font-size:11px; color:var(--text-muted); margin-top:2px;"><i class="far fa-clock"></i> ${ord.time || 'Just now'} • ${ord.table || 'Takeout'}</div>
+            </div>
+            <span class="badge" style="font-size:11px; font-weight:700; ${badgeStyle}">
+              ${ord.status || 'PENDING'}
+            </span>
+          </div>
+          
+          <!-- Ticket Items -->
+          <div style="padding:16px 20px;">
+            <ul style="list-style:none; padding:0; margin:0;">
+              ${(ord.items || []).map((it, idx) => `
+                <li style="display:flex; align-items:flex-start; gap:12px; margin-bottom:${idx === (ord.items.length - 1) ? '0' : '12px'}; padding-bottom:${idx === (ord.items.length - 1) ? '0' : '12px'}; border-bottom:${idx === (ord.items.length - 1) ? 'none' : '1px dashed rgba(205,190,150,0.3)'};">
+                  <div style="font-size:16px; font-weight:800; color:#c9a227; min-width:32px; text-align:right;">
+                    ${it.qty || it.quantity}<span style="font-size:12px; color:var(--text-muted);">x</span>
+                  </div>
+                  <div>
+                    <div style="font-size:14px; font-weight:700; color:var(--text-main); line-height:1.3;">${it.name || it.product_name}</div>
+                    ${it.notes ? `<div style="font-size:12px; color:#f97316; margin-top:4px;"><i class="fas fa-exclamation-circle"></i> ${it.notes}</div>` : ''}
+                  </div>
+                </li>
+              `).join('')}
+            </ul>
+          </div>
+          
+          <!-- Ticket Footer / Actions -->
+          <div style="padding:14px 20px; background:#fcfcfc; border-top:1px solid rgba(205,190,150,0.15); text-align:center;">
+            ${isCompleted ? `
+              <div style="color:#10b981; font-size:13px; font-weight:700; display:flex; align-items:center; justify-content:center; gap:8px; padding:6px 0;">
+                <i class="fas fa-check-circle" style="font-size:16px;"></i> Order Ready
+              </div>
+            ` : ord.status === 'PREPARING' ? `
+              <button class="btn btn-primary" style="width:100%; font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:8px; background:#10b981; color:#fff; border:none;" onclick="updateOrderStatus('${ord.raw_id}', 'READY')">
+                <i class="fas fa-check"></i> Finish Order
+              </button>
+            ` : `
+              <button class="btn btn-outline" style="width:100%; font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:8px; color:#3b82f6; border-color:#3b82f6;" onclick="updateOrderStatus('${ord.raw_id}', 'PREPARING')">
+                <i class="fas fa-fire"></i> Accept Order
+              </button>
+            `}
+          </div>
+        </div>
+      `}).join('') : `
+        <div style="grid-column:1/-1; text-align:center; padding:60px 20px; background:#ffffff; border:1px dashed rgba(205,190,150,0.4); border-radius:12px;">
+          <div style="width:64px; height:64px; border-radius:50%; background:rgba(201,162,39,0.1); color:#c9a227; display:flex; align-items:center; justify-content:center; margin:0 auto 16px; font-size:24px;">
+            <i class="fas fa-mug-hot"></i>
+          </div>
+          <h3 style="font-size:16px; font-weight:700; color:var(--text-main); margin-bottom:8px;">All Clear!</h3>
+          <p style="font-size:13px; color:var(--text-muted); max-width:300px; margin:0 auto;">There are no active orders in the queue right now. Great job keeping the kitchen fast!</p>
+        </div>
+      `;
+      })()}
+    </div>
+  `;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KITCHEN LOGS (Completed Orders)
+// ─────────────────────────────────────────────────────────────────────────────
+async function renderKitchenLogs(c) {
+  c = c || document.getElementById('view-container') || document.getElementById('main-content');
+  const res = await Auth.fetch(`/api/v1/kitchen/orders?_t=${Date.now()}`);
+  const orders = res.ok ? await res.json() : [];
+  const completedOrders = orders.filter(o => o.status === 'COMPLETED' || o.status === 'READY');
+
+  c.innerHTML = `
+    <!-- Top Header Toolbar -->
+    <div class="toolbar fade-up" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:24px;">
+      <div>
+        <h2 style="font-size:22px; font-weight:800; color:var(--text-main); margin:0;">Completed Orders Log</h2>
+        <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">
+          Past tickets that have been prepared and served today.
+        </p>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <button class="btn btn-outline" onclick="renderKitchenLogs()" style="border-color:#10b981; color:#10b981; display:inline-flex; align-items:center; gap:6px;">
+          <i class="fas fa-sync-alt"></i> Refresh Logs
+        </button>
+      </div>
+    </div>
+
+    <!-- Responsive Grid for Order Tickets -->
+    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:20px; align-items:start;" class="fade-up delay-2">
+      ${completedOrders.length ? completedOrders.map(ord => {
+        return `
+        <div class="section-card" style="padding:0; overflow:hidden; border:1px solid rgba(16,185,129,0.3);">
+          <!-- Ticket Header -->
+          <div style="background:#f0fdf4; padding:16px 20px; border-bottom:1px solid rgba(205,190,150,0.2); display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <strong style="font-size:16px; font-weight:800; color:var(--text-main);">${ord.id || '#ORD-XXXX'}</strong>
+              <div style="font-size:11px; color:var(--text-muted); margin-top:2px;"><i class="far fa-clock"></i> ${ord.time || 'Just now'} • ${ord.table || 'Takeout'}</div>
+            </div>
+            <span class="badge" style="font-size:11px; font-weight:700; background:rgba(16,185,129,0.12); color:#10b981;">
+              ${ord.status || 'COMPLETED'}
+            </span>
+          </div>
+          
+          <!-- Ticket Items -->
+          <div style="padding:16px 20px;">
+            <ul style="list-style:none; padding:0; margin:0;">
+              ${(ord.items || []).map((it, idx) => `
+                <li style="display:flex; align-items:flex-start; gap:12px; margin-bottom:${idx === (ord.items.length - 1) ? '0' : '12px'}; padding-bottom:${idx === (ord.items.length - 1) ? '0' : '12px'}; border-bottom:${idx === (ord.items.length - 1) ? 'none' : '1px dashed rgba(205,190,150,0.3)'};">
+                  <div style="font-size:16px; font-weight:800; color:#10b981; min-width:32px; text-align:right;">
+                    ${it.qty || it.quantity}<span style="font-size:12px; color:var(--text-muted);">x</span>
+                  </div>
+                  <div>
+                    <div style="font-size:14px; font-weight:700; color:var(--text-main); line-height:1.3; text-decoration: line-through;">${it.name || it.product_name}</div>
+                  </div>
+                </li>
+              `).join('')}
+            </ul>
+          </div>
+        </div>
+      `}).join('') : `
+        <div style="grid-column:1/-1; text-align:center; padding:60px 20px; background:#ffffff; border:1px dashed rgba(205,190,150,0.4); border-radius:12px;">
+          <div style="width:64px; height:64px; border-radius:50%; background:rgba(16,185,129,0.1); color:#10b981; display:flex; align-items:center; justify-content:center; margin:0 auto 16px; font-size:24px;">
+            <i class="fas fa-check-double"></i>
+          </div>
+          <h3 style="font-size:16px; font-weight:700; color:var(--text-main); margin-bottom:8px;">No Completed Orders Yet</h3>
+          <p style="font-size:13px; color:var(--text-muted); max-width:300px; margin:0 auto;">Orders that have been fully prepared and marked as ready will appear here.</p>
+        </div>
+      `}
     </div>
   `;
 }
@@ -1113,27 +2674,39 @@ async function updateOrderStatus(orderId, newStatus) {
       body: JSON.stringify({ status: newStatus })
     });
     if (res.ok) {
-      Utils.showToast(`Order #${orderId} marked as ${newStatus}`, "success");
       renderKitchen();
-      localStorage.setItem("RESTOTRACK_SYNC_KITCHEN", Date.now());
+      localStorage.setItem("RESTOTRACK_SYNC_KITCHEN", JSON.stringify({ timestamp: Date.now(), orderId: orderId, status: newStatus }));
     }
   } catch (err) {
-    Utils.showToast("Failed to update status", "danger");
+    console.error("Failed to update status", err);
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 6. TRANSACTIONS LISTING
+// 6. TRANSACTIONS LISTING (TODAY'S ORDERS)
 // ─────────────────────────────────────────────────────────────────────────────
 async function renderTransactions(c) {
+  c = c || document.getElementById("view-container");
+  if (!c) return;
+
   const res = await Auth.fetch("/api/v1/transactions?limit=50");
   const list = res.ok ? await res.json() : [];
 
+  // Cache for quick modal lookups
+  window._recentTransactionsCache = list;
+
   c.innerHTML = `
     <div class="section-card">
-      <div class="section-head">
-        <h2>Order Transactions</h2>
-        <span style="font-size:13px; color:var(--text-muted);">${list.length} recent transactions</span>
+      <div class="section-head" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+        <div>
+          <h2>Order Transactions</h2>
+          <span style="font-size:13px; color:var(--text-muted);">${list.length} recent transactions</span>
+        </div>
+        <div>
+          <button class="btn btn-outline btn-sm" onclick="renderTransactions()" style="border-color:#c9a227; color:#c9a227; display:inline-flex; align-items:center; gap:6px;">
+            <i class="fas fa-sync-alt"></i> Refresh Orders
+          </button>
+        </div>
       </div>
       <div class="table-wrap">
         <table>
@@ -1145,25 +2718,220 @@ async function renderTransactions(c) {
               <th>Items</th>
               <th>Total Net</th>
               <th>Status</th>
+              <th style="text-align:center;">Action</th>
             </tr>
           </thead>
           <tbody id="tx-tbody">
-            ${list.length ? list.map(tx => `
-              <tr>
-                <td style="color:var(--text-muted);">#${tx.id}</td>
-                <td style="color:var(--text-muted); font-size:13px;">${tx.created_at ? new Date(tx.created_at).toLocaleString() : '—'}</td>
-                <td><strong style="font-size:13px;">${tx.cashier || 'Staff'}</strong></td>
-                <td style="color:var(--text-muted); font-size:13px;">${(tx.items || []).length} items</td>
-                <td><strong style="color:#c9a227; font-size:13px;">${Utils.formatCurrency(tx.net_amount)}</strong></td>
-                <td><span class="badge badge-success" style="font-size:11px; font-weight:700;">${tx.status || 'COMPLETED'}</span></td>
-              </tr>
-            `).join('') : '<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-muted);">No transaction logs recorded yet.</td></tr>'}
+            ${list.length ? list.map(tx => {
+              const statusUpper = (tx.status || 'COMPLETED').toUpperCase();
+              let statusBadge = '';
+              if (statusUpper === 'PENDING') {
+                statusBadge = `<span class="badge" style="background:#fef3c7; color:#b45309; border:1px solid rgba(245,158,11,0.3); font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><i class="far fa-clock"></i> PENDING</span>`;
+              } else if (statusUpper === 'PREPARING') {
+                statusBadge = `<span class="badge" style="background:#dbeafe; color:#1e40af; border:1px solid rgba(59,130,246,0.3); font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><i class="fas fa-fire"></i> PREPARING</span>`;
+              } else if (statusUpper === 'REJECTED' || statusUpper === 'CANCELLED') {
+                statusBadge = `<span class="badge" style="background:#fee2e2; color:#b91c1c; border:1px solid rgba(239,68,68,0.3); font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><i class="fas fa-times-circle"></i> ${statusUpper}</span>`;
+              } else {
+                statusBadge = `<span class="badge badge-success" style="font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><i class="fas fa-check-circle"></i> ${statusUpper}</span>`;
+              }
+
+              let actionHtml = '';
+              if (statusUpper === 'PENDING' || statusUpper === 'PREPARING') {
+                actionHtml = `
+                  <div style="display:flex; justify-content:center; align-items:center; gap:6px;">
+                    <button type="button" class="btn btn-sm" onclick="promptRejectOrder(${tx.id})" style="background:#ef4444; color:#ffffff; border:none; border-radius:6px; padding:5px 12px; font-size:11px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:5px; box-shadow:0 2px 5px rgba(239,68,68,0.25); transition:0.2s;" onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'" title="Reject order if customer cancels">
+                      <i class="fas fa-ban"></i> Reject
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline" onclick="changeOrderStatusDirect(${tx.id}, 'completed')" style="border-color:#10b981; color:#10b981; border-radius:6px; padding:5px 10px; font-size:11px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:4px; transition:0.2s;" onmouseover="this.style.background='rgba(16,185,129,0.08)'" onmouseout="this.style.background='transparent'" title="Mark as Completed">
+                      <i class="fas fa-check"></i> Complete
+                    </button>
+                  </div>
+                `;
+              } else if (statusUpper === 'REJECTED' || statusUpper === 'CANCELLED') {
+                actionHtml = `<span style="display:inline-flex; align-items:center; gap:4px; color:#ef4444; font-size:12px; font-weight:700;"><i class="fas fa-ban"></i> Cancelled</span>`;
+              } else {
+                actionHtml = `<span style="display:inline-flex; align-items:center; gap:4px; color:#10b981; font-size:12px; font-weight:700;"><i class="fas fa-check-double"></i> Completed</span>`;
+              }
+
+              const itemsSummary = (tx.items || []).map(it => `${it.quantity}x ${it.name}`).join(', ');
+
+              return `
+                <tr>
+                  <td style="color:var(--text-muted); font-weight:700;">#${tx.id}</td>
+                  <td style="color:var(--text-muted); font-size:13px;">${tx.created_at ? new Date(tx.created_at).toLocaleString() : '—'}</td>
+                  <td><strong style="font-size:13px;">${tx.cashier || 'Staff'}</strong></td>
+                  <td style="color:var(--text-main); font-size:13px;" title="${itemsSummary || 'No items'}">
+                    <span style="cursor:pointer; color:#c9a227; font-weight:600;" onclick="viewOrderItemsModal(${tx.id})">
+                      ${(tx.items || []).length} items <i class="fas fa-info-circle" style="font-size:11px; margin-left:2px;"></i>
+                    </span>
+                    ${itemsSummary ? `<div style="font-size:11px; color:var(--text-muted); max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${itemsSummary}</div>` : ''}
+                  </td>
+                  <td><strong style="color:#c9a227; font-size:13px;">${Utils.formatCurrency(tx.net_amount)}</strong></td>
+                  <td>${statusBadge}</td>
+                  <td style="text-align:center;">${actionHtml}</td>
+                </tr>
+              `;
+            }).join('') : '<tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-muted);">No transaction logs recorded yet.</td></tr>'}
           </tbody>
         </table>
       </div>
     </div>
   `;
 }
+
+window.viewOrderItemsModal = function(txId) {
+  const list = window._recentTransactionsCache || [];
+  const tx = list.find(t => t.id === txId);
+  if (!tx) return;
+
+  const items = tx.items || [];
+  Utils.openModal(`
+    <div style="padding:4px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h3 style="font-size:16px; font-weight:800; margin:0; color:var(--text-main);">Order #${tx.id} Details</h3>
+        <span class="badge" style="font-size:11px; font-weight:700;">${(tx.status || 'completed').toUpperCase()}</span>
+      </div>
+      <div style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">
+        <span>Cashier: <strong>${tx.cashier || 'Staff'}</strong></span> &bull; 
+        <span>Time: <strong>${tx.created_at ? new Date(tx.created_at).toLocaleString() : '—'}</strong></span>
+      </div>
+      <div style="max-height:220px; overflow-y:auto; border:1px solid rgba(205,190,150,0.25); border-radius:8px; padding:10px 14px; margin-bottom:16px;">
+        ${items.length ? items.map(it => `
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px dashed rgba(205,190,150,0.2); font-size:13px;">
+            <div><strong style="color:#c9a227;">${it.quantity}x</strong> <span style="font-weight:600;">${it.name}</span></div>
+            <span style="font-weight:700; color:var(--text-main); font-size:12px;">₱${(it.unit_price * it.quantity).toFixed(2)}</span>
+          </div>
+        `).join('') : '<div style="color:var(--text-muted); text-align:center; padding:12px;">No items found.</div>'}
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <span style="font-size:13px; font-weight:600; color:var(--text-muted);">Total Net:</span>
+        <strong style="font-size:16px; color:#c9a227;">₱${Number(tx.net_amount || 0).toFixed(2)}</strong>
+      </div>
+      <div style="display:flex; justify-content:flex-end;">
+        <button type="button" class="btn btn-outline" onclick="Utils.closeModal()" style="padding:6px 16px; font-size:13px;">Close</button>
+      </div>
+    </div>
+  `);
+};
+
+window.promptRejectOrder = function(txId) {
+  const list = window._recentTransactionsCache || [];
+  const existingTx = list.find(t => t.id === txId);
+  if (existingTx && (existingTx.status === 'rejected' || existingTx.status === 'cancelled')) {
+    Utils.showToast(`Order #${txId} is already rejected. Once rejected, the order status is locked and cannot be changed.`, "warning");
+    return;
+  }
+
+  Utils.openModal(`
+    <div style="padding:4px;">
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;">
+        <div style="width:44px; height:44px; border-radius:50%; background:rgba(239,68,68,0.12); color:#ef4444; display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0;">
+          <i class="fas fa-exclamation-triangle"></i>
+        </div>
+        <div>
+          <h3 style="font-size:17px; font-weight:800; color:var(--text-main); margin:0;">Reject / Cancel Order #${txId}</h3>
+          <p style="font-size:12px; color:var(--text-muted); margin:3px 0 0 0;">Customer cancelled order. This will void the transaction.</p>
+        </div>
+      </div>
+
+      <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:12px; margin-bottom:16px; font-size:12px; color:#991b1b; line-height:1.4;">
+        <i class="fas fa-info-circle"></i> <strong>Note:</strong> Marking this order as <strong>REJECTED</strong> is permanent. Once rejected, the order status cannot be changed.
+      </div>
+
+      <div class="form-group" style="margin-bottom:16px;">
+        <label style="display:block; font-size:12px; font-weight:700; color:var(--text-main); margin-bottom:6px;">Cancellation Reason <span style="color:#ef4444;">*</span></label>
+        <select id="reject-reason-select" class="form-control" style="width:100%; padding:9px 12px; border-radius:8px; border:1px solid rgba(205,190,150,0.4); font-size:13px; background:#fff;" onchange="if(this.value==='Other'){document.getElementById('reject-custom-reason-wrap').style.display='block';}else{document.getElementById('reject-custom-reason-wrap').style.display='none';}">
+          <option value="Customer requested cancellation / changed mind">Customer requested cancellation / changed mind</option>
+          <option value="Customer ordered wrong items">Customer ordered wrong items</option>
+          <option value="Customer walked out / left">Customer walked out / left</option>
+          <option value="Items out of stock">Items out of stock</option>
+          <option value="Duplicate order">Duplicate order</option>
+          <option value="Other">Other reason...</option>
+        </select>
+      </div>
+
+      <div id="reject-custom-reason-wrap" class="form-group" style="display:none; margin-bottom:16px;">
+        <label style="display:block; font-size:12px; font-weight:700; color:var(--text-main); margin-bottom:6px;">Custom Reason</label>
+        <input type="text" id="reject-custom-reason" class="form-control" placeholder="Specify cancellation reason..." style="width:100%; padding:9px 12px; border-radius:8px; border:1px solid rgba(205,190,150,0.4); font-size:13px;">
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
+        <button type="button" class="btn btn-outline" onclick="Utils.closeModal()" style="padding:8px 18px; font-size:13px; font-weight:600;">Back</button>
+        <button type="button" class="btn" onclick="submitRejectOrder(${txId})" style="background:#ef4444; color:#fff; border:none; padding:8px 20px; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 6px rgba(239,68,68,0.3);">
+          <i class="fas fa-times-circle"></i> Confirm Rejection
+        </button>
+      </div>
+    </div>
+  `);
+};
+
+window.submitRejectOrder = async function(txId) {
+  const selectEl = document.getElementById("reject-reason-select");
+  const customEl = document.getElementById("reject-custom-reason");
+  let reason = selectEl ? selectEl.value : "Customer cancelled order";
+  if (reason === "Other" && customEl && customEl.value.trim()) {
+    reason = customEl.value.trim();
+  }
+
+  try {
+    const res = await Auth.fetch(`/api/v1/transactions/${txId}/status`, {
+      method: "PUT",
+      body: JSON.stringify({
+        status: "rejected",
+        reason: reason
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to reject order.");
+    }
+
+    Utils.closeModal();
+    Utils.showToast(`✅ Order #${txId} was successfully rejected / cancelled.`, "success");
+
+    try {
+      localStorage.setItem("RESTOTRACK_SYNC_KITCHEN", JSON.stringify({ timestamp: Date.now(), orderId: txId, status: "rejected" }));
+    } catch (e) {}
+
+    renderTransactions(document.getElementById("view-container"));
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+};
+
+window.changeOrderStatusDirect = async function(txId, newStatus) {
+  const list = window._recentTransactionsCache || [];
+  const existingTx = list.find(t => t.id === txId);
+  if (existingTx && (existingTx.status === 'rejected' || existingTx.status === 'cancelled')) {
+    Utils.showToast(`Order #${txId} is already rejected. Once rejected, the order status cannot be changed.`, "warning");
+    return;
+  }
+  try {
+    const res = await Auth.fetch(`/api/v1/transactions/${txId}/status`, {
+      method: "PUT",
+      body: JSON.stringify({
+        status: newStatus,
+        reason: `Marked ${newStatus} by Cashier`
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to update status.");
+    }
+
+    Utils.showToast(`✅ Order #${txId} marked as ${newStatus.toUpperCase()}.`, "success");
+
+    try {
+      localStorage.setItem("RESTOTRACK_SYNC_KITCHEN", JSON.stringify({ timestamp: Date.now(), orderId: txId, status: newStatus }));
+    } catch (e) {}
+
+    renderTransactions(document.getElementById("view-container"));
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 7. USER MANAGEMENT (BRANCH ADMIN)
@@ -1238,6 +3006,7 @@ async function renderUsers(c) {
               <th>Email</th>
               <th>Assigned Role</th>
               <th>Status</th>
+              <th style="text-align:right;">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -1252,14 +3021,86 @@ async function renderUsers(c) {
                     ${u.is_active ? 'Active' : 'Inactive'}
                   </span>
                 </td>
+                <td style="text-align:right;">
+                  <div style="display:inline-flex; gap:6px; justify-content:flex-end;">
+                    <button class="btn btn-outline btn-sm" onclick="toggleStaffStatus(${u.id}, ${u.is_active})" style="padding:4px 8px; font-size:12px;" title="${u.is_active ? 'Deactivate User' : 'Activate User'}">
+                      <i class="fas ${u.is_active ? 'fa-user-slash' : 'fa-user-check'}"></i> ${u.is_active ? 'Deactivate' : 'Activate'}
+                    </button>
+                    <button class="btn btn-danger btn-sm" onclick="confirmDeleteStaff(${u.id}, '${u.username.replace(/'/g, "\\'")}')" style="padding:4px 8px; font-size:12px;" title="Delete Staff Account">
+                      <i class="fas fa-trash-alt"></i> Delete
+                    </button>
+                  </div>
+                </td>
               </tr>
-            `).join('') : '<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-muted);">No staff registered in this branch.</td></tr>'}
+            `).join('') : '<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-muted);">No staff registered in this branch.</td></tr>'}
           </tbody>
         </table>
       </div>
     </div>
   `;
 }
+
+window.confirmDeleteStaff = function(id, username) {
+  Utils.openModal("Confirm Staff Deletion", `
+    <div style="text-align:center; padding:10px 0;">
+      <div style="width:60px; height:60px; border-radius:50%; background:rgba(239,68,68,0.12); color:#ef4444; display:flex; align-items:center; justify-content:center; margin:0 auto 16px; font-size:24px;">
+        <i class="fas fa-exclamation-triangle"></i>
+      </div>
+      <h3 style="font-size:17px; font-weight:800; color:var(--text-main); margin-bottom:8px;">Delete Staff Account?</h3>
+      <p style="font-size:14px; color:var(--text-muted); line-height:1.5; margin-bottom:0;">
+        Are you sure you want to permanently delete user account <strong style="color:var(--text-main);">@${username}</strong>? This action cannot be undone.
+      </p>
+    </div>
+  `, `
+    <div style="display:flex; justify-content:flex-end; gap:10px; width:100%;">
+      <button class="btn btn-outline" onclick="Utils.closeModal()">Cancel</button>
+      <button class="btn btn-danger" onclick="executeDeleteStaff(${id})" id="btn-confirm-del"><i class="fas fa-trash-alt"></i> Delete User</button>
+    </div>
+  `);
+};
+
+window.executeDeleteStaff = async function(id) {
+  const btn = document.getElementById("btn-confirm-del");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Deleting...`;
+  }
+  try {
+    const res = await Auth.fetch(`/api/v1/users/${id}`, {
+      method: "DELETE"
+    });
+    if (!res.ok && res.status !== 204) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to delete user.");
+    }
+    Utils.showToast("Staff account deleted successfully.", "success");
+    Utils.closeModal();
+    renderUsers();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<i class="fas fa-trash-alt"></i> Delete User`;
+    }
+  }
+};
+
+window.toggleStaffStatus = async function(id, currentStatus) {
+  try {
+    const res = await Auth.fetch(`/api/v1/users/${id}/status`, {
+      method: "PUT"
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to update status.");
+    }
+    const data = await res.json();
+    Utils.showToast(data.message || "User status updated!", "success");
+    renderUsers();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+};
 
 function openAddStaffModal() {
   Utils.openModal("Create New Branch Staff", `
@@ -1294,6 +3135,7 @@ function openAddStaffModal() {
             <option value="KITCHEN">Kitchen Staff</option>
             <option value="INVENTORY">Inventory Staff</option>
             <option value="MANAGER">Manager</option>
+            <option value="CUSTOMER">Customer</option>
           </select>
         </div>
         <div class="input-group">
@@ -1461,86 +3303,102 @@ async function renderSettings(c) {
 // ─────────────────────────────────────────────────────────────────────────────
 // 10. SUPPLIERS MANAGEMENT
 // ─────────────────────────────────────────────────────────────────────────────
-let cachedSuppliers = [
-  { id: 1, name: "San Miguel Foods Inc.", contact: "Mario Batali", phone: "0917-889-2311", email: "orders@sanmiguelfoods.ph", category: "Poultry & Meat", terms: "Net 15", status: "Active" },
-  { id: 2, name: "Magnolia Fresh Farm", contact: "Elena Ramos", phone: "0920-554-1290", email: "sales@magnoliadairy.com", category: "Dairy & Eggs", terms: "Net 30", status: "Active" },
-  { id: 3, name: "Baguio Greens Produce", contact: "Carlos Tan", phone: "0918-332-9011", email: "carlos@baguiogreens.ph", category: "Fresh Produce", terms: "COD", status: "Active" },
-  { id: 4, name: "Golden Cup Packaging", contact: "Sarah Chua", phone: "0922-811-4432", email: "inquiry@goldencup.com.ph", category: "Packaging & Disposables", terms: "Net 15", status: "Active" }
-];
+let globalSuppliers = [];
 
 async function renderSuppliers(c) {
-  c.innerHTML = `
-    <div class="stats-grid">
-      <div class="stat-card">
-        <div class="stat-icon gold"><i class="fas fa-truck"></i></div>
-        <div class="stat-info">
-          <h3>Active Suppliers</h3>
-          <div class="stat-count" style="color:#c9a227;">${cachedSuppliers.length}</div>
-          <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-handshake"></i> Verified Vendors</div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon green"><i class="fas fa-check-circle"></i></div>
-        <div class="stat-info">
-          <h3>Poultry & Meat</h3>
-          <div class="stat-count" style="color:#10b981;">1</div>
-          <div class="stat-trend" style="color:#10b981;">Primary Vendor</div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon orange"><i class="fas fa-leaf"></i></div>
-        <div class="stat-info">
-          <h3>Fresh Produce</h3>
-          <div class="stat-count" style="color:#f97316;">1</div>
-          <div class="stat-trend" style="color:#f97316;">Farm Direct</div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon purple"><i class="fas fa-box-open"></i></div>
-        <div class="stat-info">
-          <h3>Packaging & Misc</h3>
-          <div class="stat-count" style="color:#9333ea;">2</div>
-          <div class="stat-trend" style="color:#9333ea;">Disposables</div>
-        </div>
-      </div>
-    </div>
+  if (!c) c = document.getElementById("content-area") || document.querySelector('.content-area') || document.querySelector('main');
+  c.innerHTML = `<div style="padding:40px; text-align:center; color:var(--text-muted);">
+    <i class="fas fa-spinner fa-spin" style="font-size:24px; margin-bottom:10px;"></i>
+    <div>Loading suppliers...</div>
+  </div>`;
 
-    <div class="toolbar fade-up delay-1" style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; flex-wrap:wrap;">
-      <div class="search-wrap" style="position:relative; flex:1; max-width:320px;">
-        <i class="fas fa-search" style="position:absolute; left:14px; top:50%; transform:translateY(-50%); color:var(--text-muted);"></i>
-        <input type="text" id="supp-search" class="input-field" placeholder="Search suppliers..." style="padding-left:38px; width:100%;" oninput="filterSuppliersTable()">
-      </div>
-      <button class="btn btn-primary" onclick="openAddSupplierModal()" style="display:inline-flex; align-items:center; gap:8px;">
-        <i class="fas fa-plus"></i> Add New Supplier
-      </button>
-    </div>
+  try {
+    const statsRes = await Auth.fetch("/api/v1/suppliers/stats");
+    const suppRes = await Auth.fetch("/api/v1/suppliers");
+    
+    if (!statsRes.ok || !suppRes.ok) {
+      throw new Error("Failed to load suppliers data.");
+    }
+    
+    const statsData = await statsRes.json();
+    const suppliersData = await suppRes.json();
+    globalSuppliers = suppliersData;
 
-    <div class="section-card">
-      <div class="section-head">
-        <h2>Registered Supplier Directory</h2>
-        <span style="font-size:13px; color:var(--text-muted);">${cachedSuppliers.length} vendor partners</span>
+    let cats = Object.keys(statsData.categories || {}).map(k => ({ name: k, count: statsData.categories[k] }));
+    cats.sort((a, b) => b.count - a.count);
+    const top3 = cats.slice(0, 3);
+    const icons = ["green", "orange", "purple"];
+    const faIcons = ["fa-check-circle", "fa-leaf", "fa-box-open"];
+
+    let categoryCardsHtml = top3.map((cat, i) => `
+      <div class="stat-card">
+        <div class="stat-icon ${icons[i % icons.length]}"><i class="fas ${faIcons[i % faIcons.length]}"></i></div>
+        <div class="stat-info">
+          <h3>${cat.name || 'General'}</h3>
+          <div class="stat-count">${cat.count}</div>
+          <div class="stat-trend">Category</div>
+        </div>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Supplier Name</th>
-              <th>Contact Person</th>
-              <th>Phone Number</th>
-              <th>Email</th>
-              <th>Category Supplied</th>
-              <th>Terms</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody id="supp-tbody">
-            ${renderSupplierRows(cachedSuppliers)}
-          </tbody>
-        </table>
+    `).join('');
+
+    c.innerHTML = `
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-icon gold"><i class="fas fa-truck"></i></div>
+          <div class="stat-info">
+            <h3>Active Suppliers</h3>
+            <div class="stat-count" style="color:#c9a227;">${statsData.active_suppliers}</div>
+            <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-handshake"></i> Verified Vendors</div>
+          </div>
+        </div>
+        ${categoryCardsHtml}
       </div>
-    </div>
-  `;
+
+      <div class="toolbar fade-up delay-1" style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; flex-wrap:wrap;">
+        <div class="search-wrap" style="position:relative; flex:1; max-width:320px;">
+          <i class="fas fa-search" style="position:absolute; left:14px; top:50%; transform:translateY(-50%); color:var(--text-muted);"></i>
+          <input type="text" id="supp-search" class="input-field" placeholder="Search suppliers..." style="padding-left:38px; width:100%;" oninput="filterSuppliersTable()">
+        </div>
+        <button class="btn btn-primary" onclick="openAddSupplierModal()" style="display:inline-flex; align-items:center; gap:8px;">
+          <i class="fas fa-plus"></i> Add New Supplier
+        </button>
+      </div>
+
+      <div class="section-card">
+        <div class="section-head">
+          <h2>Registered Supplier Directory</h2>
+          <span style="font-size:13px; color:var(--text-muted);">${globalSuppliers.length} vendor partners</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Supplier Name</th>
+                <th>Contact Person</th>
+                <th>Phone Number</th>
+                <th>Email</th>
+                <th>Category Supplied</th>
+                <th>Terms</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="supp-tbody">
+              ${renderSupplierRows(globalSuppliers)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    console.error("Suppliers Error:", err);
+    c.innerHTML = `
+      <div style="padding:40px; text-align:center; color:var(--danger);">
+        <i class="fas fa-exclamation-triangle" style="font-size:24px; margin-bottom:10px;"></i>
+        <div>Unable to load suppliers. Please try again.</div>
+      </div>
+    `;
+  }
 }
 
 function renderSupplierRows(suppliers) {
@@ -1550,12 +3408,12 @@ function renderSupplierRows(suppliers) {
   return suppliers.map(s => `
     <tr>
       <td style="color:var(--text-muted);">#${s.id}</td>
-      <td><strong style="color:var(--text-main); font-size:13px;">${s.name}</strong></td>
-      <td style="color:var(--text-muted); font-size:13px;">${s.contact || '—'}</td>
-      <td><span style="font-family:monospace; font-size:12px; color:var(--text-muted);">${s.phone || '—'}</span></td>
+      <td><strong style="color:var(--text-main); font-size:13px;">${s.supplier_name}</strong></td>
+      <td style="color:var(--text-muted); font-size:13px;">${s.contact_person || '—'}</td>
+      <td><span style="font-family:monospace; font-size:12px; color:var(--text-muted);">${s.contact_number || '—'}</span></td>
       <td style="color:var(--text-muted); font-size:13px;">${s.email || '—'}</td>
       <td><span class="badge badge-info" style="font-size:11px; font-weight:700;">${s.category || 'General'}</span></td>
-      <td style="color:var(--text-muted); font-size:12px;">${s.terms || 'COD'}</td>
+      <td style="color:var(--text-muted); font-size:12px;">${s.notes || '—'}</td>
       <td>
         <span class="badge ${s.status === 'Active' ? 'badge-success' : 'badge-danger'}" style="font-size:11px; font-weight:700;">
           ${s.status || 'Active'}
@@ -1567,9 +3425,11 @@ function renderSupplierRows(suppliers) {
 
 function filterSuppliersTable() {
   const q = (document.getElementById("supp-search")?.value || "").toLowerCase();
-  const filtered = cachedSuppliers.filter(s =>
-    (s.name && s.name.toLowerCase().includes(q)) ||
-    (s.contact && s.contact.toLowerCase().includes(q)) ||
+  const filtered = globalSuppliers.filter(s =>
+    (s.supplier_name && s.supplier_name.toLowerCase().includes(q)) ||
+    (s.contact_person && s.contact_person.toLowerCase().includes(q)) ||
+    (s.contact_number && s.contact_number.toLowerCase().includes(q)) ||
+    (s.email && s.email.toLowerCase().includes(q)) ||
     (s.category && s.category.toLowerCase().includes(q))
   );
   const tbody = document.getElementById("supp-tbody");
@@ -1607,7 +3467,7 @@ function openAddSupplierModal() {
   `, `<button class="btn btn-primary" onclick="submitAddSupplier()"><i class="fas fa-save"></i> Save Supplier</button>`);
 }
 
-function submitAddSupplier() {
+async function submitAddSupplier() {
   const name = document.getElementById("sp-name")?.value.trim();
   const contact = document.getElementById("sp-contact")?.value.trim();
   const phone = document.getElementById("sp-phone")?.value.trim();
@@ -1619,18 +3479,33 @@ function submitAddSupplier() {
     return;
   }
 
-  const newSupplier = {
-    id: cachedSuppliers.length + 1,
-    name, contact, phone, email,
+  const payload = {
+    supplier_name: name,
+    contact_person: contact,
+    contact_number: phone,
+    email: email,
     category: category || "General",
-    terms: "Net 30",
     status: "Active"
   };
 
-  cachedSuppliers.push(newSupplier);
-  Utils.showToast("Supplier registered successfully!", "success");
-  Utils.closeModal();
-  renderSuppliers();
+  try {
+    const res = await Auth.fetch("/api/v1/suppliers", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to add supplier");
+    }
+
+    Utils.showToast("Supplier registered successfully!", "success");
+    Utils.closeModal();
+    renderSuppliers();
+  } catch (error) {
+    console.error(error);
+    Utils.showToast(error.message, "danger");
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1744,7 +3619,10 @@ function openCreatePOModal() {
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Supplier <span style="color:var(--danger);">*</span></label>
         <select id="po-supplier" class="input-field" style="width:100%;">
-          ${cachedSuppliers.map(s => `<option value="${s.name}">${s.name} (${s.category})</option>`).join('')}
+          ${globalSuppliers.length > 0
+            ? globalSuppliers.map(s => `<option value="${s.supplier_name}">${s.supplier_name}${s.category ? ' (' + s.category + ')' : ''}</option>`).join('')
+            : '<option value="">No suppliers available</option>'
+          }
         </select>
       </div>
       <div class="input-group" style="margin-bottom:14px;">
@@ -1942,13 +3820,1007 @@ function submitLogWastage() {
 // CROSS-TAB REAL-TIME SYNCHRONIZATION
 // ─────────────────────────────────────────────────────────────────────────────
 window.addEventListener("storage", (e) => {
-  if (e.key === "RESTOTRACK_SYNC_TX" || e.key === "RESTOTRACK_SYNC_KITCHEN") {
-    const role = Auth.getRole();
+  const role = Auth.getRole();
+  if (e.key === "RESTOTRACK_SYNC_TX") {
     if (role === "kitchen") {
       renderKitchen();
-      Utils.showToast("New order received in kitchen!", "info");
+    }
+  }
+  
+  if (e.key === "RESTOTRACK_SYNC_KITCHEN") {
+    if (role === "kitchen") {
+      renderKitchen();
     } else if (role === "cashier") {
-      Utils.showToast("Kitchen order status updated", "info");
+      try {
+        const payload = JSON.parse(e.newValue);
+        if (payload.status === "READY" || payload.status === "COMPLETED") {
+          Utils.showToast(`🔔 Kitchen: Order #${payload.orderId} is READY TO GO!`, "success");
+        } else if (payload.status === "PREPARING") {
+          Utils.showToast(`Kitchen accepted Order #${payload.orderId}`, "info");
+        } else {
+          Utils.showToast("Kitchen order status updated", "info");
+        }
+      } catch (err) {
+        Utils.showToast("Kitchen order status updated", "info");
+      }
     }
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CUSTOMER ONLINE ORDERS INTEGRATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+let pendingOnlineOrders = [];
+
+function startPOSOnlineOrdersPolling() {
+  fetchPendingOnlineOrders();
+  window.posOnlineOrdersInterval = setInterval(fetchPendingOnlineOrders, 10000);
+}
+
+async function fetchPendingOnlineOrders() {
+  try {
+    const res = await Auth.fetch("/api/v1/customer-orders/pending");
+    if (res.ok) {
+      pendingOnlineOrders = await res.json();
+      updateOnlineOrdersBadge();
+    }
+  } catch (err) {
+    console.error("Error polling online orders:", err);
+  }
+}
+
+function updateOnlineOrdersBadge() {
+  const badge1 = document.getElementById("pos-online-orders-badge");
+  const badge2 = document.getElementById("cashier-orders-badge");
+  const count = (pendingOnlineOrders && pendingOnlineOrders.length) || 0;
+  [badge1, badge2].forEach(b => {
+    if (!b) return;
+    if (count > 0) {
+      b.textContent = count;
+      b.style.display = "inline-block";
+    } else {
+      b.style.display = "none";
+    }
+  });
+}
+
+function openOnlineOrdersModal() {
+  let ordersHtml = "<p style='color:var(--text-muted);'>No pending online orders.</p>";
+  if (pendingOnlineOrders.length > 0) {
+    ordersHtml = pendingOnlineOrders.map(o => {
+      let itemsHtml = o.items.map(it => `<li><strong style="color:#c9a227;">${it.quantity}x</strong> ${it.name} <span style="color:var(--text-muted); font-size:12px;">(₱${it.price})</span></li>`).join('');
+      return `
+        <div style="padding:16px; border:1px solid rgba(205,190,150,0.3); border-radius:12px; margin-bottom:12px; background:#fff;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+            <div>
+              <span style="background:#c9a227; color:#18181b; font-size:11px; padding:3px 8px; border-radius:4px; font-weight:bold; margin-right:8px;">TABLE ${o.table_number || 'Takeout'}</span>
+              <strong style="color:var(--text-main); font-size:14px;">${o.order_number}</strong>
+            </div>
+            <div style="font-size:12px; color:var(--text-muted);">
+              ${new Date(o.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+            </div>
+          </div>
+          <div style="font-size:13px; color:var(--text-main); margin-bottom:12px;">
+            <div><i class="fas fa-user" style="color:var(--text-muted); margin-right:6px;"></i> <strong>${o.customer_name}</strong></div>
+            <div><i class="fas fa-chair" style="color:var(--text-muted); margin-right:6px;"></i> ${o.table_number || o.order_type}</div>
+            ${o.notes ? `<div style="background:#fef3c7; color:#92400e; padding:4px 8px; border-radius:6px; font-size:11px; margin-top:6px;"><i class="fas fa-comment"></i> ${o.notes}</div>` : ''}
+          </div>
+          <ul style="list-style:none; padding:0; margin:0 0 16px 0; font-size:13px;">
+            ${itemsHtml}
+          </ul>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="font-size:16px; font-weight:800; color:#c9a227;">₱${parseFloat(o.total_amount).toFixed(2)}</div>
+            <button onclick="processOnlineOrder(${o.id})" class="btn btn-primary btn-sm" style="border-radius:8px; font-weight:bold;">
+              <i class="fas fa-shopping-cart"></i> PROCESS ORDER
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  Utils.openModal("Pending Online Orders", `
+    <div style="max-height:60vh; overflow-y:auto; padding-right:8px;">
+      ${ordersHtml}
+    </div>
+  `);
+}
+
+function processOnlineOrder(orderId) {
+  const order = pendingOnlineOrders.find(o => o.id === orderId);
+  if (!order) return;
+  
+  // Clear cart and push items
+  clearCart();
+  
+  order.items.forEach(it => {
+    if (it.product_id) {
+      const prod = cachedProducts.find(p => p.id === it.product_id);
+      if (prod) {
+        const existing = posCart.find(c => c.product_id === it.product_id);
+        if (existing) {
+          existing.quantity += it.quantity;
+        } else {
+          posCart.push({ product_id: it.product_id, name: prod.name, price: it.price, quantity: it.quantity });
+        }
+      } else {
+        posCart.push({ product_id: it.product_id, name: it.name, price: it.price, quantity: it.quantity });
+      }
+    } else {
+      Utils.showToast(`Cannot process item ${it.name}: Missing product ID`, "danger");
+    }
+  });
+  
+  window.currentOnlineOrderId = order.id;
+  updateCartUI();
+  Utils.closeModal();
+  
+  const posContainer = document.getElementById("pos-grid");
+  if (!posContainer && typeof renderView === "function") {
+    document.querySelectorAll("aside.sidebar .nav-link").forEach(el => el.classList.remove("active"));
+    const posLink = document.querySelector("a[href='#pos']");
+    if (posLink) posLink.classList.add("active");
+    renderView("pos").then(() => {
+      posCart = [];
+      order.items.forEach(it => {
+        posCart.push({ product_id: it.product_id, name: it.name, price: it.price, quantity: it.quantity });
+      });
+      window.currentOnlineOrderId = order.id;
+      updateCartUI();
+      Utils.showToast("Loaded Table " + (order.table_number || "") + " Order (" + order.order_number + ") into POS.", "success");
+    });
+  } else {
+    Utils.showToast("Loaded Table " + (order.table_number || "") + " Order (" + order.order_number + ") into POS.", "success");
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CUSTOMER & TABLE QR ORDERS MANAGEMENT VIEW (CASHIER & MANAGER)
+// ─────────────────────────────────────────────────────────────────────────────
+async function renderCustomerOrdersView(c) {
+  const target = c || document.getElementById("view-container");
+  if (!target) return;
+
+  target.innerHTML = `
+    <div class="toolbar fade-up delay-1" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h2 style="font-size:18px; font-weight:800; color:var(--text-main); margin:0;">Customer & Table QR Orders</h2>
+        <p style="font-size:12px; color:var(--text-muted); margin:4px 0 0 0;">Live incoming customer orders from Table QR codes</p>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <span style="display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#10b981; background:rgba(16,185,129,0.1); padding:5px 12px; border-radius:20px;">
+          <span style="width:8px; height:8px; border-radius:50%; background:#10b981; display:inline-block;"></span> Live Auto-Refresh
+        </span>
+        <button class="btn btn-outline btn-sm" onclick="loadCustomerOrdersTable()"><i class="fas fa-sync-alt"></i> Refresh</button>
+      </div>
+    </div>
+
+    <div id="cust-orders-content">
+      <div style="text-align:center; padding:40px; color:var(--text-muted);"><i class="fas fa-spinner fa-spin"></i> Loading customer orders...</div>
+    </div>
+  `;
+
+  await loadCustomerOrdersTable();
+  if (window.custOrdersInterval) clearInterval(window.custOrdersInterval);
+  window.custOrdersInterval = setInterval(loadCustomerOrdersTable, 6000);
+}
+
+async function loadCustomerOrdersTable() {
+  const container = document.getElementById("cust-orders-content");
+  if (!container) {
+    if (window.custOrdersInterval) {
+      clearInterval(window.custOrdersInterval);
+      window.custOrdersInterval = null;
+    }
+    return;
+  }
+
+  try {
+    const [pendingRes, historyRes] = await Promise.all([
+      Auth.fetch("/api/v1/customer-orders/pending"),
+      Auth.fetch("/api/v1/customer-orders/history?limit=15")
+    ]);
+
+    const pending = pendingRes.ok ? await pendingRes.json() : [];
+    const history = historyRes.ok ? await historyRes.json() : [];
+    
+    pendingOnlineOrders = pending;
+    updateOnlineOrdersBadge();
+
+    let html = "";
+
+    // Section 1: Pending Orders
+    html += `
+      <div class="section-card" style="margin-bottom:24px;">
+        <div class="section-head" style="display:flex; justify-content:space-between; align-items:center;">
+          <h2 style="font-size:16px; font-weight:700; color:var(--text-main); margin:0;">
+            Pending Customer Orders (${pending.length})
+          </h2>
+          <span class="badge ${pending.length > 0 ? 'badge-danger' : 'badge-success'}" style="font-size:11px;">
+            ${pending.length > 0 ? pending.length + ' Awaiting Cashier' : 'All Clear'}
+          </span>
+        </div>
+        <div style="padding:16px;">
+    `;
+
+    if (pending.length === 0) {
+      html += `
+        <div style="text-align:center; padding:36px; color:var(--text-muted);">
+          <i class="fas fa-check-circle" style="font-size:32px; color:#10b981; margin-bottom:10px; display:block;"></i>
+          <p style="font-size:14px; font-weight:600; margin:0;">No pending customer orders right now.</p>
+          <small style="font-size:12px; color:var(--text-muted);">When a customer scans a table QR code and submits an order, it will appear here instantly!</small>
+        </div>
+      `;
+    } else {
+      html += `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:16px;">`;
+      pending.forEach(o => {
+        const timeStr = o.created_at ? new Date(o.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Just now';
+        const itemsList = (o.items || []).map(it => `
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 0; border-bottom:1px dashed rgba(205,190,150,0.2); font-size:13px;">
+            <div><strong style="color:#c9a227;">${it.quantity}x</strong> <span style="font-weight:600;">${it.name}</span></div>
+            <span style="color:var(--text-muted); font-size:12px;">₱${(parseFloat(it.price) * it.quantity).toFixed(2)}</span>
+          </div>
+        `).join('');
+
+        html += `
+          <div style="border:1.5px solid #c9a227; border-radius:12px; padding:16px; background:#ffffff; box-shadow:0 4px 12px rgba(0,0,0,0.04); display:flex; flex-direction:column; justify-content:space-between;">
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                <span style="background:#c9a227; color:#18181b; font-weight:800; font-size:12px; padding:4px 10px; border-radius:16px; letter-spacing:0.5px;">
+                  🪑 TABLE ${o.table_number || 'Takeout'}
+                </span>
+                <span style="font-size:11px; font-family:monospace; background:rgba(0,0,0,0.06); padding:2px 6px; border-radius:4px; font-weight:600;">
+                  ${o.order_number}
+                </span>
+              </div>
+              <div style="margin-bottom:8px; font-size:13px;">
+                <div><i class="fas fa-user" style="color:var(--text-muted); margin-right:6px;"></i> <strong>${o.customer_name}</strong></div>
+                <div style="color:var(--text-muted); font-size:11px; margin-top:2px;"><i class="fas fa-clock" style="margin-right:4px;"></i> Ordered at ${timeStr} • ${o.order_type || 'Dine In'}</div>
+                ${o.notes ? `<div style="background:#fef3c7; color:#92400e; padding:4px 8px; border-radius:6px; font-size:11px; margin-top:6px;"><i class="fas fa-comment"></i> ${o.notes}</div>` : ''}
+              </div>
+              <div style="margin:12px 0; max-height:140px; overflow-y:auto;">
+                ${itemsList}
+              </div>
+            </div>
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-top:1px solid rgba(205,190,150,0.3); margin-top:8px;">
+                <span style="font-size:12px; color:var(--text-muted); font-weight:600;">TOTAL AMOUNT:</span>
+                <span style="font-size:18px; font-weight:800; color:#c9a227;">₱${parseFloat(o.total_amount).toFixed(2)}</span>
+              </div>
+              <div style="display:flex; gap:8px; margin-top:8px;">
+                <button class="btn btn-primary btn-sm" onclick="processOnlineOrder(${o.id})" style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; font-weight:700;">
+                  <i class="fas fa-cash-register"></i> Send to POS
+                </button>
+                <button class="btn btn-outline btn-sm" onclick="setCustomerOrderStatus(${o.id}, 'accepted')" title="Accept Order">
+                  <i class="fas fa-check"></i> Accept
+                </button>
+                <button class="btn btn-danger btn-sm" onclick="setCustomerOrderStatus(${o.id}, 'rejected')" title="Reject / Cancel" style="background:#dc3545; border-color:#dc3545; color:#fff;">
+                  <i class="fas fa-times"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+      });
+      html += `</div>`;
+    }
+    html += `</div></div>`;
+
+    // Section 2: Recent History
+    const pastOrders = history.filter(h => h.status !== 'pending');
+    if (pastOrders.length > 0) {
+      html += `
+        <div class="section-card">
+          <div class="section-head">
+            <h2 style="font-size:16px; font-weight:700; color:var(--text-main); margin:0;">Recent Processed Orders</h2>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Order #</th>
+                  <th>Table</th>
+                  <th>Customer</th>
+                  <th>Items</th>
+                  <th>Total</th>
+                  <th>Status</th>
+                  <th>Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${pastOrders.map(h => `
+                  <tr>
+                    <td><strong style="font-family:monospace; font-size:12px;">${h.order_number}</strong></td>
+                    <td><span class="badge" style="background:rgba(201,162,39,0.15); color:#c9a227; font-weight:700;">${h.table_number || h.order_type}</span></td>
+                    <td><strong>${h.customer_name}</strong></td>
+                    <td style="font-size:12px; color:var(--text-muted);">${(h.items || []).map(i => `${i.quantity}x ${i.name}`).join(', ')}</td>
+                    <td><strong style="color:#c9a227;">₱${parseFloat(h.total_amount).toFixed(2)}</strong></td>
+                    <td>
+                      <span class="badge ${h.status === 'completed' ? 'badge-success' : h.status === 'accepted' ? 'badge-warning' : 'badge-danger'}" style="font-size:11px; text-transform:capitalize;">
+                        ${h.status}
+                      </span>
+                    </td>
+                    <td style="font-size:12px; color:var(--text-muted);">${h.created_at ? new Date(h.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '—'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = `<div style="color:var(--danger); padding:20px;">Failed to load customer orders: ${err.message}</div>`;
+  }
+}
+
+async function setCustomerOrderStatus(id, newStatus) {
+  try {
+    const res = await Auth.fetch(`/api/v1/customer-orders/${id}/status`, {
+      method: "PUT",
+      body: JSON.stringify({ status: newStatus })
+    });
+    if (!res.ok) throw new Error("Failed to update status");
+    Utils.showToast(`Order marked as ${newStatus}`, "success");
+    loadCustomerOrdersTable();
+    fetchPendingOnlineOrders();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TABLE QR CODE MANAGEMENT
+// ─────────────────────────────────────────────────────────────────────────────
+async function renderTables(c) {
+  c.innerHTML = `
+    <div class="section-card" style="padding:24px; margin-bottom: 24px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h2 style="font-size:18px; font-weight:700;">Table QR Codes</h2>
+        <div style="display:flex; gap: 8px;">
+          <button class="btn btn-primary" onclick="showAddTableModal()"><i class="fas fa-plus"></i> Add Table</button>
+          <button class="btn btn-outline" onclick="printAllQRs()"><i class="fas fa-print"></i> Print All QRs</button>
+        </div>
+      </div>
+      <div id="tables-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:24px;">
+        <p style="color:var(--text-muted); font-size:14px;">Loading tables...</p>
+      </div>
+    </div>
+  `;
+  
+  await fetchAndRenderTablesGrid();
+}
+
+async function fetchAndRenderTablesGrid() {
+  const grid = document.getElementById("tables-grid");
+  if (!grid) return;
+  
+  try {
+    const res = await Auth.fetch("/api/v1/tables");
+    if (!res.ok) throw new Error("Failed to load tables");
+    const tables = await res.json();
+    
+    if (tables.length === 0) {
+      grid.innerHTML = `<p style="color:var(--text-muted); font-size:14px; grid-column: 1 / -1; text-align:center; padding: 40px 0;">No tables configured yet. Click "+ Add Table" to generate your first table QR code!</p>`;
+      return;
+    }
+    
+    grid.innerHTML = "";
+    
+    tables.forEach(t => {
+      const card = document.createElement("div");
+      card.className = "table-qr-card";
+      card.style.cssText = "border: 1px solid rgba(205,190,150,0.35); border-radius: 12px; padding: 24px; text-align: center; background: #fff;";
+      
+      const qrUrl = `${window.location.origin}/customer?table=${encodeURIComponent(t.table_number)}`;
+      const qrContainerId = `qrcode-${t.id}`;
+      
+      card.innerHTML = `
+        <h3 style="font-size:16px; font-weight:700; color: #18181b; margin-bottom: 4px;">BLESSIE FOOD HUB</h3>
+        <h4 style="font-size:18px; font-weight:800; color: #c9a227; margin-bottom: 8px;">TABLE ${t.table_number}</h4>
+        <p style="font-size:12px; font-weight:600; color: #71717a; margin-bottom: 16px;">SCAN TO ORDER</p>
+        
+        <div id="${qrContainerId}" style="display:flex; justify-content:center; margin-bottom: 24px; min-height: 150px;" data-url="${qrUrl}"></div>
+        
+        <div style="display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
+          <a href="${qrUrl}" target="_blank" class="btn btn-outline btn-sm" title="Preview Customer Menu"><i class="fas fa-external-link-alt"></i> Test Menu</a>
+          <button class="btn btn-outline btn-sm" onclick="downloadQR('${qrContainerId}', 'Table_${t.table_number}_QR')" title="Download QR Image"><i class="fas fa-download"></i></button>
+          <button class="btn btn-outline btn-sm" onclick="printSingleQR('${t.id}', '${t.table_number}')" title="Print QR"><i class="fas fa-print"></i></button>
+          <button class="btn btn-danger btn-sm" onclick="deleteTable(${t.id})" title="Delete Table"><i class="fas fa-trash"></i></button>
+        </div>
+      `;
+      grid.appendChild(card);
+      
+      // Generate QR
+      setTimeout(() => {
+        const qrEl = document.getElementById(qrContainerId);
+        if (qrEl && typeof QRCode !== 'undefined') {
+          new QRCode(qrEl, {
+            text: qrUrl,
+            width: 150,
+            height: 150,
+            colorDark : "#000000",
+            colorLight : "#ffffff",
+            correctLevel : QRCode.CorrectLevel.H
+          });
+        }
+      }, 50);
+    });
+    
+  } catch (err) {
+    grid.innerHTML = `<p style="color:var(--danger);">${err.message}</p>`;
+  }
+}
+
+function showAddTableModal() {
+  Utils.openModal("Add Restaurant Table", `
+    <form id="form-add-table" onsubmit="event.preventDefault(); submitAddTable();">
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Table Number / Identifier <span style="color:var(--danger);">*</span></label>
+        <input type="text" id="newTableNumber" class="input-field" required placeholder="e.g. 1, 2, Patio A, VIP" style="width:100%;">
+        <small style="font-size:11px; color:var(--text-muted); margin-top:4px; display:block;">Enter table number (a unique QR code will be generated for customers to scan).</small>
+      </div>
+    </form>
+  `, `
+    <div style="display:flex; justify-content:flex-end; gap:10px; width:100%;">
+      <button type="button" class="btn btn-outline" onclick="Utils.closeModal()">Cancel</button>
+      <button type="button" class="btn btn-primary" onclick="submitAddTable()"><i class="fas fa-save"></i> Save Table</button>
+    </div>
+  `);
+}
+
+async function submitAddTable() {
+  const tableNum = document.getElementById("newTableNumber")?.value.trim();
+  if (!tableNum) return Utils.showToast("Table number required", "danger");
+  
+  try {
+    const res = await Auth.fetch("/api/v1/tables", {
+      method: "POST",
+      body: JSON.stringify({ table_number: tableNum })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Failed to add table");
+    
+    Utils.showToast("Table added successfully!", "success");
+    Utils.closeModal();
+    fetchAndRenderTablesGrid();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+}
+
+async function deleteTable(id) {
+  if (!confirm("Delete this table? This will invalidate its QR code.")) return;
+  try {
+    const res = await Auth.fetch(`/api/v1/tables/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error("Failed to delete table");
+    Utils.showToast("Table deleted", "success");
+    fetchAndRenderTablesGrid();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+}
+
+function downloadQR(containerId, filename) {
+  const container = document.getElementById(containerId);
+  const img = container.querySelector("img");
+  const canvas = container.querySelector("canvas");
+  
+  let src = null;
+  if (img && img.src) src = img.src;
+  else if (canvas) src = canvas.toDataURL("image/png");
+  
+  if (!src) return Utils.showToast("QR code not ready yet.", "warning");
+  
+  const a = document.createElement("a");
+  a.href = src;
+  a.download = filename + ".png";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+function getPrintableHTML(qrs) {
+  // qrs is an array of objects: { title, number, src }
+  let html = `
+    <html>
+      <head>
+        <title>Print QRs</title>
+        <style>
+          @page { size: A4 portrait; margin: 0; }
+          body { font-family: 'Inter', sans-serif; margin: 0; padding: 20px; text-align: center; background: #fff; }
+          .qr-page { 
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            height: 100vh; page-break-after: always; box-sizing: border-box; padding: 40px;
+          }
+          .qr-page:last-child { page-break-after: auto; }
+          .qr-badge {
+            border: 4px solid #18181b; padding: 40px; border-radius: 20px;
+            display: flex; flex-direction: column; align-items: center; width: 80%; max-width: 400px;
+          }
+          h1 { font-size: 28px; font-weight: 800; text-transform: uppercase; margin: 0 0 10px 0; color: #18181b; }
+          h2 { font-size: 42px; font-weight: 800; margin: 0 0 20px 0; color: #18181b; }
+          h3 { font-size: 20px; font-weight: 700; margin: 0 0 40px 0; color: #18181b; letter-spacing: 2px; }
+          img { width: 300px; height: 300px; }
+        </style>
+      </head>
+      <body>
+  `;
+  
+  qrs.forEach(qr => {
+    html += `
+      <div class="qr-page">
+        <div class="qr-badge">
+          <h1>BLESSIE FOOD HUB</h1>
+          <h2>TABLE ${qr.number}</h2>
+          <h3>SCAN TO ORDER</h3>
+          <img src="${qr.src}" alt="QR">
+        </div>
+      </div>
+    `;
+  });
+  
+  html += `
+      <script>
+        window.onload = function() { window.print(); window.close(); }
+      </script>
+      </body>
+    </html>
+  `;
+  return html;
+}
+
+function printSingleQR(tableId, tableNumber) {
+  const container = document.getElementById(`qrcode-${tableId}`);
+  let src = null;
+  const img = container.querySelector("img");
+  const canvas = container.querySelector("canvas");
+  if (img && img.src) src = img.src;
+  else if (canvas) src = canvas.toDataURL("image/png");
+  
+  if (!src) return Utils.showToast("QR code not ready yet.", "warning");
+  
+  const printWin = window.open("", "_blank");
+  printWin.document.write(getPrintableHTML([{ number: tableNumber, src }]));
+  printWin.document.close();
+}
+
+function printAllQRs() {
+  const qrs = [];
+  const cards = document.querySelectorAll(".table-qr-card");
+  
+  cards.forEach(card => {
+    const tableNumberText = card.querySelector("h4").innerText.replace("TABLE ", "");
+    const container = card.querySelector("[id^='qrcode-']");
+    let src = null;
+    const img = container.querySelector("img");
+    const canvas = container.querySelector("canvas");
+    if (img && img.src) src = img.src;
+    else if (canvas) src = canvas.toDataURL("image/png");
+    
+    if (src) {
+      qrs.push({ number: tableNumberText, src });
+    }
+  });
+  
+  if (qrs.length === 0) return Utils.showToast("No QR codes to print.", "warning");
+  
+  const printWin = window.open("", "_blank");
+  printWin.document.write(getPrintableHTML(qrs));
+  printWin.document.close();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 12. CASH IN DRAWER & CASHIER SHIFT TRACKING (FOR MANAGER & ADMIN)
+// ─────────────────────────────────────────────────────────────────────────────
+
+let cachedDrawerData = null;
+
+async function renderCashDrawerTracker(c) {
+  const container = c || document.getElementById("view-container");
+  if (!container) return;
+
+  container.innerHTML = `
+    <div style="display:flex; justify-content:center; align-items:center; min-height:260px; color:var(--text-muted, #71717a);">
+      <div style="text-align:center;">
+        <i class="fas fa-spinner fa-spin" style="font-size:2rem; margin-bottom:0.75rem; color:#c9a227;"></i>
+        <p style="font-size:14px; font-weight:500;">Loading cashier drawer records...</p>
+      </div>
+    </div>
+  `;
+
+  try {
+    const res = await Auth.fetch("/api/v1/shifts/drawer-summary");
+    if (!res.ok) throw new Error("Failed to fetch cash drawer summary.");
+    cachedDrawerData = await res.json();
+    renderCashDrawerTrackerUI(container, cachedDrawerData);
+  } catch (err) {
+    console.error("Cash Drawer Error:", err);
+    container.innerHTML = `
+      <div class="section-card" style="padding:24px; border:1px solid rgba(239,68,68,0.35);">
+        <h3 style="color:var(--danger, #ef4444); font-size:16px; font-weight:700;"><i class="fas fa-exclamation-triangle"></i> Error Loading Cash Drawer Data</h3>
+        <p style="color:var(--text-muted, #71717a); margin:10px 0; font-size:13px;">${err.message || "Failed to communicate with backend."}</p>
+        <button class="btn btn-outline btn-sm" onclick="renderCashDrawerTracker()"><i class="fas fa-redo"></i> Retry</button>
+      </div>
+    `;
+  }
+}
+
+function renderCashDrawerTrackerUI(container, data) {
+  const shifts = (data && data.shifts) || [];
+  const allMovements = [];
+  shifts.forEach(s => {
+    (s.movements || []).forEach(m => {
+      allMovements.push({ ...m, shiftId: s.id, cashierName: s.cashier_name });
+    });
+  });
+  allMovements.sort((a, b) => (b.id || 0) - (a.id || 0));
+
+  const totalDrops = shifts.reduce((sum, s) => sum + (s.paid_out || 0), 0);
+  const totalPaidIn = shifts.reduce((sum, s) => sum + (s.paid_in || 0), 0);
+
+  container.innerHTML = `
+    <!-- Top Toolbar -->
+    <div class="toolbar fade-up" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h2 style="font-size:20px; font-weight:800; color:var(--text-main); margin:0; display:flex; align-items:center; gap:8px;">
+          <i class="fas fa-vault" style="color:#c9a227;"></i> Cash in Drawer & Shift Tracking
+        </h2>
+        <p style="font-size:12px; color:var(--text-muted); margin:4px 0 0 0;">
+          Live cash drawer balance, cashier floats, sales collections, and safe drops
+        </p>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <button class="btn btn-primary" onclick="openAddCashMovementModal()" style="display:inline-flex; align-items:center; gap:8px; font-weight:700; border-radius:10px;">
+          <i class="fas fa-money-bill-transfer"></i> Record Cash Movement (Drop / In)
+        </button>
+        <button class="btn btn-outline btn-sm" onclick="renderCashDrawerTracker()" title="Refresh Drawer Balances" style="border-radius:10px;">
+          <i class="fas fa-sync-alt"></i> Live Refresh
+        </button>
+      </div>
+    </div>
+
+    <!-- Metrics Cards Grid -->
+    <div class="stats-grid fade-up delay-1" style="margin-bottom:24px;">
+      <div class="stat-card">
+        <div class="stat-icon gold"><i class="fas fa-vault"></i></div>
+        <div class="stat-info">
+          <h3>Total Cash in Drawers</h3>
+          <div class="stat-count" style="color:#c9a227;">${Utils.formatCurrency(data.total_cash_in_drawers || 0)}</div>
+          <div class="stat-trend" style="color:var(--success, #10b981);"><i class="fas fa-arrow-up"></i> Across ${data.active_drawers_count || 0} active drawer(s)</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon green"><i class="fas fa-cash-register"></i></div>
+        <div class="stat-info">
+          <h3>Active Cashier Shifts</h3>
+          <div class="stat-count" style="color:#10b981;">${data.active_drawers_count || 0}</div>
+          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-user-check"></i> On counter right now</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon orange"><i class="fas fa-coins"></i></div>
+        <div class="stat-info">
+          <h3>Today's Cash Sales</h3>
+          <div class="stat-count" style="color:#f97316;">${Utils.formatCurrency(data.today_total_cash_sales || 0)}</div>
+          <div class="stat-trend" style="color:#f97316;"><i class="fas fa-receipt"></i> Cash payment collected</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon red"><i class="fas fa-arrow-down-long"></i></div>
+        <div class="stat-info">
+          <h3>Total Cash Drops (Skimmed)</h3>
+          <div class="stat-count" style="color:#ef4444;">${Utils.formatCurrency(totalDrops)}</div>
+          <div class="stat-trend" style="color:#ef4444;"><i class="fas fa-shield-halved"></i> Deposited to safe</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Active & Recent Cashier Drawers Table -->
+    <div class="section-card fade-up delay-2" style="margin-bottom:24px;">
+      <div class="section-head">
+        <div>
+          <h2><i class="fas fa-users-viewfinder" style="color:#c9a227; margin-right:8px;"></i> Cashier Drawers & Shift Balance Breakdown</h2>
+          <span style="font-size:12px; color:var(--text-muted);">Real-time formula: [Starting Float] + [Cash Sales] + [Paid In] - [Paid Out / Drops] = [Expected Cash in Drawer]</span>
+        </div>
+        <span class="badge badge-info" style="font-size:11px; font-weight:700;">${shifts.length} Recorded Shifts</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Cashier</th>
+              <th>Shift Status</th>
+              <th>Started At</th>
+              <th>Start Float</th>
+              <th>Cash Sales</th>
+              <th>Non-Cash</th>
+              <th>Paid In (+)</th>
+              <th>Cash Drops (-)</th>
+              <th style="background:rgba(201,162,39,0.08);">Expected in Drawer</th>
+              <th>End / Actual</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${renderDrawerTableRows(shifts)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Cash Drawer Movements & Audit Log -->
+    <div class="section-card fade-up delay-3">
+      <div class="section-head">
+        <div>
+          <h2><i class="fas fa-money-bill-wave" style="color:#10b981; margin-right:8px;"></i> Cash Movements & Safe Drops Audit Trail</h2>
+          <span style="font-size:12px; color:var(--text-muted);">Detailed ledger of all drawer float injections and mid-shift safe drops</span>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="openAddCashMovementModal()">
+          <i class="fas fa-plus"></i> New Movement
+        </button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Shift / Cashier</th>
+              <th>Movement Type</th>
+              <th>Amount</th>
+              <th>Reason / Purpose</th>
+              <th>Recorded By</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${renderMovementsTableRows(allMovements)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderDrawerTableRows(shifts) {
+  if (!shifts || !shifts.length) {
+    return '<tr><td colspan="11" style="text-align:center; padding:30px; color:var(--text-muted);"><i class="fas fa-info-circle"></i> No cashier shifts recorded yet.</td></tr>';
+  }
+  return shifts.map(s => {
+    const isOpen = s.status === 'open';
+    const statusBadge = isOpen
+      ? '<span class="badge badge-success" style="font-size:11px; font-weight:700;"><i class="fas fa-circle" style="font-size:8px; margin-right:4px;"></i> ACTIVE OPEN</span>'
+      : '<span class="badge badge-secondary" style="font-size:11px; font-weight:700;">CLOSED</span>';
+
+    const startDate = s.start_time ? new Date(s.start_time).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '—';
+    const varianceHtml = (s.variance !== null && s.variance !== undefined)
+      ? (s.variance === 0
+          ? '<span style="color:#10b981; font-weight:700;">Balanced (₱0.00)</span>'
+          : (s.variance > 0
+              ? `<span style="color:#10b981; font-weight:700;">+${Utils.formatCurrency(s.variance)} (Over)</span>`
+              : `<span style="color:#ef4444; font-weight:700;">${Utils.formatCurrency(s.variance)} (Short)</span>`))
+      : '<span style="color:var(--text-muted);">—</span>';
+
+    return `
+      <tr>
+        <td>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div class="avatar-fallback" style="width:32px; height:32px; font-size:12px; border-radius:8px; background:rgba(201,162,39,0.15); color:#c9a227; font-weight:800;">
+              ${(s.cashier_username || 'C').substring(0,2).toUpperCase()}
+            </div>
+            <div>
+              <strong style="color:var(--text-main); font-size:13px;">${s.cashier_name}</strong>
+              <div style="font-size:11px; color:var(--text-muted);">@${s.cashier_username} (Shift #${s.id})</div>
+            </div>
+          </div>
+        </td>
+        <td>${statusBadge}</td>
+        <td style="color:var(--text-muted); font-size:12px;">${startDate}</td>
+        <td><strong style="font-size:13px; color:var(--text-main);">${Utils.formatCurrency(s.start_cash)}</strong></td>
+        <td><span style="color:#10b981; font-weight:700; font-size:13px;">+${Utils.formatCurrency(s.cash_sales)}</span></td>
+        <td><span style="color:#6366f1; font-size:12px;">${Utils.formatCurrency(s.non_cash_sales)}</span></td>
+        <td><span style="color:#10b981; font-size:12px;">+${Utils.formatCurrency(s.paid_in)}</span></td>
+        <td><span style="color:#ef4444; font-size:12px;">-${Utils.formatCurrency(s.paid_out)}</span></td>
+        <td style="background:rgba(201,162,39,0.08);">
+          <strong style="color:#c9a227; font-size:15px; font-weight:800;">${Utils.formatCurrency(s.expected_cash)}</strong>
+        </td>
+        <td style="font-size:12px;">
+          ${s.end_cash !== null ? `<strong>${Utils.formatCurrency(s.end_cash)}</strong><br>${varianceHtml}` : '<span style="color:#10b981; font-weight:600;"><i class="fas fa-lock-open" style="font-size:10px;"></i> In Progress</span>'}
+        </td>
+        <td>
+          <div style="display:flex; gap:6px;">
+            ${isOpen ? `
+              <button class="btn btn-outline btn-sm" onclick="openAddCashMovementModal(${s.id})" title="Record Cash Drop or Add Cash to Drawer" style="padding:4px 8px; font-size:11px;">
+                <i class="fas fa-money-bill-transfer"></i> Drop / Add
+              </button>
+            ` : ''}
+            <button class="btn btn-outline btn-sm" onclick="openShiftMovementsModal(${s.id})" title="View Cash Movement History" style="padding:4px 8px; font-size:11px;">
+              <i class="fas fa-list-check"></i> Audit (${(s.movements || []).length})
+            </button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function renderMovementsTableRows(movements) {
+  if (!movements || !movements.length) {
+    return '<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-muted);"><i class="fas fa-receipt"></i> No cash movements logged yet. Record a Cash Drop or Float Injection anytime.</td></tr>';
+  }
+  return movements.slice(0, 20).map(m => {
+    const isDrop = m.type === 'PAID_OUT';
+    const typeBadge = isDrop
+      ? '<span class="badge badge-danger" style="font-size:11px; font-weight:700;"><i class="fas fa-arrow-down"></i> CASH DROP / PAID OUT</span>'
+      : '<span class="badge badge-success" style="font-size:11px; font-weight:700;"><i class="fas fa-arrow-up"></i> FLOAT INJECTION / PAID IN</span>';
+
+    const timeStr = m.created_at ? new Date(m.created_at).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '—';
+
+    return `
+      <tr>
+        <td style="color:var(--text-muted); font-size:12px;">${timeStr}</td>
+        <td>
+          <strong style="color:var(--text-main); font-size:13px;">${m.cashierName || 'Shift #' + m.shiftId}</strong>
+          <div style="font-size:11px; color:var(--text-muted);">Shift #${m.shiftId}</div>
+        </td>
+        <td>${typeBadge}</td>
+        <td>
+          <strong style="font-size:14px; color:${isDrop ? '#ef4444' : '#10b981'};">
+            ${isDrop ? '-' : '+'}${Utils.formatCurrency(m.amount)}
+          </strong>
+        </td>
+        <td style="color:var(--text-main); font-size:13px;">${m.reason || 'No description provided'}</td>
+        <td style="color:var(--text-muted); font-size:12px;">${m.recorded_by || 'Staff'}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function openAddCashMovementModal(defaultShiftId = null) {
+  const shifts = (cachedDrawerData && cachedDrawerData.shifts) || [];
+  const openShifts = shifts.filter(s => s.status === 'open');
+
+  if (!openShifts.length) {
+    Utils.showToast("There are currently no active open cashier shifts. A cashier must start a shift to record drawer movements.", "warning");
+    return;
+  }
+
+  const shiftOptions = openShifts.map(s => `
+    <option value="${s.id}" ${defaultShiftId && defaultShiftId === s.id ? 'selected' : ''}>
+      Shift #${s.id} — ${s.cashier_name} (@${s.cashier_username}) [Current: ${Utils.formatCurrency(s.expected_cash)}]
+    </option>
+  `).join('');
+
+  Utils.openModal("Record Cash Drawer Movement", `
+    <form id="form-cash-movement" onsubmit="event.preventDefault(); submitAddCashMovement();">
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Select Active Cashier Shift <span style="color:var(--danger);">*</span></label>
+        <select id="cm-shift-id" class="input-field" required style="width:100%;">
+          ${shiftOptions}
+        </select>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Movement Action <span style="color:var(--danger);">*</span></label>
+          <select id="cm-type" class="input-field" required style="width:100%;">
+            <option value="PAID_OUT" selected>🔻 Cash Drop (Deposit to Safe / Pull Cash)</option>
+            <option value="PAID_IN">🔺 Paid In (Float Addition / Change Replenishment)</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Cash Amount (₱) <span style="color:var(--danger);">*</span></label>
+          <input type="number" step="0.01" min="1" id="cm-amount" class="input-field" required placeholder="e.g. 5000.00" style="width:100%;">
+        </div>
+      </div>
+
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Reason / Purpose <span style="color:var(--danger);">*</span></label>
+        <input type="text" id="cm-reason" class="input-field" required placeholder="e.g. Mid-day safe drop, Added ₱50 coins/bills change" style="width:100%;">
+      </div>
+
+      <div style="background:rgba(201,162,39,0.08); border:1px solid rgba(201,162,39,0.25); border-radius:8px; padding:12px; font-size:12px; color:var(--text-main);">
+        <i class="fas fa-info-circle" style="color:#c9a227; margin-right:6px;"></i>
+        <strong>Cash Drops</strong> deduct from the cashier's expected drawer total and transfer funds into the store safe.
+        <strong>Paid In</strong> adds funds to the drawer for change replenishment.
+      </div>
+    </form>
+  `, `<button class="btn btn-primary" onclick="submitAddCashMovement()"><i class="fas fa-save"></i> Save Movement & Update Drawer</button>`);
+}
+
+async function submitAddCashMovement() {
+  const shiftId = parseInt(document.getElementById("cm-shift-id")?.value, 10);
+  const type = document.getElementById("cm-type")?.value;
+  const amount = parseFloat(document.getElementById("cm-amount")?.value);
+  const reason = document.getElementById("cm-reason")?.value.trim();
+
+  if (!shiftId || !type || isNaN(amount) || amount <= 0 || !reason) {
+    Utils.showToast("Please provide all required fields with an amount greater than 0.", "danger");
+    return;
+  }
+
+  try {
+    const res = await Auth.fetch("/api/v1/shifts/cash-movement", {
+      method: "POST",
+      body: JSON.stringify({
+        shift_id: shiftId,
+        type: type,
+        amount: amount,
+        reason: reason
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to record cash movement");
+    }
+
+    Utils.showToast(`✅ Successfully recorded ${type === 'PAID_OUT' ? 'Cash Drop of ' : 'Float Addition of '} ₱${amount.toFixed(2)}!`, "success");
+    Utils.closeModal();
+
+    // Re-render current view if on cash_drawer or dashboard
+    const currentLink = document.querySelector("aside.sidebar .nav-link.active");
+    const activeView = currentLink ? currentLink.getAttribute("href")?.replace("#", "") : "cash_drawer";
+    if (activeView === "dashboard") {
+      renderDashboard();
+    } else {
+      renderCashDrawerTracker();
+    }
+  } catch (err) {
+    console.error("Cash movement error:", err);
+    Utils.showToast(err.message, "danger");
+  }
+}
+
+function openShiftMovementsModal(shiftId) {
+  const shifts = (cachedDrawerData && cachedDrawerData.shifts) || [];
+  const s = shifts.find(item => item.id === shiftId);
+  if (!s) return Utils.showToast("Shift record not found.", "warning");
+
+  const movements = s.movements || [];
+  let bodyHtml = "";
+
+  if (!movements.length) {
+    bodyHtml = '<div style="text-align:center; padding:30px; color:var(--text-muted);"><i class="fas fa-info-circle"></i> No cash movements recorded for this shift.</div>';
+  } else {
+    bodyHtml = `
+      <div style="margin-bottom:14px; font-size:13px; color:var(--text-muted);">
+        Cashier: <strong style="color:var(--text-main);">${s.cashier_name}</strong> &bull; Start Float: <strong style="color:var(--text-main);">${Utils.formatCurrency(s.start_cash)}</strong> &bull; Expected: <strong style="color:#c9a227;">${Utils.formatCurrency(s.expected_cash)}</strong>
+      </div>
+      <div class="table-wrap" style="max-height:50vh; overflow-y:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Action</th>
+              <th>Amount</th>
+              <th>Reason</th>
+              <th>By</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${movements.map(m => `
+              <tr>
+                <td style="font-size:12px; color:var(--text-muted);">${m.created_at ? new Date(m.created_at).toLocaleString() : '—'}</td>
+                <td>
+                  <span class="badge ${m.type === 'PAID_OUT' ? 'badge-danger' : 'badge-success'}" style="font-size:11px; font-weight:700;">
+                    ${m.type === 'PAID_OUT' ? 'CASH DROP' : 'PAID IN'}
+                  </span>
+                </td>
+                <td><strong style="color:${m.type === 'PAID_OUT' ? '#ef4444' : '#10b981'}; font-size:13px;">${m.type === 'PAID_OUT' ? '-' : '+'}${Utils.formatCurrency(m.amount)}</strong></td>
+                <td style="font-size:13px;">${m.reason || '—'}</td>
+                <td style="font-size:12px; color:var(--text-muted);">${m.recorded_by || 'Staff'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  Utils.openModal(`Shift #${s.id} Cash Movements Audit Log`, bodyHtml);
+}
+
+

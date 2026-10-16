@@ -184,3 +184,76 @@ def create_transaction(
         "created_at": tx.created_at.isoformat() if tx.created_at else None,
         "message": "Transaction created successfully."
     }
+
+
+@router.put("/{tx_id}/status", summary="Update transaction status (e.g. reject/cancel or complete)")
+def update_transaction_status(
+    tx_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Allows cashier and management to change order status.
+    If the customer cancels the order, the cashier can reject the order,
+    marking transaction as 'rejected' / 'cancelled' and voiding associated payments.
+    """
+    q = db.query(models.Transaction).filter(models.Transaction.id == tx_id)
+    if current_user.tenant_id:
+        q = q.filter(models.Transaction.tenant_id == current_user.tenant_id)
+    
+    tx = q.first()
+    if not tx:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found.")
+
+    # IMMUTABILITY RULE: Once an order is rejected (or cancelled), its status is final and cannot be changed!
+    if tx.status in ["rejected", "cancelled"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Order #{tx.id} has already been {tx.status.upper()}. Once an order is rejected, its status is locked and cannot be changed."
+        )
+
+    raw_status = body.get("status", "").strip().lower()
+    reason = body.get("reason", "").strip() or "Customer cancelled order"
+
+    allowed = ["pending", "preparing", "ready", "completed", "cancelled", "rejected"]
+    if raw_status not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status '{raw_status}'. Allowed values: {', '.join(allowed)}"
+        )
+
+    old_status = tx.status
+    tx.status = raw_status
+
+    # Void or update payments
+    if raw_status in ["cancelled", "rejected"]:
+        for p in tx.payments:
+            p.status = "cancelled"
+    elif raw_status == "completed":
+        for p in tx.payments:
+            p.status = "completed"
+
+    # Audit log
+    try:
+        log = models.ActivityLog(
+            tenant_id=tx.tenant_id,
+            user_id=current_user.id,
+            action="Order Cancelled/Rejected" if raw_status in ["cancelled", "rejected"] else "Order Status Update",
+            performed_by=current_user.username,
+            role=current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role),
+            details=f"Order #{tx.id} status changed from {old_status.upper()} to {raw_status.upper()}. Reason: {reason}"
+        )
+        db.add(log)
+    except Exception:
+        pass
+
+    db.commit()
+    db.refresh(tx)
+
+    return {
+        "id": tx.id,
+        "status": tx.status,
+        "message": f"Order #{tx.id} marked as {tx.status.upper()} successfully."
+    }
+

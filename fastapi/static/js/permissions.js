@@ -6,9 +6,11 @@
 const ROLE_NAV_CONFIG = {
   admin: [
     { id: "dashboard", label: "Dashboard", icon: "fas fa-chart-line" },
+    { id: "cash_drawer", label: "Cash in Drawer", icon: "fas fa-vault" },
     { id: "users", label: "User Management", icon: "fas fa-users-cog" },
     { id: "inventory", label: "Inventory", icon: "fas fa-boxes" },
     { id: "products", label: "Products & Menu", icon: "fas fa-utensils" },
+    { id: "tables", label: "Table QRs", icon: "fas fa-qrcode" },
     { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },
     { id: "purchases", label: "Purchases", icon: "fas fa-shopping-cart" },
     { id: "reports", label: "Reports & Analytics", icon: "fas fa-chart-bar" },
@@ -17,9 +19,11 @@ const ROLE_NAV_CONFIG = {
   ],
   manager: [
     { id: "dashboard", label: "Dashboard", icon: "fas fa-chart-line" },
+    { id: "cash_drawer", label: "Cash in Drawer", icon: "fas fa-vault" },
     { id: "users", label: "User Management", icon: "fas fa-users-cog" },
     { id: "inventory", label: "Inventory", icon: "fas fa-boxes" },
     { id: "products", label: "Products & Menu", icon: "fas fa-utensils" },
+    { id: "tables", label: "Table QRs", icon: "fas fa-qrcode" },
     { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },
     { id: "purchases", label: "Purchases", icon: "fas fa-shopping-cart" },
     { id: "reports", label: "Reports & Analytics", icon: "fas fa-chart-bar" },
@@ -33,6 +37,7 @@ const ROLE_NAV_CONFIG = {
   ],
   cashier: [
     { id: "pos", label: "Point of Sale (POS)", icon: "fas fa-cash-register" },
+    { id: "customer_orders", label: "Customer Orders", icon: "fas fa-mobile-alt", badgeId: "cashier-orders-badge" },
     { id: "transactions", label: "Today's Orders", icon: "fas fa-receipt" }
   ],
   kitchen: [
@@ -69,7 +74,7 @@ function buildSidebarMenu(role, onNavigate) {
     a.href = `#${item.id}`;
     a.className = "nav-link" + (index === 0 ? " active" : "");
     a.setAttribute("data-title", item.label);
-    a.innerHTML = `<i class="${item.icon}"></i><span>${item.label}</span>`;
+    a.innerHTML = `<i class="${item.icon}"></i><span>${item.label}</span>${item.badgeId ? `<span id="${item.badgeId}" style="margin-left:auto; background:#ef4444; color:#fff; font-size:10px; font-weight:700; padding:2px 7px; border-radius:10px; display:none;">0</span>` : ''}`;
     
     a.onclick = (e) => {
       e.preventDefault();

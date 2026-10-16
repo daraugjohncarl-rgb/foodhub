@@ -83,6 +83,34 @@ def require_inventory_access(
     return current_user
 
 
+def require_manager_or_admin(
+    current_user: models.User = Depends(get_current_user)
+) -> models.User:
+    """
+    Dependency that allows MANAGER, ADMIN, and SUPER_ADMIN roles.
+    """
+    allowed = {models.UserRole.ADMIN, models.UserRole.SUPER_ADMIN, models.UserRole.MANAGER}
+    if current_user.role not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Requires MANAGER, ADMIN or SUPER_ADMIN role."
+        )
+    return current_user
+
+
+def get_manager_or_admin_tenant_id(
+    current_user: models.User = Depends(require_manager_or_admin),
+    db: Session = Depends(get_db)
+) -> int:
+    """
+    Returns tenant_id for manager or admin (defaults to tenant 1 for super admin).
+    """
+    if current_user.tenant_id:
+        return current_user.tenant_id
+    first_tenant = db.query(models.Tenant).first()
+    return first_tenant.id if first_tenant else 1
+
+
 def get_admin_tenant_id(
     current_user: models.User = Depends(require_admin)
 ) -> int:

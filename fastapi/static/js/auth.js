@@ -105,6 +105,35 @@ const Auth = {
     }
   },
 
+  async registerCustomer(payload) {
+    try {
+      const response = await fetch("/api/v1/auth/customer-register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        return { success: false, message: data.detail || "Registration failed" };
+      }
+      localStorage.setItem("access_token", data.access_token);
+      localStorage.setItem("username", data.username);
+      localStorage.setItem("role", "customer");
+      localStorage.setItem("tenant_id", data.tenant_id || 1);
+      const userProfile = {
+        username: data.username,
+        name: data.customer_name || data.username,
+        role: "customer",
+        tenant_id: data.tenant_id
+      };
+      localStorage.setItem("RESTOTRACK_USER", JSON.stringify(userProfile));
+      localStorage.setItem("customer_name", data.customer_name || data.username);
+      return { success: true, user: userProfile, message: data.message };
+    } catch (e) {
+      return { success: false, message: "Server connection failed." };
+    }
+  },
+
   logout() {
     localStorage.removeItem("access_token");
     localStorage.removeItem("username");

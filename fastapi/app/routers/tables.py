@@ -29,9 +29,9 @@ def get_tables(db: Session = Depends(get_db), current_user: models.User = Depend
 
 @router.post("", status_code=status.HTTP_201_CREATED, summary="Create a new table")
 def create_table(body: dict, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    # Basic role check
-    role = getattr(current_user, "role", None)
-    if role and str(role) not in ["UserRole.ADMIN", "UserRole.MANAGER", "admin", "manager"]:
+    # Role check (Admin, Super Admin, Manager)
+    allowed = {models.UserRole.ADMIN, models.UserRole.SUPER_ADMIN, models.UserRole.MANAGER, "ADMIN", "SUPER_ADMIN", "MANAGER", "admin", "manager"}
+    if getattr(current_user, "role", None) not in allowed:
         raise HTTPException(status_code=403, detail="Not authorized to manage tables")
         
     tenant_id = current_user.tenant_id
@@ -69,8 +69,8 @@ def create_table(body: dict, db: Session = Depends(get_db), current_user: models
 
 @router.delete("/{table_id}", summary="Delete a table")
 def delete_table(table_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    role = getattr(current_user, "role", None)
-    if role and str(role) not in ["UserRole.ADMIN", "UserRole.MANAGER", "admin", "manager"]:
+    allowed = {models.UserRole.ADMIN, models.UserRole.SUPER_ADMIN, models.UserRole.MANAGER, "ADMIN", "SUPER_ADMIN", "MANAGER", "admin", "manager"}
+    if getattr(current_user, "role", None) not in allowed:
         raise HTTPException(status_code=403, detail="Not authorized to manage tables")
         
     tenant_id = current_user.tenant_id

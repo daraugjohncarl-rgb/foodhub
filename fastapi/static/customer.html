@@ -68,22 +68,33 @@
 
                 </div>
 
+                <div id="headerTableBadge" style="display:none; background:#c9a227; color:#18181b; font-weight:800; padding:4px 12px; border-radius:20px; font-size:12px; margin-left:14px; letter-spacing:0.5px; align-items:center; gap:6px;">
+                    <span>🪑</span> TABLE <span id="headerTableNum"></span>
+                </div>
+
             </div>
 
+            <div class="header-actions" style="display:flex; align-items:center; gap:8px;">
+                <!-- If not logged in -->
+                <button class="header-auth-btn" id="headerLoginBtn" type="button" onclick="openCustomerAuthModal('login')" style="padding: 7px 12px; border-radius: 999px; border: 1px solid #dcd7ce; background: #ffffff; font-size: 11px; font-weight: 700; color: #18181b; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; transition: 0.2s ease;">
+                    <span>👤</span> <span>Log In / Sign Up</span>
+                </button>
+                <!-- If logged in -->
+                <div id="customerProfileBadge" style="display:none; align-items:center; gap:8px;">
+                    <span id="customerGreeting" style="font-size:12px; font-weight:700; color:#18181b; background:rgba(201,162,39,0.15); border:1px solid rgba(201,162,39,0.3); padding:4px 10px; border-radius:14px;">Hi, Customer</span>
+                    <button type="button" onclick="customerLogout()" style="padding:4px 8px; border-radius:10px; border:1px solid #e4e4e7; background:#ffffff; font-size:10px; font-weight:600; color:#71717a; cursor:pointer;" title="Sign Out">Sign Out</button>
+                </div>
 
-            <button class="header-cart" id="headerCart" type="button">
-
-                🛒
-
-                <span>
-                    Cart
-                </span>
-
-                <span class="cart-count" id="cartCount">
-                    0
-                </span>
-
-            </button>
+                <button class="header-cart" id="headerCart" type="button">
+                    🛒
+                    <span>
+                        Cart
+                    </span>
+                    <span class="cart-count" id="cartCount">
+                        0
+                    </span>
+                </button>
+            </div>
 
         </div>
 
@@ -473,7 +484,7 @@
                 </div>
 
 
-                <div class="form-group">
+                <div class="form-group" id="notesGroup">
 
                     <label>
                         SPECIAL INSTRUCTIONS
@@ -538,6 +549,69 @@
 
     </div>
 
+    <!-- =========================================================
+         CUSTOMER AUTH MODAL (LOGIN & SIGN UP)
+    ========================================================= -->
+    <div class="checkout-overlay" id="customerAuthOverlay" style="display:none;">
+        <div class="checkout-box" style="max-width: 420px; background: #ffffff; border-radius: 20px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.25);">
+            <div class="checkout-header" style="position:relative; padding: 22px 24px 14px; border-bottom: 1px solid #f4f4f5;">
+                <button type="button" onclick="closeCustomerAuthModal()" style="position:absolute; right:18px; top:18px; background:none; border:none; font-size:18px; cursor:pointer; color:#71717a; width:30px; height:30px; display:flex; align-items:center; justify-content:center; border-radius:50%;">✕</button>
+                <div style="display:flex; gap:12px; border-bottom:2px solid #f4f4f5; padding-bottom:8px; margin-bottom:12px;">
+                    <button type="button" id="tabCustomerLogin" onclick="switchCustomerAuthTab('login')" style="flex:1; padding:8px 0; border:none; background:none; font-weight:800; font-size:15px; color:#18181b; border-bottom:2px solid #c9a227; cursor:pointer;">Sign In</button>
+                    <button type="button" id="tabCustomerRegister" onclick="switchCustomerAuthTab('register')" style="flex:1; padding:8px 0; border:none; background:none; font-weight:600; font-size:15px; color:#71717a; border-bottom:2px solid transparent; cursor:pointer;">Create Account</button>
+                </div>
+                <p id="authSubtitle" style="font-size:12px; color:#71717a; margin:0;">Sign in to save your orders & track status.</p>
+            </div>
+
+            <div id="authErrorBanner" style="display:none; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#dc2626; padding:10px 14px; border-radius:10px; font-size:12px; margin: 14px 24px 0;"></div>
+
+            <!-- LOGIN FORM -->
+            <form id="customerLoginForm" onsubmit="handleCustomerLogin(event)" style="padding: 18px 24px;">
+                <div class="form-group" style="margin-bottom:14px;">
+                    <label style="font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a; display:block; margin-bottom:5px;">Username or Email</label>
+                    <input id="loginUsername" type="text" placeholder="Enter username or email" required style="width:100%; height:44px; padding:0 12px; border-radius:10px; border:1px solid #d4d4d8; font-size:13px; box-sizing:border-box;">
+                </div>
+                <div class="form-group" style="margin-bottom:18px;">
+                    <label style="font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a; display:block; margin-bottom:5px;">Password</label>
+                    <input id="loginPassword" type="password" placeholder="Enter your password" required style="width:100%; height:44px; padding:0 12px; border-radius:10px; border:1px solid #d4d4d8; font-size:13px; box-sizing:border-box;">
+                </div>
+                <button type="submit" id="btnCustomerLogin" style="width:100%; height:44px; background:#18181b; color:#ffffff; border:none; border-radius:10px; font-weight:700; font-size:13px; cursor:pointer;">Sign In</button>
+                <div style="text-align:center; margin-top:14px; font-size:12px; color:#71717a;">
+                    Don't have a customer account? <a href="javascript:void(0)" onclick="switchCustomerAuthTab('register')" style="color:#c9a227; font-weight:700; text-decoration:none;">Create One Here</a>
+                </div>
+            </form>
+
+            <!-- REGISTER FORM -->
+            <form id="customerRegisterForm" onsubmit="handleCustomerRegister(event)" style="display:none; padding: 18px 24px;">
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px;">
+                    <div class="form-group">
+                        <label style="font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a; display:block; margin-bottom:5px;">First Name</label>
+                        <input id="regFirstName" type="text" placeholder="e.g. Maria" style="width:100%; height:40px; padding:0 10px; border-radius:8px; border:1px solid #d4d4d8; font-size:13px; box-sizing:border-box;">
+                    </div>
+                    <div class="form-group">
+                        <label style="font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a; display:block; margin-bottom:5px;">Last Name</label>
+                        <input id="regLastName" type="text" placeholder="e.g. Santos" style="width:100%; height:40px; padding:0 10px; border-radius:8px; border:1px solid #d4d4d8; font-size:13px; box-sizing:border-box;">
+                    </div>
+                </div>
+                <div class="form-group" style="margin-bottom:12px;">
+                    <label style="font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a; display:block; margin-bottom:5px;">Desired Username <span style="color:#ef4444;">*</span></label>
+                    <input id="regUsername" type="text" placeholder="e.g. maria_santos" required minlength="3" style="width:100%; height:40px; padding:0 10px; border-radius:8px; border:1px solid #d4d4d8; font-size:13px; box-sizing:border-box;">
+                </div>
+                <div class="form-group" style="margin-bottom:12px;">
+                    <label style="font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a; display:block; margin-bottom:5px;">Mobile / Phone (Optional)</label>
+                    <input id="regPhone" type="tel" placeholder="e.g. 09171234567" style="width:100%; height:40px; padding:0 10px; border-radius:8px; border:1px solid #d4d4d8; font-size:13px; box-sizing:border-box;">
+                </div>
+                <div class="form-group" style="margin-bottom:16px;">
+                    <label style="font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a; display:block; margin-bottom:5px;">Password <span style="color:#ef4444;">*</span> (min. 6 characters)</label>
+                    <input id="regPassword" type="password" placeholder="Create a password" required minlength="6" style="width:100%; height:40px; padding:0 10px; border-radius:8px; border:1px solid #d4d4d8; font-size:13px; box-sizing:border-box;">
+                </div>
+                <button type="submit" id="btnCustomerRegister" style="width:100%; height:44px; background:#c9a227; color:#18181b; border:none; border-radius:10px; font-weight:800; font-size:13px; cursor:pointer;">Create Account & Sign In</button>
+                <div style="text-align:center; margin-top:14px; font-size:12px; color:#71717a;">
+                    Already have an account? <a href="javascript:void(0)" onclick="switchCustomerAuthTab('login')" style="color:#18181b; font-weight:700; text-decoration:none;">Sign In</a>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <!-- =========================================================
      TOAST
@@ -545,6 +619,7 @@
 
     <div class="toast" id="toast"></div>
 
+    <script src="/static/assets/js/auth.js"></script>
     <script src="/static/js/customer.js"></script>
 </body>
 

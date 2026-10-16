@@ -49,6 +49,15 @@ class PasswordChangeRequest(BaseModel):
 class PasswordResetRequest(BaseModel):
     new_password: str = Field(..., min_length=6)
 
+class CustomerRegisterRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50, description="Desired customer username")
+    password: str = Field(..., min_length=6, description="Password (at least 6 characters)")
+    first_name: Optional[str] = Field(None, max_length=50)
+    last_name: Optional[str] = Field(None, max_length=50)
+    email: Optional[str] = Field(None, max_length=100)
+    phone: Optional[str] = Field(None, max_length=30)
+    tenant_id: Optional[int] = Field(None)
+
 class UserResponse(BaseModel):
     id: int
     tenant_id: Optional[int] = None
@@ -123,12 +132,12 @@ class ProductResponse(BaseModel):
 
 # Shift Cash Movement Schemas
 class ShiftCashMovementCreate(BaseModel):
-    tenant_id: int
     shift_id: int
-    user_id: int
     type: str = Field(..., description="Must be 'PAID_IN' or 'PAID_OUT'")
     amount: Decimal = Field(..., gt=0.0)
     reason: Optional[str] = Field(None, max_length=255)
+    tenant_id: Optional[int] = None
+    user_id: Optional[int] = None
 
 class ShiftCashMovementResponse(BaseModel):
     id: int
@@ -330,7 +339,7 @@ class AdminProductCreate(BaseModel):
     sku: str = Field(..., max_length=50, description="Stock-Keeping Unit, unique per tenant")
     barcode: Optional[str] = Field(None, max_length=100)
     price: Decimal = Field(..., ge=0, description="Selling price")
-    cost: Decimal = Field(..., ge=0, description="Unit cost / COGS")
+    cost: Optional[Decimal] = Field(Decimal("0.0"), ge=0, description="Unit cost / COGS")
     image_url: Optional[str] = Field(None)
     is_active: Optional[bool] = Field(True)
 
@@ -352,6 +361,7 @@ class AdminProductResponse(BaseModel):
     tenant_id: int
     category_id: Optional[int] = None
     category_name: Optional[str] = None   # Denormalized from Category relationship
+    category: Optional[CategoryResponse] = None
     name: str
     sku: str
     barcode: Optional[str] = None
@@ -433,6 +443,7 @@ class DashboardStats(BaseModel):
     total_transactions_today: int = Field(description="Count of completed transactions today")
     low_stock_count: int = Field(description="Number of inventory items at or below min_stock")
     active_staff_count: int = Field(description="Number of active non-SUPER_ADMIN users in this tenant")
+    cash_in_drawer: Optional[Decimal] = Field(default=Decimal("0.0"), description="Total cash currently in active cashier drawers")
 
 
 # ─────────────────────────────────────────────

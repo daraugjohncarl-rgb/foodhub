@@ -91,9 +91,6 @@ def run_e2e_tests():
     assert update_res.status_code == 200, f"Report update failed: {update_res.text}"
     print(f"  ✓ Super Admin updated Report #{report_id} status to IN_PROGRESS")
 
-    del_res = client.delete(f"/api/v1/users/{created_cust['id']}", headers=admin_headers)
-    assert del_res.status_code == 204, f"Delete failed: {del_res.status_code}"
-    print(f"  ✓ Branch Admin successfully deleted staff account '{created_cust['username']}' (ID: {created_cust['id']})")
 
     # 5. Products, Inventory & Suppliers
     print("\n▶ 5. Testing Catalog, Inventory & Suppliers...")

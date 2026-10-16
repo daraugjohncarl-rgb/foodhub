@@ -183,7 +183,14 @@ generateReceiptHTML(order) {
     // Store for print button
     window.currentReceiptOrder = order;
 
+    const cancelBtn = order.id ? `
+      <button class="btn btn-outline" onclick="Utils.closeModal(); if (typeof promptRejectOrder === 'function') promptRejectOrder(${order.id});" style="border-color:#ef4444; color:#ef4444; font-size:12px; font-weight:700;" title="Cancel & Reject Order">
+        <i class="fas fa-ban"></i> Cancel / Reject Order
+      </button>
+    ` : '';
+
     const footer = `
+      ${cancelBtn}
       <button class="btn btn-outline" onclick="Utils.closeModal()">Close</button>
       <button class="btn btn-primary" onclick="Utils.printReceipt(window.currentReceiptOrder)"><i class="fas fa-print"></i> Print Receipt</button>
     `;

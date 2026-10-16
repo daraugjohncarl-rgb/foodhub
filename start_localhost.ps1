@@ -4,7 +4,9 @@ Write-Host " Starting Inbox POS on Localhost (http://127.0.0.1:8000)" -Foregroun
 Write-Host "========================================================" -ForegroundColor Cyan
 
 $PythonExe = "python"
-if (Test-Path "fastapi\venv\Scripts\python.exe") {
+if (Test-Path ".venv\Scripts\python.exe") {
+    $PythonExe = ".venv\Scripts\python.exe"
+} elseif (Test-Path "fastapi\venv\Scripts\python.exe") {
     $PythonExe = "fastapi\venv\Scripts\python.exe"
 }
 
