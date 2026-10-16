@@ -415,13 +415,19 @@ function renderInventoryRows(items) {
         <td><strong style="color:var(--text-main); font-size:13px;">${i.name}</strong></td>
         <td><span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:11px; font-weight:600;">${catName}</span></td>
         <td>
-          <button type="button" class="btn btn-outline btn-sm" onclick="openStockAdjustModal(${i.id}, '${i.name.replace(/'/g, "\\'")}', ${i.quantity}, ${unitPrice}, '${i.unit}')" title="Click to edit stock quantity & price" style="padding:4px 10px; font-weight:700; border-radius:8px; display:inline-flex; align-items:center; gap:6px; background:rgba(201,162,39,0.06); border:1px dashed rgba(205,190,150,0.6); cursor:pointer;">
+          <button type="button" class="btn btn-outline btn-sm" onclick="openStockAdjustModal(${i.id}, '${i.name.replace(/'/g, "\\'")}', ${i.quantity}, ${unitPrice}, '${i.unit}')" title="Click to edit stock quantity" style="padding:4px 10px; font-weight:700; border-radius:8px; display:inline-flex; align-items:center; gap:6px; background:rgba(201,162,39,0.06); border:1px dashed rgba(205,190,150,0.6); cursor:pointer;">
             <span style="font-size:13px; color:${isOut ? '#ef4444' : isLow ? '#f97316' : 'var(--text-main)'};">${i.quantity}</span>
             <span style="font-size:11px; color:var(--text-muted); font-weight:500;">${i.unit}</span>
             <i class="fas fa-pen-to-square" style="font-size:11px; color:#c9a227; margin-left:2px;"></i>
           </button>
         </td>
-        <td style="background:rgba(201,162,39,0.04);"><strong style="color:#c9a227; font-size:13px;">${Utils.formatCurrency(unitPrice)}</strong> <span style="font-size:11px; color:var(--text-muted);">/ ${i.unit}</span></td>
+        <td style="background:rgba(201,162,39,0.04);">
+          <button type="button" class="btn btn-outline btn-sm" onclick="openEditPriceModal(${i.id}, '${i.name.replace(/'/g, "\\'")}', ${unitPrice}, '${i.unit}')" title="Click to edit price unit of product" style="padding:4px 10px; font-weight:700; border-radius:8px; display:inline-flex; align-items:center; gap:6px; background:rgba(201,162,39,0.08); border:1px dashed rgba(205,190,150,0.6); cursor:pointer;">
+            <strong style="color:#c9a227; font-size:13px;">${Utils.formatCurrency(unitPrice)}</strong>
+            <span style="font-size:11px; color:var(--text-muted); font-weight:500;">/ ${i.unit}</span>
+            <i class="fas fa-pen-to-square" style="font-size:11px; color:#c9a227; margin-left:2px;"></i>
+          </button>
+        </td>
         <td style="background:rgba(16,185,129,0.04);"><strong style="color:#10b981; font-size:13px; font-weight:700;">${Utils.formatCurrency(totalVal)}</strong></td>
         <td><span class="badge ${badgeClass}" style="font-size:11px; font-weight:700;">${badgeText}</span></td>
         <td style="text-align:right;">
@@ -810,43 +816,67 @@ async function submitAddInventory() {
   }
 }
 
-function openStockAdjustModal(id, name, currentQty, currentPrice = 0, currentUnit = '') {
-  Utils.openModal(`Edit Stock & Price — ${name}`, `
-    <form id="form-stock-adj" onsubmit="event.preventDefault(); submitStockAdjust(${id}, ${currentQty});">
+function openEditPriceModal(id, name, currentPrice = 0, currentUnit = '') {
+  Utils.openModal(`Edit Price Unit — ${name}`, `
+    <form id="form-edit-price" onsubmit="event.preventDefault(); submitEditPrice(${id});">
       <div style="display:flex; justify-content:space-between; margin-bottom:14px; padding:10px 14px; background:rgba(201,162,39,0.08); border-radius:10px; border:1px solid rgba(205,190,150,0.3);">
-        <div><span style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Current Stock</span><div style="font-size:16px; font-weight:800; color:var(--text-main);">${currentQty} ${currentUnit}</div></div>
-        <div><span style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Price per Unit</span><div style="font-size:16px; font-weight:800; color:#c9a227;">₱${Number(currentPrice || 0).toFixed(2)}</div></div>
+        <div><span style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Product</span><div style="font-size:15px; font-weight:800; color:var(--text-main);">${name}</div></div>
+        <div><span style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Current Price</span><div style="font-size:16px; font-weight:800; color:#c9a227;">₱${Number(currentPrice || 0).toFixed(2)}</div></div>
       </div>
-      <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Current Stock Quantity (${currentUnit})</label>
-        <input type="number" step="0.01" id="adj-stock-qty" class="input-field" value="${currentQty}" placeholder="Set new stock quantity" style="width:100%; font-weight:700; font-size:15px;" oninput="
-          const v = parseFloat(this.value);
-          const deltaEl = document.getElementById('adj-delta');
-          if (deltaEl) deltaEl.value = !isNaN(v) ? (v - ${currentQty}).toFixed(2) : '';
-        ">
-      </div>
-      <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Or Quantity Change (+ Restock, - Deduct)</label>
-        <input type="number" step="0.01" id="adj-delta" class="input-field" placeholder="e.g. 20 (Restock) or -5 (Deduction)" style="width:100%;" oninput="
-          const d = parseFloat(this.value);
-          const stockEl = document.getElementById('adj-stock-qty');
-          if (stockEl) stockEl.value = !isNaN(d) ? (${currentQty} + d).toFixed(2) : '${currentQty}';
-        ">
-      </div>
-      <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Update Unit Price (₱)</label>
-        <input type="number" step="0.01" min="0" id="adj-price" class="input-field" value="${currentPrice || 0}" placeholder="e.g. 50.00" style="width:100%;">
-      </div>
-      <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Reason / Notes</label>
-        <input type="text" id="adj-reason" class="input-field" placeholder="e.g. Stock edit, Supplier delivery, Weekly audit" style="width:100%;">
+      <div class="input-group" style="margin-bottom:16px;">
+        <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Price Unit of Product (₱ / ${currentUnit})</label>
+        <input type="number" step="0.01" min="0" id="edit-prod-price" class="input-field" value="${currentPrice || 0}" placeholder="e.g. 55.00" style="width:100%; font-size:16px; font-weight:800; color:#c9a227;" autofocus>
       </div>
     </form>
-  `, `<button class="btn btn-primary" onclick="submitStockAdjust(${id}, ${currentQty})"><i class="fas fa-check"></i> Save Changes</button>`);
+  `, `<button class="btn btn-primary" onclick="submitEditPrice(${id})"><i class="fas fa-check"></i> Save Price</button>`);
+}
+
+async function submitEditPrice(itemId) {
+  const priceInput = document.getElementById("edit-prod-price");
+  const unitPrice = priceInput && priceInput.value.trim() !== "" ? parseFloat(priceInput.value) : undefined;
+
+  if (unitPrice === undefined || isNaN(unitPrice) || unitPrice < 0) {
+    Utils.showToast("Please enter a valid price for the product.", "danger");
+    return;
+  }
+
+  try {
+    const res = await Auth.fetch(`/api/v1/inventory/${itemId}/stock`, {
+      method: "PUT",
+      body: JSON.stringify({
+        quantity_delta: 0,
+        unit_price: unitPrice,
+        reason: "Price Unit Updated"
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to update price.");
+    }
+    Utils.showToast("Product price unit updated successfully", "success");
+    Utils.closeModal();
+    renderInventory();
+  } catch (e) {
+    Utils.showToast(e.message, "danger");
+  }
+}
+
+function openStockAdjustModal(id, name, currentQty, currentPrice = 0, currentUnit = '') {
+  Utils.openModal(`Edit Current Stock — ${name}`, `
+    <form id="form-stock-adj" onsubmit="event.preventDefault(); submitStockAdjust(${id}, ${currentQty});">
+      <div style="display:flex; justify-content:space-between; margin-bottom:14px; padding:10px 14px; background:rgba(0,0,0,0.03); border-radius:10px; border:1px solid rgba(205,190,150,0.3);">
+        <div><span style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Product</span><div style="font-size:15px; font-weight:800; color:var(--text-main);">${name}</div></div>
+        <div><span style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Current Stock</span><div style="font-size:16px; font-weight:800; color:var(--text-main);">${currentQty} ${currentUnit}</div></div>
+      </div>
+      <div class="input-group" style="margin-bottom:16px;">
+        <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Stock Quantity (${currentUnit})</label>
+        <input type="number" step="0.01" id="adj-stock-qty" class="input-field" value="${currentQty}" placeholder="Enter new stock quantity" style="width:100%; font-weight:700; font-size:16px;" autofocus>
+      </div>
+    </form>
+  `, `<button class="btn btn-primary" onclick="submitStockAdjust(${id}, ${currentQty})"><i class="fas fa-check"></i> Save Stock</button>`);
 }
 
 async function submitStockAdjust(itemId, originalQty = 0) {
-  const deltaInput = document.getElementById("adj-delta");
   const stockQtyInput = document.getElementById("adj-stock-qty");
   let delta = 0;
 
@@ -855,36 +885,21 @@ async function submitStockAdjust(itemId, originalQty = 0) {
     if (!isNaN(directQty)) {
       delta = directQty - originalQty;
     }
-  } else if (deltaInput && deltaInput.value.trim() !== "") {
-    const parsedDelta = parseFloat(deltaInput.value);
-    if (!isNaN(parsedDelta)) {
-      delta = parsedDelta;
-    }
-  }
-
-  const priceInput = document.getElementById("adj-price");
-  const unitPrice = priceInput && priceInput.value.trim() !== "" ? parseFloat(priceInput.value) : undefined;
-  const reason = document.getElementById("adj-reason")?.value.trim();
-
-  if (delta === 0 && (unitPrice === undefined || isNaN(unitPrice))) {
-    Utils.showToast("Please enter an updated stock quantity or price.", "danger");
-    return;
   }
 
   try {
     const res = await Auth.fetch(`/api/v1/inventory/${itemId}/stock`, {
       method: "PUT",
       body: JSON.stringify({
-        quantity_delta: isNaN(delta) ? 0 : delta,
-        unit_price: unitPrice !== undefined && !isNaN(unitPrice) ? unitPrice : undefined,
-        reason: reason || undefined
+        quantity_delta: delta,
+        reason: "Stock Quantity Updated"
       })
     });
     if (!res.ok) {
       const err = await res.json();
       throw new Error(err.detail || "Stock adjustment failed.");
     }
-    Utils.showToast("Stock & price updated successfully", "success");
+    Utils.showToast("Stock quantity updated successfully", "success");
     Utils.closeModal();
     renderInventory();
   } catch (e) {
@@ -5000,8 +5015,8 @@ function renderCashDrawerTrackerUI(container, data) {
     <div class="section-card fade-up delay-2" style="margin-bottom:24px;">
       <div class="section-head">
         <div>
-          <h2><i class="fas fa-users-viewfinder" style="color:#c9a227; margin-right:8px;"></i> Cashier Drawers & Shift Balance Breakdown</h2>
-          <span style="font-size:12px; color:var(--text-muted);">Real-time breakdown: [Starting Float] + [Cash Sales] + [Paid In] - [Paid Out / Drops] = [Expected Cash in Drawer]</span>
+          <h2><i class="fas fa-cash-register" style="color:#c9a227; margin-right:8px;"></i> Cashier Drawer to Track Cashier Overall Income</h2>
+          <span style="font-size:12px; color:var(--text-muted);">Real-time tracking of active cashier drawers and cashier overall income from complete orders</span>
         </div>
         <span class="badge badge-info" style="font-size:11px; font-weight:700;">${shifts.length} Recorded Shifts</span>
       </div>
@@ -5012,15 +5027,10 @@ function renderCashDrawerTrackerUI(container, data) {
               <th>Cashier</th>
               <th>Shift Status</th>
               <th>Started At</th>
-              <th>Start Float</th>
-              <th style="background:rgba(16,185,129,0.08); color:#10b981;">Complete Orders Total</th>
+              <th style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:13px;">Cashier Drawer</th>
+              <th style="background:rgba(16,185,129,0.12); color:#10b981; font-size:13px;">Cashier Overall Income</th>
               <th>Cash Sales</th>
-              <th>Non-Cash</th>
-              <th>Paid In (+)</th>
-              <th>Cash Drops (-)</th>
-              <th style="background:rgba(201,162,39,0.1); color:#c9a227;">Expected in Drawer</th>
-              <th>End / Actual</th>
-              <th>Actions</th>
+              <th style="text-align:right;">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -5034,7 +5044,7 @@ function renderCashDrawerTrackerUI(container, data) {
 
 function renderDrawerTableRows(shifts) {
   if (!shifts || !shifts.length) {
-    return '<tr><td colspan="11" style="text-align:center; padding:30px; color:var(--text-muted);"><i class="fas fa-info-circle"></i> No cashier shifts recorded yet.</td></tr>';
+    return '<tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-muted);"><i class="fas fa-info-circle"></i> No cashier shifts recorded yet.</td></tr>';
   }
   return shifts.map(s => {
     const isOpen = s.status === 'open';
@@ -5043,13 +5053,6 @@ function renderDrawerTableRows(shifts) {
       : '<span class="badge badge-secondary" style="font-size:11px; font-weight:700;">CLOSED</span>';
 
     const startDate = s.start_time ? new Date(s.start_time).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '—';
-    const varianceHtml = (s.variance !== null && s.variance !== undefined)
-      ? (s.variance === 0
-          ? '<span style="color:#10b981; font-weight:700;">Balanced (₱0.00)</span>'
-          : (s.variance > 0
-              ? `<span style="color:#10b981; font-weight:700;">+${Utils.formatCurrency(s.variance)} (Over)</span>`
-              : `<span style="color:#ef4444; font-weight:700;">${Utils.formatCurrency(s.variance)} (Short)</span>`))
-      : '<span style="color:var(--text-muted);">—</span>';
 
     return `
       <tr>
@@ -5066,27 +5069,22 @@ function renderDrawerTableRows(shifts) {
         </td>
         <td>${statusBadge}</td>
         <td style="color:var(--text-muted); font-size:12px;">${startDate}</td>
-        <td><strong style="font-size:13px; color:var(--text-main);">${Utils.formatCurrency(s.start_cash)}</strong></td>
-        <td style="background:rgba(16,185,129,0.06);"><strong style="color:#10b981; font-weight:800; font-size:14px;">${Utils.formatCurrency(s.total_sales || (s.cash_sales + s.non_cash_sales))}</strong></td>
-        <td><span style="color:#10b981; font-weight:700; font-size:13px;">+${Utils.formatCurrency(s.cash_sales)}</span></td>
-        <td><span style="color:#6366f1; font-size:12px;">${Utils.formatCurrency(s.non_cash_sales)}</span></td>
-        <td><span style="color:#10b981; font-size:12px;">+${Utils.formatCurrency(s.paid_in)}</span></td>
-        <td><span style="color:#ef4444; font-size:12px;">-${Utils.formatCurrency(s.paid_out)}</span></td>
-        <td style="background:rgba(201,162,39,0.1);">
+        <td style="background:rgba(201,162,39,0.08);">
           <strong style="color:#c9a227; font-size:15px; font-weight:800;">${Utils.formatCurrency(s.expected_cash)}</strong>
         </td>
-        <td style="font-size:12px;">
-          ${s.end_cash !== null ? `<strong>${Utils.formatCurrency(s.end_cash)}</strong><br>${varianceHtml}` : '<span style="color:#10b981; font-weight:600;"><i class="fas fa-lock-open" style="font-size:10px;"></i> In Progress</span>'}
+        <td style="background:rgba(16,185,129,0.08);">
+          <strong style="color:#10b981; font-weight:800; font-size:15px;">${Utils.formatCurrency(s.total_sales || (s.cash_sales + s.non_cash_sales))}</strong>
         </td>
-        <td>
-          <div style="display:flex; gap:6px;">
+        <td><span style="color:#10b981; font-weight:700; font-size:13px;">+${Utils.formatCurrency(s.cash_sales)}</span></td>
+        <td style="text-align:right;">
+          <div style="display:inline-flex; gap:6px;">
             ${isOpen ? `
               <button class="btn btn-primary btn-sm" onclick="openAddCashMovementModal(${s.id})" title="Cashout Cashier Drawer and Reset to ₱0.00" style="padding:4px 10px; font-size:11px; font-weight:700;">
                 <i class="fas fa-hand-holding-dollar"></i> Cashout
               </button>
             ` : ''}
             <button class="btn btn-outline btn-sm" onclick="openShiftMovementsModal(${s.id})" title="View Cash Movement History" style="padding:4px 8px; font-size:11px;">
-              <i class="fas fa-list-check"></i> Audit (${(s.movements || []).length})
+              <i class="fas fa-list-check"></i> Audit
             </button>
           </div>
         </td>
