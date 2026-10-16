@@ -45,6 +45,10 @@ async function renderView(viewId, container) {
       case "pos":
         await renderPOS(container);
         break;
+      case "drinks":
+      case "drinks_station":
+        await renderDrinksStation(container);
+        break;
       case "kitchen":
         await renderKitchen(container);
         break;
@@ -1379,6 +1383,11 @@ async function renderPOS(c) {
             <i class="fas fa-bell"></i>
             <span id="pos-online-orders-badge" style="background:#ef4444; color:#fff; padding:1px 5px; border-radius:10px; font-size:10px; font-weight:bold; display:none;">0</span>
           </button>
+          <button id="pos-drinks-orders-btn" onclick="renderView('drinks')" style="height:38px; padding:0 12px; background:#eff6ff; color:#2563eb; border:1px solid rgba(37,99,235,0.3); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:6px; white-space:nowrap;" title="Cashier Drinks Order">
+            <i class="fas fa-glass-water" style="color:#2563eb;"></i>
+            <span>Drinks Order</span>
+            <span id="pos-drinks-badge" style="background:#2563eb; color:#fff; padding:1px 6px; border-radius:10px; font-size:10px; font-weight:bold; display:none;">0</span>
+          </button>
         </div>
 
         <!-- INLINE LIVE VOICE RECORDING STATUS STRIP -->
@@ -2467,7 +2476,7 @@ async function submitCheckout() {
 // ─────────────────────────────────────────────────────────────────────────────
 async function renderKitchen(c) {
   c = c || document.getElementById('view-container');
-  const res = await Auth.fetch(`/api/v1/kitchen/orders?_t=${Date.now()}`);
+  const res = await Auth.fetch(`/api/v1/kitchen/orders?type=food&_t=${Date.now()}`);
   const orders = res.ok ? await res.json() : [];
 
   c.innerHTML = `
@@ -2496,7 +2505,7 @@ async function renderKitchen(c) {
       <div>
         <h2 style="font-size:22px; font-weight:800; color:var(--text-main); margin:0;">Live Kitchen Orders</h2>
         <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">
-          Monitoring real-time ticket preparation
+          Food orders only — Monitoring real-time kitchen preparation
         </p>
       </div>
       <div style="display:flex; gap:10px;">
@@ -2535,9 +2544,9 @@ async function renderKitchen(c) {
         <div class="stat-card">
             <div class="stat-icon gold"><i class="fas fa-utensils"></i></div>
             <div class="stat-info">
-                <h3>Items to Cook</h3>
+                <h3>Food to Cook</h3>
                 <div class="stat-count">${orders.filter(o => o.status !== 'COMPLETED' && o.status !== 'READY').reduce((sum, o) => sum + (o.items?.length || 0), 0)}</div>
-                <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-list-ol"></i> Total Active Items</div>
+                <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-list-ol"></i> Total Food Items</div>
             </div>
         </div>
     </div>
@@ -2622,7 +2631,7 @@ async function renderKitchen(c) {
 // ─────────────────────────────────────────────────────────────────────────────
 async function renderKitchenLogs(c) {
   c = c || document.getElementById('view-container') || document.getElementById('main-content');
-  const res = await Auth.fetch(`/api/v1/kitchen/orders?_t=${Date.now()}`);
+  const res = await Auth.fetch(`/api/v1/kitchen/orders?type=food&_t=${Date.now()}`);
   const orders = res.ok ? await res.json() : [];
   const completedOrders = orders.filter(o => o.status === 'COMPLETED' || o.status === 'READY');
 
@@ -2700,6 +2709,254 @@ async function updateOrderStatus(orderId, newStatus) {
   } catch (err) {
     console.error("Failed to update status", err);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5.5 CASHIER DRINKS ORDER (DRINK PREPARATION & DISPATCH COUNTER)
+// ─────────────────────────────────────────────────────────────────────────────
+async function renderDrinksStation(c) {
+  c = c || document.getElementById('view-container');
+  if (!c) return;
+
+  const res = await Auth.fetch(`/api/v1/kitchen/drinks-orders?_t=${Date.now()}`);
+  const orders = res.ok ? await res.json() : [];
+
+  pollDrinksBadge();
+
+  if (window.drinksStationInterval) {
+    clearInterval(window.drinksStationInterval);
+    window.drinksStationInterval = null;
+  }
+  window.drinksStationInterval = setInterval(async () => {
+    const grid = document.getElementById('drinks-tickets-grid');
+    if (grid) {
+      const liveRes = await Auth.fetch(`/api/v1/kitchen/drinks-orders?_t=${Date.now()}`);
+      if (liveRes.ok) {
+        renderDrinksStation(c);
+      }
+    } else {
+      clearInterval(window.drinksStationInterval);
+      window.drinksStationInterval = null;
+    }
+  }, 7000);
+
+  const activeOrders = orders.filter(o => o.status !== 'COMPLETED' && o.status !== 'READY');
+  const pendingOrders = orders.filter(o => o.status === 'PENDING');
+  const preparingOrders = orders.filter(o => o.status === 'PREPARING');
+  const completedOrders = orders.filter(o => o.status === 'COMPLETED' || o.status === 'READY');
+  const totalItems = activeOrders.reduce((sum, o) => sum + (o.items?.length || 0), 0);
+
+  c.innerHTML = `
+    <style>
+      .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 14px; margin-bottom: 24px; }
+      @media (max-width: 600px) {
+        .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+      }
+      @media (max-width: 400px) {
+        .stats-grid { grid-template-columns: 1fr; }
+      }
+      .stat-card { padding: 20px 18px; display: flex; align-items: center; gap: 14px; background: var(--card-bg, #ffffff); border-radius: var(--radius-card, 16px); border: 1px solid rgba(205, 190, 150, 0.35); box-shadow: 0 4px 15px rgba(0,0,0,0.03); transition: transform 0.3s ease, box-shadow 0.3s ease; }
+      .stat-card:hover { transform: translateY(-3px); box-shadow: 0 15px 35px rgba(180,140,50,0.12); }
+      .stat-icon { width: 50px; height: 50px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+      .stat-icon.gold   { background: rgba(201,162,39,0.12); color: #c9a227; }
+      .stat-icon.green  { background: rgba(16,185,129,0.12); color: #10b981; }
+      .stat-icon.orange { background: rgba(249,115,22,0.12); color: #f97316; }
+      .stat-icon.blue   { background: rgba(59,130,246,0.12); color: #3b82f6; }
+      .stat-info h3 { font-size: 11px; color: var(--text-muted, #71717a); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; margin-top: 0; }
+      .stat-count { font-size: 24px; font-weight: 800; color: var(--text-main, #18181b); line-height: 1.1; }
+      .stat-trend { font-size: 11px; margin-top: 4px; font-weight: 500; }
+    </style>
+
+    <!-- Top Header Toolbar -->
+    <div class="toolbar fade-up" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:24px;">
+      <div>
+        <h2 style="font-size:22px; font-weight:800; color:var(--text-main); margin:0;">
+          <i class="fas fa-glass-water" style="color:#2563eb; margin-right:8px;"></i>Cashier Drinks Order
+        </h2>
+        <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">
+          Live beverage orders received & prepared by Cashier
+        </p>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <span style="display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#2563eb; background:rgba(37,99,235,0.08); padding:6px 14px; border-radius:20px;">
+          <span style="width:8px; height:8px; border-radius:50%; background:#2563eb; display:inline-block;"></span> Live Drinks Queue
+        </span>
+        <button class="btn btn-outline" onclick="renderDrinksStation()" style="border-color:#2563eb; color:#2563eb; display:inline-flex; align-items:center; gap:6px; cursor:pointer;">
+          <i class="fas fa-sync-alt"></i> Refresh Board
+        </button>
+      </div>
+    </div>
+
+    <!-- Drinks KPIs -->
+    <div class="stats-grid fade-up delay-1">
+      <div class="stat-card">
+        <div class="stat-icon orange"><i class="fas fa-clock"></i></div>
+        <div class="stat-info">
+          <h3>Pending Drinks</h3>
+          <div class="stat-count">${pendingOrders.length}</div>
+          <div class="stat-trend" style="color:#f97316;"><i class="fas fa-exclamation-circle"></i> Needs Dispensing</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon blue"><i class="fas fa-blender"></i></div>
+        <div class="stat-info">
+          <h3>Preparing Drinks</h3>
+          <div class="stat-count">${preparingOrders.length}</div>
+          <div class="stat-trend" style="color:#3b82f6;"><i class="fas fa-spinner fa-spin"></i> In Progress</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon green"><i class="fas fa-check-double"></i></div>
+        <div class="stat-info">
+          <h3>Drinks Served</h3>
+          <div class="stat-count">${completedOrders.length}</div>
+          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-thumbs-up"></i> Dispatched</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon gold"><i class="fas fa-mug-hot"></i></div>
+        <div class="stat-info">
+          <h3>Drink Items</h3>
+          <div class="stat-count">${totalItems}</div>
+          <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-list-ol"></i> Drinks to Pour</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Responsive Grid for Drink Tickets -->
+    <div id="drinks-tickets-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:20px; align-items:start;" class="fade-up delay-2">
+      ${(() => {
+        if (!activeOrders.length) {
+          return `
+            <div style="grid-column:1/-1; text-align:center; padding:60px 20px; background:#ffffff; border:1px dashed rgba(59,130,246,0.35); border-radius:16px;">
+              <div style="width:64px; height:64px; border-radius:50%; background:rgba(37,99,235,0.08); color:#2563eb; display:flex; align-items:center; justify-content:center; margin:0 auto 16px; font-size:26px;">
+                <i class="fas fa-glass-cheers"></i>
+              </div>
+              <h3 style="font-size:17px; font-weight:700; color:var(--text-main); margin-bottom:8px;">All Drinks Dispatched!</h3>
+              <p style="font-size:13px; color:var(--text-muted); max-width:320px; margin:0 auto;">There are no active drink orders in the queue right now. Drink orders from the POS and customer QR codes appear here instantly for the cashier!</p>
+            </div>
+          `;
+        }
+
+        return activeOrders.map(ord => {
+          const isCompleted = ord.status === 'COMPLETED' || ord.status === 'READY';
+          let badgeStyle = "background:rgba(249,115,22,0.12); color:#f97316;";
+          if (isCompleted) {
+            badgeStyle = "background:rgba(16,185,129,0.12); color:#10b981;";
+          } else if (ord.status === 'PREPARING') {
+            badgeStyle = "background:rgba(59,130,246,0.12); color:#3b82f6;";
+          }
+
+          return `
+            <div class="section-card" style="padding:0; overflow:hidden; border:1.5px solid ${isCompleted ? 'rgba(16,185,129,0.3)' : 'rgba(59,130,246,0.3)'}; border-radius:14px; box-shadow:0 4px 15px rgba(0,0,0,0.04);">
+              <!-- Ticket Header -->
+              <div style="background:${isCompleted ? '#f0fdf4' : '#eff6ff'}; padding:16px 20px; border-bottom:1px solid rgba(59,130,246,0.15); display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <strong style="font-size:16px; font-weight:800; color:var(--text-main);">${ord.id || '#ORD-XXXX'}</strong>
+                    <span style="font-size:11px; font-weight:700; background:#2563eb; color:#ffffff; padding:2px 8px; border-radius:12px;">🍹 DRINKS</span>
+                  </div>
+                  <div style="font-size:11px; color:var(--text-muted); margin-top:3px;">
+                    <i class="far fa-clock"></i> ${ord.time || 'Just now'} • <strong>${ord.table || 'Takeout'}</strong>
+                  </div>
+                </div>
+                <span class="badge" style="font-size:11px; font-weight:700; ${badgeStyle}">
+                  ${ord.status || 'PENDING'}
+                </span>
+              </div>
+
+              <!-- Drinks Items List -->
+              <div style="padding:16px 20px;">
+                <ul style="list-style:none; padding:0; margin:0;">
+                  ${(ord.items || []).map((it, idx) => `
+                    <li style="display:flex; align-items:flex-start; gap:12px; margin-bottom:${idx === (ord.items.length - 1) ? '0' : '12px'}; padding-bottom:${idx === (ord.items.length - 1) ? '0' : '12px'}; border-bottom:${idx === (ord.items.length - 1) ? 'none' : '1px dashed rgba(205,190,150,0.3)'};">
+                      <div style="font-size:16px; font-weight:800; color:#2563eb; min-width:32px; text-align:right;">
+                        ${it.qty || it.quantity}<span style="font-size:12px; color:var(--text-muted);">x</span>
+                      </div>
+                      <div>
+                        <div style="font-size:14px; font-weight:700; color:var(--text-main); line-height:1.3;">${it.name || it.product_name}</div>
+                        ${it.notes ? `<div style="font-size:12px; color:#f97316; margin-top:4px;"><i class="fas fa-exclamation-circle"></i> ${it.notes}</div>` : ''}
+                      </div>
+                    </li>
+                  `).join('')}
+                </ul>
+              </div>
+
+              <!-- Action Footer -->
+              <div style="padding:14px 20px; background:#fcfcfc; border-top:1px solid rgba(205,190,150,0.15); text-align:center;">
+                ${isCompleted ? `
+                  <div style="color:#10b981; font-size:13px; font-weight:700; display:flex; align-items:center; justify-content:center; gap:8px; padding:6px 0;">
+                    <i class="fas fa-check-circle" style="font-size:16px;"></i> Drinks Dispatched
+                  </div>
+                ` : ord.status === 'PREPARING' ? `
+                  <button class="btn btn-primary" style="width:100%; font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:8px; background:#10b981; color:#fff; border:none; cursor:pointer;" onclick="updateDrinksStatus('${ord.raw_id}', 'COMPLETED')">
+                    <i class="fas fa-check"></i> Mark Served / Done
+                  </button>
+                ` : `
+                  <button class="btn btn-outline" style="width:100%; font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:8px; color:#2563eb; border-color:#2563eb; cursor:pointer;" onclick="updateDrinksStatus('${ord.raw_id}', 'PREPARING')">
+                    <i class="fas fa-blender"></i> Accept & Prepare Drinks
+                  </button>
+                `}
+              </div>
+            </div>
+          `;
+        }).join('');
+      })()}
+    </div>
+  `;
+}
+
+async function updateDrinksStatus(orderId, newStatus) {
+  try {
+    const res = await Auth.fetch(`/api/v1/kitchen/orders/${orderId}/drinks-status`, {
+      method: "PUT",
+      body: JSON.stringify({ status: newStatus })
+    });
+    if (res.ok) {
+      renderDrinksStation();
+      pollDrinksBadge();
+      localStorage.setItem("RESTOTRACK_SYNC_DRINKS", JSON.stringify({ timestamp: Date.now(), orderId: orderId, status: newStatus }));
+    }
+  } catch (err) {
+    console.error("Failed to update drinks status", err);
+  }
+}
+
+async function pollDrinksBadge() {
+  try {
+    const res = await Auth.fetch(`/api/v1/kitchen/drinks-orders?_t=${Date.now()}`);
+    if (res.ok) {
+      const orders = await res.json();
+      const activeCount = orders.filter(o => o.status !== 'COMPLETED' && o.status !== 'READY').length;
+      const sidebarBadge = document.getElementById("cashier-drinks-badge");
+      if (sidebarBadge) {
+        if (activeCount > 0) {
+          sidebarBadge.textContent = activeCount;
+          sidebarBadge.style.display = "inline-block";
+        } else {
+          sidebarBadge.style.display = "none";
+        }
+      }
+      const posBadge = document.getElementById("pos-drinks-badge");
+      if (posBadge) {
+        if (activeCount > 0) {
+          posBadge.textContent = activeCount;
+          posBadge.style.display = "inline-block";
+        } else {
+          posBadge.style.display = "none";
+        }
+      }
+    }
+  } catch (e) {}
+}
+
+const renderDrinksOrder = renderDrinksStation;
+window.renderDrinksOrder = renderDrinksStation;
+
+// Start drinks badge polling automatically for cashier
+if (typeof window !== "undefined" && !window._drinksPollingStarted) {
+  window._drinksPollingStarted = true;
+  setInterval(pollDrinksBadge, 8000);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

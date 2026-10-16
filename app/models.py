@@ -227,6 +227,7 @@ class Transaction(Base):
     discount_amount = Column(Numeric(10, 2), default=0.0, nullable=False)
     net_amount = Column(Numeric(10, 2), default=0.0, nullable=False)
     status = Column(String(20), default="completed", nullable=False)
+    fulfillment_status = Column(String(20), default="pending", nullable=False)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
     # Relationships

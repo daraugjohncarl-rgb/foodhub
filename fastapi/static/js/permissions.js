@@ -37,6 +37,7 @@ const ROLE_NAV_CONFIG = {
   ],
   cashier: [
     { id: "pos", label: "Point of Sale (POS)", icon: "fas fa-cash-register" },
+    { id: "drinks", label: "Drinks Order", icon: "fas fa-glass-water", badgeId: "cashier-drinks-badge" },
     { id: "customer_orders", label: "Customer Orders", icon: "fas fa-mobile-alt", badgeId: "cashier-orders-badge" },
     { id: "transactions", label: "Today's Orders", icon: "fas fa-receipt" }
   ],
