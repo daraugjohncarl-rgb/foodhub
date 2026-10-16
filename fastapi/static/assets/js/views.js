@@ -415,20 +415,33 @@ function renderInventoryRows(items) {
         <td><strong style="color:var(--text-main); font-size:13px;">${i.name}</strong></td>
         <td><span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:11px; font-weight:600;">${catName}</span></td>
         <td>
-          <button type="button" class="btn btn-outline btn-sm" onclick="openStockAdjustModal(${i.id}, '${i.name.replace(/'/g, "\\'")}', ${i.quantity}, ${unitPrice}, '${i.unit}')" title="Click to edit stock quantity" style="padding:4px 10px; font-weight:700; border-radius:8px; display:inline-flex; align-items:center; gap:6px; background:rgba(201,162,39,0.06); border:1px dashed rgba(205,190,150,0.6); cursor:pointer;">
-            <span style="font-size:13px; color:${isOut ? '#ef4444' : isLow ? '#f97316' : 'var(--text-main)'};">${i.quantity}</span>
-            <span style="font-size:11px; color:var(--text-muted); font-weight:500;">${i.unit}</span>
-            <i class="fas fa-pen-to-square" style="font-size:11px; color:#c9a227; margin-left:2px;"></i>
-          </button>
+          <div style="display:inline-flex; align-items:center; gap:6px;">
+            <input type="number" 
+                   step="any"
+                   id="inv-stock-${i.id}" 
+                   class="input-field" 
+                   value="${Number(i.quantity)}" 
+                   style="width:90px; height:36px; padding:4px 10px; font-size:14px; font-weight:800; border-radius:18px; border:1.5px solid rgba(205,190,150,0.5); background:#fff; text-align:center; color:var(--text-main);" 
+                   onchange="inlineUpdateStock(${i.id}, ${Number(i.quantity)}, this.value)"
+                   title="Adjust stock quantity directly">
+            <span style="font-size:11px; color:var(--text-muted); font-weight:600;">${i.unit}</span>
+          </div>
         </td>
-        <td style="background:rgba(201,162,39,0.04);">
-          <button type="button" class="btn btn-outline btn-sm" onclick="openEditPriceModal(${i.id}, '${i.name.replace(/'/g, "\\'")}', ${unitPrice}, '${i.unit}')" title="Click to edit price unit of product" style="padding:4px 10px; font-weight:700; border-radius:8px; display:inline-flex; align-items:center; gap:6px; background:rgba(201,162,39,0.08); border:1px dashed rgba(205,190,150,0.6); cursor:pointer;">
-            <strong style="color:#c9a227; font-size:13px;">${Utils.formatCurrency(unitPrice)}</strong>
-            <span style="font-size:11px; color:var(--text-muted); font-weight:500;">/ ${i.unit}</span>
-            <i class="fas fa-pen-to-square" style="font-size:11px; color:#c9a227; margin-left:2px;"></i>
-          </button>
+        <td style="background:rgba(201,162,39,0.03);">
+          <div style="display:inline-flex; align-items:center; gap:4px;">
+            <span style="font-size:13px; font-weight:800; color:#c9a227;">₱</span>
+            <input type="number" 
+                   step="0.01" 
+                   min="0"
+                   id="inv-price-${i.id}" 
+                   class="input-field" 
+                   value="${unitPrice}" 
+                   style="width:95px; height:36px; padding:4px 10px; font-size:14px; font-weight:800; color:#c9a227; border-radius:18px; border:1.5px solid rgba(201,162,39,0.45); background:#fff; text-align:center;" 
+                   onchange="inlineUpdatePrice(${i.id}, this.value)"
+                   title="Adjust price unit directly">
+          </div>
         </td>
-        <td style="background:rgba(16,185,129,0.04);"><strong style="color:#10b981; font-size:13px; font-weight:700;">${Utils.formatCurrency(totalVal)}</strong></td>
+        <td style="background:rgba(16,185,129,0.04);"><strong id="inv-val-${i.id}" style="color:#10b981; font-size:13px; font-weight:700;">${Utils.formatCurrency(totalVal)}</strong></td>
         <td><span class="badge ${badgeClass}" style="font-size:11px; font-weight:700;">${badgeText}</span></td>
         <td style="text-align:right;">
           <button class="btn btn-outline btn-sm" style="padding:5px 9px; font-size:12px; color:var(--danger); border-radius:8px;" onclick="deleteInventoryItem(${i.id}, '${i.name.replace(/'/g, "\\'")}')" title="Delete Item">
@@ -816,27 +829,50 @@ async function submitAddInventory() {
   }
 }
 
-function openEditPriceModal(id, name, currentPrice = 0, currentUnit = '') {
-  Utils.openModal(`Edit Price Unit — ${name}`, `
-    <form id="form-edit-price" onsubmit="event.preventDefault(); submitEditPrice(${id});">
-      <div style="display:flex; justify-content:space-between; margin-bottom:14px; padding:10px 14px; background:rgba(201,162,39,0.08); border-radius:10px; border:1px solid rgba(205,190,150,0.3);">
-        <div><span style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Product</span><div style="font-size:15px; font-weight:800; color:var(--text-main);">${name}</div></div>
-        <div><span style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Current Price</span><div style="font-size:16px; font-weight:800; color:#c9a227;">₱${Number(currentPrice || 0).toFixed(2)}</div></div>
-      </div>
-      <div class="input-group" style="margin-bottom:16px;">
-        <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Price Unit of Product (₱ / ${currentUnit})</label>
-        <input type="number" step="0.01" min="0" id="edit-prod-price" class="input-field" value="${currentPrice || 0}" placeholder="e.g. 55.00" style="width:100%; font-size:16px; font-weight:800; color:#c9a227;" autofocus>
-      </div>
-    </form>
-  `, `<button class="btn btn-primary" onclick="submitEditPrice(${id})"><i class="fas fa-check"></i> Save Price</button>`);
+async function inlineUpdateStock(itemId, oldQty, newQtyVal) {
+  const newQty = parseFloat(newQtyVal);
+  if (isNaN(newQty)) {
+    Utils.showToast("Please enter a valid stock number", "warning");
+    return;
+  }
+  const delta = newQty - oldQty;
+  if (delta === 0) return;
+
+  try {
+    const res = await Auth.fetch(`/api/v1/inventory/${itemId}/stock`, {
+      method: "PUT",
+      body: JSON.stringify({
+        quantity_delta: delta,
+        reason: "Inline Stock Adjustment"
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Stock adjustment failed.");
+    }
+    const item = cachedInventory.find(x => x.id === itemId);
+    if (item) {
+      item.quantity = newQty;
+      const unitP = Number(item.unit_price) || 0;
+      const valEl = document.getElementById(`inv-val-${itemId}`);
+      if (valEl) valEl.textContent = Utils.formatCurrency(newQty * unitP);
+    }
+    const input = document.getElementById(`inv-stock-${itemId}`);
+    if (input) {
+      input.setAttribute("onchange", `inlineUpdateStock(${itemId}, ${newQty}, this.value)`);
+    }
+    Utils.showToast("Stock quantity adjusted", "success");
+  } catch (e) {
+    Utils.showToast(e.message, "danger");
+    const input = document.getElementById(`inv-stock-${itemId}`);
+    if (input) input.value = oldQty;
+  }
 }
 
-async function submitEditPrice(itemId) {
-  const priceInput = document.getElementById("edit-prod-price");
-  const unitPrice = priceInput && priceInput.value.trim() !== "" ? parseFloat(priceInput.value) : undefined;
-
-  if (unitPrice === undefined || isNaN(unitPrice) || unitPrice < 0) {
-    Utils.showToast("Please enter a valid price for the product.", "danger");
+async function inlineUpdatePrice(itemId, newPriceVal) {
+  const newPrice = parseFloat(newPriceVal);
+  if (isNaN(newPrice) || newPrice < 0) {
+    Utils.showToast("Please enter a valid price", "warning");
     return;
   }
 
@@ -845,63 +881,22 @@ async function submitEditPrice(itemId) {
       method: "PUT",
       body: JSON.stringify({
         quantity_delta: 0,
-        unit_price: unitPrice,
-        reason: "Price Unit Updated"
+        unit_price: newPrice,
+        reason: "Inline Price Adjustment"
       })
     });
     if (!res.ok) {
       const err = await res.json();
       throw new Error(err.detail || "Failed to update price.");
     }
-    Utils.showToast("Product price unit updated successfully", "success");
-    Utils.closeModal();
-    renderInventory();
-  } catch (e) {
-    Utils.showToast(e.message, "danger");
-  }
-}
-
-function openStockAdjustModal(id, name, currentQty, currentPrice = 0, currentUnit = '') {
-  Utils.openModal(`Edit Current Stock — ${name}`, `
-    <form id="form-stock-adj" onsubmit="event.preventDefault(); submitStockAdjust(${id}, ${currentQty});">
-      <div style="display:flex; justify-content:space-between; margin-bottom:14px; padding:10px 14px; background:rgba(0,0,0,0.03); border-radius:10px; border:1px solid rgba(205,190,150,0.3);">
-        <div><span style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Product</span><div style="font-size:15px; font-weight:800; color:var(--text-main);">${name}</div></div>
-        <div><span style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Current Stock</span><div style="font-size:16px; font-weight:800; color:var(--text-main);">${currentQty} ${currentUnit}</div></div>
-      </div>
-      <div class="input-group" style="margin-bottom:16px;">
-        <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Stock Quantity (${currentUnit})</label>
-        <input type="number" step="0.01" id="adj-stock-qty" class="input-field" value="${currentQty}" placeholder="Enter new stock quantity" style="width:100%; font-weight:700; font-size:16px;" autofocus>
-      </div>
-    </form>
-  `, `<button class="btn btn-primary" onclick="submitStockAdjust(${id}, ${currentQty})"><i class="fas fa-check"></i> Save Stock</button>`);
-}
-
-async function submitStockAdjust(itemId, originalQty = 0) {
-  const stockQtyInput = document.getElementById("adj-stock-qty");
-  let delta = 0;
-
-  if (stockQtyInput && stockQtyInput.value.trim() !== "") {
-    const directQty = parseFloat(stockQtyInput.value);
-    if (!isNaN(directQty)) {
-      delta = directQty - originalQty;
+    const item = cachedInventory.find(x => x.id === itemId);
+    if (item) {
+      item.unit_price = newPrice;
+      const qty = Number(item.quantity) || 0;
+      const valEl = document.getElementById(`inv-val-${itemId}`);
+      if (valEl) valEl.textContent = Utils.formatCurrency(qty * newPrice);
     }
-  }
-
-  try {
-    const res = await Auth.fetch(`/api/v1/inventory/${itemId}/stock`, {
-      method: "PUT",
-      body: JSON.stringify({
-        quantity_delta: delta,
-        reason: "Stock Quantity Updated"
-      })
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || "Stock adjustment failed.");
-    }
-    Utils.showToast("Stock quantity updated successfully", "success");
-    Utils.closeModal();
-    renderInventory();
+    Utils.showToast("Price unit adjusted", "success");
   } catch (e) {
     Utils.showToast(e.message, "danger");
   }
