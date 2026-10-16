@@ -396,6 +396,7 @@ class InventoryItemCreate(BaseModel):
     quantity: Decimal = Field(0.0, ge=0, description="Opening stock quantity")
     unit: str = Field(..., max_length=20, description="Unit of measure, e.g. kg, pcs, L")
     min_stock: Decimal = Field(0.0, ge=0, description="Low-stock threshold")
+    unit_price: Optional[Decimal] = Field(0.0, ge=0, description="Price or cost per unit")
 
 
 class InventoryStockAdjust(BaseModel):
@@ -406,6 +407,7 @@ class InventoryStockAdjust(BaseModel):
     """
     quantity_delta: Decimal = Field(..., description="Amount to add (positive) or subtract (negative)")
     reason: Optional[str] = Field(None, max_length=255, description="Reason for adjustment (optional)")
+    unit_price: Optional[Decimal] = Field(None, ge=0, description="Optional updated price per unit")
 
 
 class InventoryItemResponse(BaseModel):
@@ -417,6 +419,8 @@ class InventoryItemResponse(BaseModel):
     quantity: Decimal
     unit: str
     min_stock: Decimal
+    unit_price: Decimal = Decimal("0.0")
+    total_value: Optional[Decimal] = None
     is_low_stock: bool = False   # Computed field: quantity <= min_stock
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -429,6 +433,9 @@ class InventoryItemResponse(BaseModel):
         if hasattr(data, "quantity") and hasattr(data, "min_stock"):
             obj = data.__dict__.copy() if hasattr(data, "__dict__") else {}
             obj["is_low_stock"] = float(data.quantity) <= float(data.min_stock)
+            unit_p = float(getattr(data, "unit_price", 0) or 0)
+            obj["unit_price"] = Decimal(str(unit_p))
+            obj["total_value"] = Decimal(str(round(float(data.quantity) * unit_p, 2)))
             return obj
         return data
 

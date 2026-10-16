@@ -357,6 +357,7 @@ def create_inventory_item(
         quantity=body.quantity,
         unit=body.unit.strip(),
         min_stock=body.min_stock,
+        unit_price=Decimal(str(body.unit_price or 0.0)),
     )
     db.add(item)
     try:
@@ -620,6 +621,7 @@ def get_inventory_analytics(
 
     # Sort urgent restock list by highest deficit
     urgent_restock = sorted(out_of_stock + low_stock, key=lambda x: x["deficit"], reverse=True)
+    total_valuation = sum(float(item.quantity) * float(item.unit_price or 0.0) for item in items)
 
     return {
         "total_items": total_items,
@@ -627,6 +629,7 @@ def get_inventory_analytics(
         "healthy_count": len(healthy_stock),
         "low_stock_count": len(low_stock),
         "out_of_stock_count": len(out_of_stock),
+        "total_valuation": round(total_valuation, 2),
         "urgent_restock": urgent_restock[:15],
         "category_summary": category_summary,
         "available_categories": list(MASTERLIST_DATA.keys())
@@ -662,6 +665,8 @@ def adjust_stock(
 
     old_qty = float(item.quantity)
     item.quantity = new_qty
+    if body.unit_price is not None and float(body.unit_price) >= 0:
+        item.unit_price = Decimal(str(body.unit_price))
     db.flush()
 
     # Log the stock movement

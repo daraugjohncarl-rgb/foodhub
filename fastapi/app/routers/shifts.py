@@ -108,6 +108,7 @@ def get_drawer_summary(
     total_cash_in_active_drawers = Decimal("0.0")
     active_drawers_count = 0
     today_total_cash_sales = Decimal("0.0")
+    today_total_orders_amount = Decimal("0.0")
 
     for s in shifts:
         # Cash sales for this shift
@@ -146,11 +147,13 @@ def get_drawer_summary(
         ).scalar() or Decimal("0.0")
 
         expected_cash = Decimal(str(s.start_cash or 0)) + Decimal(str(cash_sales_val)) + Decimal(str(paid_in_val)) - Decimal(str(paid_out_val))
+        shift_total_sales = Decimal(str(cash_sales_val)) + Decimal(str(non_cash_val))
 
         if s.status == "open":
             total_cash_in_active_drawers += expected_cash
             active_drawers_count += 1
             today_total_cash_sales += Decimal(str(cash_sales_val))
+            today_total_orders_amount += shift_total_sales
 
         cashier_name = s.user.username if s.user else "Unknown"
         if s.user and s.user.first_name:
@@ -176,7 +179,7 @@ def get_drawer_summary(
             "start_cash": float(s.start_cash or 0),
             "cash_sales": float(cash_sales_val),
             "non_cash_sales": float(non_cash_val),
-            "total_sales": float(cash_sales_val + non_cash_val),
+            "total_sales": float(shift_total_sales),
             "paid_in": float(paid_in_val),
             "paid_out": float(paid_out_val),
             "expected_cash": float(expected_cash),
@@ -185,10 +188,44 @@ def get_drawer_summary(
             "movements": movements
         })
 
+    from datetime import datetime, time
+    today = datetime.now().date()
+    start_of_day = datetime.combine(today, time.min)
+    end_of_day = datetime.combine(today, time.max)
+
+    all_today_tx = db.query(
+        func.coalesce(func.sum(models.Transaction.net_amount), 0)
+    ).filter(
+        models.Transaction.tenant_id == tenant_id,
+        models.Transaction.status == "completed",
+        models.Transaction.created_at >= start_of_day,
+        models.Transaction.created_at <= end_of_day
+    ).scalar() or Decimal("0.0")
+
+    today_orders_val = Decimal(str(all_today_tx))
+    if today_orders_val == Decimal("0.0"):
+        today_orders_val = today_total_orders_amount
+
+    all_today_cash = db.query(
+        func.coalesce(func.sum(models.Payment.amount), 0)
+    ).join(models.Transaction).filter(
+        models.Transaction.tenant_id == tenant_id,
+        models.Payment.status == "completed",
+        ~models.Transaction.status.in_(["cancelled", "rejected"]),
+        func.lower(models.Payment.payment_method).like("%cash%"),
+        models.Transaction.created_at >= start_of_day,
+        models.Transaction.created_at <= end_of_day
+    ).scalar() or Decimal("0.0")
+
+    today_cash_val = Decimal(str(all_today_cash))
+    if today_cash_val == Decimal("0.0"):
+        today_cash_val = today_total_cash_sales
+
     return {
         "total_cash_in_drawers": float(total_cash_in_active_drawers),
         "active_drawers_count": active_drawers_count,
-        "today_total_cash_sales": float(today_total_cash_sales),
+        "today_total_cash_sales": float(today_cash_val),
+        "today_total_orders_amount": float(today_orders_val),
         "shifts": drawer_list
     }
 
@@ -228,3 +265,104 @@ def add_cash_movement(
     db.commit()
     db.refresh(movement)
     return movement
+
+@router.post("/cashout")
+def cashout_shift(
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Manager/Admin cashout of overall cashier money income:
+    1. Records cash drop / paid out of the specified amount.
+    2. Resets the drawer to zero by closing the shift and creating a new fresh open drawer at ₱0.00.
+    """
+    tenant_id = _get_user_tenant_id(db, current_user)
+    role_val = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    is_admin_or_mgr = role_val.upper() in ["ADMIN", "MANAGER", "SUPER_ADMIN"]
+
+    shift_id = body.get("shift_id")
+    try:
+        amount = Decimal(str(body.get("amount", 0)))
+    except Exception:
+        amount = Decimal("0.0")
+
+    reason = body.get("reason", "Manager Cashout")
+
+    query = db.query(models.Shift).filter(
+        models.Shift.tenant_id == tenant_id,
+        models.Shift.status == "open"
+    )
+    if shift_id:
+        query = query.filter(models.Shift.id == shift_id)
+    elif not is_admin_or_mgr:
+        query = query.filter(models.Shift.user_id == current_user.id)
+
+    shift = query.order_by(models.Shift.id.desc()).first()
+    if not shift:
+        raise HTTPException(status_code=404, detail="No active open cashier shift found to cashout.")
+
+    from sqlalchemy import func
+    cash_sales = db.query(
+        func.coalesce(func.sum(models.Payment.amount), 0)
+    ).join(models.Transaction).filter(
+        models.Transaction.shift_id == shift.id,
+        models.Payment.status == "completed",
+        ~models.Transaction.status.in_(["cancelled", "rejected"]),
+        func.lower(models.Payment.payment_method).like("%cash%")
+    ).scalar() or Decimal("0.0")
+
+    paid_in = db.query(
+        func.coalesce(func.sum(models.ShiftCashMovement.amount), 0)
+    ).filter(
+        models.ShiftCashMovement.shift_id == shift.id,
+        models.ShiftCashMovement.type == "PAID_IN"
+    ).scalar() or Decimal("0.0")
+
+    paid_out = db.query(
+        func.coalesce(func.sum(models.ShiftCashMovement.amount), 0)
+    ).filter(
+        models.ShiftCashMovement.shift_id == shift.id,
+        models.ShiftCashMovement.type == "PAID_OUT"
+    ).scalar() or Decimal("0.0")
+
+    current_expected = Decimal(str(shift.start_cash or 0)) + Decimal(str(cash_sales)) + Decimal(str(paid_in)) - Decimal(str(paid_out))
+
+    if amount <= Decimal("0.0"):
+        amount = current_expected
+
+    # 1. Log Cash Movement (PAID_OUT / Cashout)
+    movement = models.ShiftCashMovement(
+        tenant_id=tenant_id,
+        shift_id=shift.id,
+        user_id=current_user.id,
+        type="PAID_OUT",
+        amount=amount,
+        reason=reason or "Manager Cashout"
+    )
+    db.add(movement)
+
+    # 2. Close current shift
+    shift.end_cash = max(Decimal("0.0"), current_expected - amount)
+    shift.end_time = datetime.utcnow()
+    shift.status = "closed"
+    db.commit()
+
+    # 3. Create a brand new active drawer/shift for the cashier reset to 0.00
+    new_shift = models.Shift(
+        tenant_id=tenant_id,
+        user_id=shift.user_id,
+        start_cash=Decimal("0.0"),
+        status="open"
+    )
+    db.add(new_shift)
+    db.commit()
+    db.refresh(new_shift)
+
+    return {
+        "message": f"Successfully cashed out ₱{float(amount):.2f}. Cashier drawer reset to ₱0.00 with new active Shift #{new_shift.id}.",
+        "cashed_out_shift_id": shift.id,
+        "amount_cashed_out": float(amount),
+        "new_shift_id": new_shift.id,
+        "new_drawer_balance": 0.0
+    }

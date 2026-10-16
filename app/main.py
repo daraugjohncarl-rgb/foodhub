@@ -1,5 +1,17 @@
 import os
+import sys
 import logging
+
+# Ensure UTF-8 output on Windows consoles
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
+# Ensure the 'fastapi' directory is in sys.path so 'app.*' imports always resolve
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.staticfiles import StaticFiles
@@ -16,6 +28,8 @@ from app.routers.reports import router as reports_router
 from app.routers.products import router as products_router
 from app.routers.inventory import router as inventory_router
 from app.routers.analytics import router as analytics_router
+from app.routers.suppliers import router as suppliers_router
+from app.routers.purchase_orders import router as purchase_orders_router
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -78,6 +92,30 @@ def seed_default_data():
             db.commit()
             logger.info("Default ADMIN 'admin' seeded successfully.")
 
+        # 3.5 Ensure default staff users exist for testing/demo
+        roles_to_seed = [
+            ("manager", models.UserRole.MANAGER, "manager123"),
+            ("cashier", models.UserRole.CASHIER, "cashier123"),
+            ("inventory", models.UserRole.INVENTORY, "inventory123"),
+            ("kitchen", models.UserRole.KITCHEN, "kitchen123"),
+        ]
+        
+        for username, role, pwd in roles_to_seed:
+            user = db.query(models.User).filter(models.User.username == username).first()
+            if not user:
+                logger.info(f"Seeding default {role.name} '{username}'...")
+                user = models.User(
+                    username=username,
+                    email=f"{username}@inboxpos.com",
+                    password_hash=get_password_hash(pwd),
+                    role=role,
+                    tenant_id=tenant.id,
+                    is_active=True
+                )
+                db.add(user)
+                db.commit()
+                logger.info(f"Default {role.name} '{username}' seeded successfully.")
+
         # 4. Ensure existing users without tenant_id are associated with the default tenant
         orphan_users = db.query(models.User).filter(
             models.User.role != models.UserRole.SUPER_ADMIN,
@@ -89,157 +127,7 @@ def seed_default_data():
             db.commit()
 
         # 5. Seed / Sync Official Blessie FoodHub POS Menu Masterlist
-        POS_MENU_MASTERLIST = {
-            "Snacks": [
-                ("Spaghetti w/ Bread — Single", 125.00),
-                ("Spaghetti w/ Bread — Barkada", 550.00),
-                ("Carbonara w/ Bread — Single", 140.00),
-                ("Carbonara w/ Bread — Barkada", 480.00),
-                ("Molo — Single", 55.00),
-                ("Molo — Barkada", 200.00),
-                ("Sotanghon Guisado — Single", 85.00),
-                ("Sotanghon Guisado — Barkada", 280.00),
-                ("Pancit Canton — Single", 85.00),
-                ("Pancit Canton — Barkada", 280.00),
-                ("Burger w/ Fries — Single", 95.00),
-                ("Burger w/ Fries — Barkada", 450.00),
-                ("Toasted Bread — 2 pcs", 30.00),
-                ("Toasted Bread — 4 pcs", 60.00),
-                ("Arrozcaldo — Regular", 20.00),
-                ("Arrozcaldo — w/ Egg", 40.00),
-                ("Lumpia Shanghai — 5 pcs", 65.00),
-                ("Burger Solo — w/ Cheese", 65.00),
-                ("Tuna Sandwich", 90.00),
-                ("Chicken Sandwich", 70.00),
-                ("Egg Sandwich", 60.00),
-                ("Nachos", 90.00),
-                ("Nachofries", 150.00),
-                ("Sotanghon w/ Toasted Bread — Single", 90.00),
-                ("Sotanghon w/ Toasted Bread — Barkada", 300.00),
-                ("Pancit Canton w/ Toasted Bread — Single", 110.00),
-                ("Pancit Canton w/ Toasted Bread — Barkada", 350.00),
-                ("Spaghetti w/ Burger", 140.00),
-                ("Sotanghon Guisado w/ Lumpia Shanghai", 140.00),
-            ],
-            "Bilao Snacks": [
-                ("Bilao 1", 199.00),
-                ("Bilao 2", 199.00),
-                ("Bilao 3", 249.00),
-            ],
-            "Non-Alcoholic Drinks": [
-                ("Mt. Dew", 25.00),
-                ("Sting", 25.00),
-                ("Royal", 25.00),
-                ("Water", 20.00),
-                ("Coke 12 oz", 25.00),
-                ("Coke Litro", 50.00),
-            ],
-            "Alcoholic Drinks": [
-                ("Red Horse Litro", 180.00),
-                ("Red Horse 500", 90.00),
-                ("Red Horse Stallion", 75.00),
-                ("San Mig Light", 75.00),
-                ("San Mig Apple", 75.00),
-                ("Pelsin", 65.00),
-                ("Eagle", 60.00),
-                ("Tanduay Light", 195.00),
-                ("Tanduay Dark", 200.00),
-                ("Smirnoff", 80.00),
-                ("CLVB", 250.00),
-            ],
-            "Gen-Z Tower": [
-                ("1.5 L — Gin, Ice, Juice", 190.00),
-                ("2 L — Gin, Ice, Juice", 220.00),
-                ("3 L — Gin, Ice, Juice", 440.00),
-                ("1.5 L — Gin, Ice, Juice + Kropek", 220.00),
-                ("2 L — Gin, Ice, Juice + 2 Kropek", 380.00),
-                ("3 L — Gin, Ice, Juice + 2 Kropek", 500.00),
-            ],
-            "Add-Ons": [
-                ("Kropek", 60.00),
-                ("1 Bucket Ice", 15.00),
-            ],
-            "Milktea w/ Boba Pearls": [
-                ("Okinawa — 16 oz", 65.00),
-                ("Okinawa — 22 oz", 75.00),
-                ("Taro — 16 oz", 65.00),
-                ("Taro — 22 oz", 75.00),
-                ("Watermelon — 16 oz", 65.00),
-                ("Watermelon — 22 oz", 75.00),
-                ("Cookies & Cream — 16 oz", 70.00),
-                ("Cookies & Cream — 22 oz", 80.00),
-                ("Caramelizes Sugar — 16 oz", 65.00),
-                ("Caramelizes Sugar — 22 oz", 75.00),
-            ],
-            "Sticky Milk": [
-                ("Buko — 16 oz", 75.00),
-                ("Buko — 22 oz", 85.00),
-                ("Mango — 16 oz", 75.00),
-                ("Mango — 22 oz", 85.00),
-                ("Choco — 16 oz", 80.00),
-                ("Choco — 22 oz", 90.00),
-                ("Melon — 16 oz", 75.00),
-                ("Melon — 22 oz", 85.00),
-                ("Red Velvet — 16 oz", 85.00),
-                ("Red Velvet — 22 oz", 95.00),
-            ],
-            "Milky Shake Frappe": [
-                ("Mango — 16 oz", 80.00),
-                ("Mango — 22 oz", 100.00),
-                ("Choco — 16 oz", 85.00),
-                ("Choco — 22 oz", 105.00),
-                ("Caramel Macchiato — 16 oz", 85.00),
-                ("Caramel Macchiato — 22 oz", 105.00),
-                ("Coffee Crumble — 16 oz", 80.00),
-                ("Coffee Crumble — 22 oz", 100.00),
-                ("Melon — 16 oz", 80.00),
-                ("Melon — 22 oz", 100.00),
-                ("Buko — 16 oz", 80.00),
-                ("Buko — 22 oz", 100.00),
-            ],
-            "Cold Coffee": [
-                ("Spanish Latte — 16 oz", 50.00),
-                ("Spanish Latte — 22 oz", 65.00),
-                ("French — 16 oz", 60.00),
-                ("French — 22 oz", 75.00),
-                ("Salted Caramel — 16 oz", 65.00),
-                ("Salted Caramel — 22 oz", 80.00),
-                ("Caramel Macchiato — 16 oz", 60.00),
-                ("Caramel Macchiato — 22 oz", 75.00),
-                ("Iced Americano — 16 oz", 50.00),
-                ("Iced Americano — 22 oz", 65.00),
-                ("Vietnamese — 16 oz", 55.00),
-                ("Vietnamese — 22 oz", 70.00),
-                ("Dirty Matcha — 16 oz", 55.00),
-                ("Dirty Matcha — 22 oz", 70.00),
-                ("Matcha Milk — 16 oz", 55.00),
-                ("Matcha Milk — 22 oz", 70.00),
-                ("Matcha Latte — 16 oz", 60.00),
-                ("Matcha Latte — 22 oz", 75.00),
-            ],
-            "Hot Coffee": [
-                ("Native Coffee", 25.00),
-                ("Native with Milk", 35.00),
-                ("Barako", 35.00),
-                ("Brewed", 30.00),
-                ("Americano", 30.00),
-                ("Spanish Latte", 45.00),
-                ("French Vanilla", 55.00),
-                ("Salted Caramel Latte", 60.00),
-                ("Caramel Macchiato", 55.00),
-                ("Hot Matcha Latte", 50.00),
-            ],
-            "Unli Samgyupsal": [
-                ("Pork", 249.00),
-                ("Chicken", 240.00),
-                ("Chicken & Pork", 299.00),
-                ("Beef", 299.00),
-                ("Lettuce (70g)", 50.00),
-                ("Cheese (Dipping)", 50.00),
-                ("Sesame Oil + Salt", 30.00),
-                ("Seaweed", 35.00),
-            ]
-        }
+        from app.seed_data import POS_MENU_MASTERLIST
 
         from decimal import Decimal
         for cat_name, items in POS_MENU_MASTERLIST.items():
@@ -263,10 +151,28 @@ def seed_default_data():
                         is_active=True
                     )
                     db.add(prod)
-                else:
-                    prod.category_id = cat.id
-                    prod.price = Decimal(str(price))
         db.commit()
+
+        # 6. Seed default suppliers under 'Main Branch - Blessie FoodHub'
+        target_tenant = db.query(models.Tenant).filter(models.Tenant.name == "Main Branch - Blessie FoodHub").first()
+        if target_tenant:
+            from app.seed_data import DEFAULT_SUPPLIERS
+            for s_data in DEFAULT_SUPPLIERS:
+                existing_supplier = db.query(models.Supplier).filter(
+                    models.Supplier.tenant_id == target_tenant.id,
+                    models.Supplier.supplier_name == s_data["name"]
+                ).first()
+                if not existing_supplier:
+                    new_sup = models.Supplier(
+                        tenant_id=target_tenant.id,
+                        supplier_name=s_data["name"],
+                        contact_number=s_data["contact"],
+                        category=s_data["category"],
+                        products_supplied=s_data["products"],
+                        status="Active"
+                    )
+                    db.add(new_sup)
+            db.commit()
 
     except Exception as e:
         db.rollback()
@@ -281,15 +187,11 @@ async def lifespan(app: FastAPI):
     Automatically creates all tables inside the MySQL database if they do not exist,
     and then seeds the default system accounts.
     """
-    logger.info("Initializing database tables on startup...")
     try:
         # Create all tables defined in models.py
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables initialized successfully.")
         
-        # (Removed MySQL-specific ALTER TABLE query for ENUM column alignment.
-        # PostgreSQL handles ENUM types via the SQLAlchemy models, and schema migrations should be done via Alembic.)
-
         # Seed default data
         seed_default_data()
     except Exception as e:
@@ -318,7 +220,8 @@ app.add_middleware(
 
 from app.routers.transactions import router as transactions_router
 from app.routers.kitchen import router as kitchen_router
-from app.routers.suppliers import router as suppliers_router
+from app.routers.customer_orders import router as customer_orders_router
+from app.routers.shifts import router as shifts_router
 
 # Register routers
 app.include_router(auth_router, prefix="/api/v1")
@@ -331,6 +234,12 @@ app.include_router(analytics_router, prefix="/api/v1")
 app.include_router(transactions_router, prefix="/api/v1")
 app.include_router(kitchen_router, prefix="/api/v1")
 app.include_router(suppliers_router, prefix="/api/v1")
+app.include_router(purchase_orders_router, prefix="/api/v1")
+app.include_router(customer_orders_router, prefix="/api/v1")
+app.include_router(shifts_router, prefix="/api/v1")
+
+from app.routers.tables import router as tables_router
+app.include_router(tables_router, prefix="/api/v1")
 
 # Mount static files directories to serve frontend assets using absolute paths
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -347,11 +256,15 @@ def get_login_page():
 
 @app.get("/admin", response_class=FileResponse)
 @app.get("/admin.html", response_class=FileResponse)
+@app.get("/admin/dashboard", response_class=FileResponse)
+@app.get("/admin/dashboard.html", response_class=FileResponse)
 def get_admin_shell():
-    page = os.path.join(STATIC_DIR, "pages", "admin.html")
-    if not os.path.exists(page):
-        page = os.path.join(STATIC_DIR, "admin.html")
-    return FileResponse(page)
+    admin_page = os.path.join(STATIC_DIR, "admin", "admin.html")
+    if not os.path.exists(admin_page):
+        admin_page = os.path.join(STATIC_DIR, "pages", "admin.html")
+    if not os.path.exists(admin_page):
+        admin_page = os.path.join(STATIC_DIR, "admin.html")
+    return FileResponse(admin_page)
 
 @app.get("/manager", response_class=FileResponse)
 @app.get("/manager.html", response_class=FileResponse)
@@ -384,6 +297,13 @@ def get_kitchen_shell():
     if not os.path.exists(page):
         page = os.path.join(STATIC_DIR, "kitchen.html")
     return FileResponse(page)
+
+@app.get("/customer", response_class=FileResponse)
+@app.get("/customer.html", response_class=FileResponse)
+@app.get("/costumer", response_class=FileResponse)
+def get_customer_page():
+    return FileResponse(os.path.join(STATIC_DIR, "customer.html"))
+
 
 
 
@@ -465,15 +385,6 @@ def get_profile_page():
 def get_settings_page():
     return FileResponse(os.path.join(STATIC_DIR, "super_admin", "settings.html"))
 
-@app.get("/admin", response_class=FileResponse)
-@app.get("/admin.html", response_class=FileResponse)
-@app.get("/admin/dashboard", response_class=FileResponse)
-@app.get("/admin/dashboard.html", response_class=FileResponse)
-def get_admin_page():
-    admin_page = os.path.join(STATIC_DIR, "admin", "admin.html")
-    if not os.path.exists(admin_page):
-        admin_page = os.path.join(STATIC_DIR, "admin.html")
-    return FileResponse(admin_page)
 
 @app.get("/test-db")
 def test_db(db: Session = Depends(get_db)):
@@ -560,3 +471,9 @@ def seed_super_admin_route(db: Session = Depends(get_db)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to seed super admin: {str(e)}"
         )
+
+if __name__ == "__main__":
+    import uvicorn
+    # Render, Heroku, and Railway inject the PORT environment variable
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=False)

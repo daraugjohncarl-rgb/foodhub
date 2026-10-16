@@ -61,8 +61,9 @@ async function renderView(viewId, container) {
       case "suppliers":
         await renderSuppliers(container);
         break;
+      case "profit_loss":
       case "purchases":
-        await renderPurchases(container);
+        await renderProfitLoss(container);
         break;
       case "wastage":
         await renderWastage(container);
@@ -117,11 +118,18 @@ async function renderDashboard(c) {
   let drawerSummary = { total_cash_in_drawers: 0, active_drawers_count: 0, today_total_cash_sales: 0, shifts: [] };
   let lowStockItems = [];
 
+  let plStats = {
+    profit_loss: { net_profit: 0, profit_margin_percent: 0, is_profitable: true },
+    cashout: { total_cashout_income: 0 },
+    inventory: { total_inventory_valuation: 0 }
+  };
+
   try {
-    const [res, drawerRes, invRes] = await Promise.all([
+    const [res, drawerRes, invRes, plRes] = await Promise.all([
       Auth.fetch("/api/v1/analytics/dashboard"),
       Auth.fetch("/api/v1/shifts/drawer-summary"),
-      Auth.fetch("/api/v1/inventory?low_stock_only=true")
+      Auth.fetch("/api/v1/inventory?low_stock_only=true"),
+      Auth.fetch("/api/v1/analytics/profit-loss")
     ]);
     if (res.ok) stats = await res.json();
     if (drawerRes.ok) {
@@ -129,6 +137,7 @@ async function renderDashboard(c) {
       cachedDrawerData = drawerSummary;
     }
     if (invRes.ok) lowStockItems = await invRes.json();
+    if (plRes && plRes.ok) plStats = await plRes.json();
   } catch (e) {
     console.warn("Analytics endpoint unavailable, using defaults", e);
   }
@@ -145,6 +154,22 @@ async function renderDashboard(c) {
           <h3>Cash in Drawer</h3>
           <div class="stat-count" style="color:#7b1fa2;">${Utils.formatCurrency(liveDrawerCash)}</div>
           <div class="stat-trend" style="color:var(--success, #10b981);"><i class="fas fa-cash-register"></i> ${drawerSummary.active_drawers_count || 0} active drawer(s)</div>
+        </div>
+      </div>
+      <div class="stat-card" style="cursor:pointer;" onclick="renderView('profit_loss')" title="Click to view Profit & Loss details">
+        <div class="stat-icon green" style="background:rgba(16,185,129,0.12); color:#10b981;"><i class="fas fa-chart-line"></i></div>
+        <div class="stat-info">
+          <h3>Net Operating Profit</h3>
+          <div class="stat-count" style="color:${plStats.profit_loss?.is_profitable ? '#10b981' : '#ef4444'};">${Utils.formatCurrency(plStats.profit_loss?.net_profit || 0)}</div>
+          <div class="stat-trend" style="color:${plStats.profit_loss?.is_profitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${plStats.profit_loss?.profit_margin_percent || 0}% margin</div>
+        </div>
+      </div>
+      <div class="stat-card" style="cursor:pointer;" onclick="renderView('profit_loss')" title="Click to view Cashout Income">
+        <div class="stat-icon gold" style="background:rgba(201,162,39,0.12); color:#c9a227;"><i class="fas fa-vault"></i></div>
+        <div class="stat-info">
+          <h3>Cashout Income</h3>
+          <div class="stat-count" style="color:#c9a227;">${Utils.formatCurrency(plStats.cashout?.total_cashout_income || 0)}</div>
+          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-shield-halved"></i> Secured in safe</div>
         </div>
       </div>
       <div class="stat-card">
@@ -169,14 +194,6 @@ async function renderDashboard(c) {
           <h3>Low Stock Alerts</h3>
           <div class="stat-count" style="color:#f97316;">${stats.low_stock_count || 0}</div>
           <div class="stat-trend" style="color:#f97316;"><i class="fas fa-exclamation-triangle"></i> Needs reorder</div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon red"><i class="fas fa-users"></i></div>
-        <div class="stat-info">
-          <h3>Active Branch Staff</h3>
-          <div class="stat-count" style="color:#3b82f6;">${stats.active_staff_count || 0}</div>
-          <div class="stat-trend" style="color:#3b82f6;"><i class="fas fa-user-check"></i> On shift / active</div>
         </div>
       </div>
     </div>
@@ -269,9 +286,10 @@ async function renderInventory(c) {
   cachedInventory = items;
   cachedAnalytics = analyticsRes.ok ? await analyticsRes.json() : {
     health_score: 100, healthy_count: 0, low_stock_count: 0, out_of_stock_count: 0, total_items: 0,
-    urgent_restock: [], category_summary: {}
+    total_valuation: 0, urgent_restock: [], category_summary: {}
   };
 
+  const totalValuation = (cachedAnalytics && cachedAnalytics.total_valuation) || items.reduce((sum, i) => sum + (Number(i.quantity) || 0) * (Number(i.unit_price) || 0), 0);
   const uniqueCats = Array.from(new Set(cachedInventory.map(i => i.category || 'Uncategorized'))).sort();
   const categories = ["ALL", ...uniqueCats];
 
@@ -284,6 +302,14 @@ async function renderInventory(c) {
           <h3>Total Master Items</h3>
           <div class="stat-count" style="color:#c9a227;">${cachedAnalytics.total_items}</div>
           <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-barcode"></i> Tracked SKUs</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon purple" style="background:rgba(99,102,241,0.12); color:#6366f1;"><i class="fas fa-coins"></i></div>
+        <div class="stat-info">
+          <h3>Total Stock Price Value</h3>
+          <div class="stat-count" style="color:#6366f1;">${Utils.formatCurrency(totalValuation)}</div>
+          <div class="stat-trend" style="color:#6366f1;"><i class="fas fa-tags"></i> Inventory Asset Value</div>
         </div>
       </div>
       <div class="stat-card">
@@ -332,7 +358,7 @@ async function renderInventory(c) {
                   <div style="font-weight:700; font-size:13px; color:var(--text-main);">${u.name}</div>
                   <div style="font-size:11px; color:var(--text-muted);">${u.category} • Current: <strong style="color:#ef4444;">${u.quantity} ${u.unit}</strong></div>
                 </div>
-                <button class="btn btn-primary btn-sm" style="padding:4px 8px; font-size:11px;" onclick="openStockAdjustModal(${u.id}, '${u.name.replace(/'/g, "\\'")}', ${u.quantity})">
+                <button class="btn btn-primary btn-sm" style="padding:4px 8px; font-size:11px;" onclick="openStockAdjustModal(${u.id}, '${u.name.replace(/'/g, "\\'")}', ${u.quantity}, ${u.unit_price || 0}, '${u.unit}')">
                   <i class="fas fa-plus"></i> Restock
                 </button>
               </div>
@@ -385,6 +411,8 @@ async function renderInventory(c) {
               <th>Item Name</th>
               <th>Department / Category</th>
               <th>Current Stock</th>
+              <th style="background:rgba(201,162,39,0.08); color:#c9a227;">Price per Unit</th>
+              <th style="background:rgba(16,185,129,0.08); color:#10b981;">Total Valuation</th>
               <th>Health Status</th>
               <th style="text-align:right;">Actions</th>
             </tr>
@@ -400,7 +428,7 @@ async function renderInventory(c) {
 
 function renderInventoryRows(items) {
   if (!items || !items.length) {
-    return `<tr><td colspan="6" style="text-align:center; padding:40px; color:var(--text-muted);"><i class="fas fa-boxes" style="font-size:24px; margin-bottom:8px; display:block; opacity:0.5;"></i>No inventory items match the criteria.<br><button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="openImportMasterlistModal()"><i class="fas fa-file-import"></i> Import Official Master List</button></td></tr>`;
+    return `<tr><td colspan="8" style="text-align:center; padding:40px; color:var(--text-muted);"><i class="fas fa-boxes" style="font-size:24px; margin-bottom:8px; display:block; opacity:0.5;"></i>No inventory items match the criteria.<br><button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="openImportMasterlistModal()"><i class="fas fa-file-import"></i> Import Official Master List</button></td></tr>`;
   }
   return items.map(i => {
     const isOut = Number(i.quantity) <= 0;
@@ -408,6 +436,8 @@ function renderInventoryRows(items) {
     const badgeClass = isOut ? 'badge-danger' : isLow ? 'badge-warning' : 'badge-success';
     const badgeText = isOut ? 'Out of Stock' : isLow ? 'Low Stock' : 'In Stock';
     const catName = i.category || 'Kitchen';
+    const unitPrice = Number(i.unit_price) || 0;
+    const totalVal = (Number(i.quantity) || 0) * unitPrice;
 
     return `
       <tr>
@@ -415,10 +445,12 @@ function renderInventoryRows(items) {
         <td><strong style="color:var(--text-main); font-size:13px;">${i.name}</strong></td>
         <td><span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:11px; font-weight:600;">${catName}</span></td>
         <td><strong style="font-size:14px; color:${isOut ? '#ef4444' : isLow ? '#f97316' : 'var(--text-main)'};">${i.quantity}</strong> <span style="font-size:11px; color:var(--text-muted);">${i.unit}</span></td>
+        <td style="background:rgba(201,162,39,0.04);"><strong style="color:#c9a227; font-size:13px;">${Utils.formatCurrency(unitPrice)}</strong> <span style="font-size:11px; color:var(--text-muted);">/ ${i.unit}</span></td>
+        <td style="background:rgba(16,185,129,0.04);"><strong style="color:#10b981; font-size:13px; font-weight:700;">${Utils.formatCurrency(totalVal)}</strong></td>
         <td><span class="badge ${badgeClass}" style="font-size:11px; font-weight:700;">${badgeText}</span></td>
         <td style="text-align:right;">
           <div style="display:inline-flex; gap:6px;">
-            <button class="btn btn-primary btn-sm" style="padding:4px 8px; font-size:11px;" onclick="openStockAdjustModal(${i.id}, '${i.name.replace(/'/g, "\\'")}', ${i.quantity})" title="Quick Restock / Adjust">
+            <button class="btn btn-primary btn-sm" style="padding:4px 8px; font-size:11px;" onclick="openStockAdjustModal(${i.id}, '${i.name.replace(/'/g, "\\'")}', ${i.quantity}, ${unitPrice}, '${i.unit}')" title="Quick Restock / Adjust / Update Price">
               <i class="fas fa-sliders-h"></i> Adjust
             </button>
             <button class="btn btn-outline btn-sm" style="padding:4px 8px; font-size:11px; color:var(--danger);" onclick="deleteInventoryItem(${i.id}, '${i.name.replace(/'/g, "\\'")}')" title="Delete Item">
@@ -762,9 +794,15 @@ function openAddInventoryModal() {
           <input id="inv-unit" class="input-field" required placeholder="kg, L, pcs, packs, cans" style="width:100%;">
         </div>
       </div>
-      <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Min Stock Threshold <span style="color:var(--danger);">*</span></label>
-        <input type="number" step="0.01" id="inv-min" class="input-field" required value="5" style="width:100%;">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Unit Price / Cost (₱) <span style="color:var(--danger);">*</span></label>
+          <input type="number" step="0.01" min="0" id="inv-price" class="input-field" required value="50.00" placeholder="0.00" style="width:100%;">
+        </div>
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Min Stock Threshold <span style="color:var(--danger);">*</span></label>
+          <input type="number" step="0.01" id="inv-min" class="input-field" required value="5" style="width:100%;">
+        </div>
       </div>
     </form>
   `, `<button class="btn btn-primary" onclick="submitAddInventory()"><i class="fas fa-save"></i> Save Stock Item</button>`);
@@ -776,6 +814,7 @@ async function submitAddInventory() {
   const sku = document.getElementById("inv-sku").value.trim();
   const quantity = parseFloat(document.getElementById("inv-qty").value) || 0;
   const unit = document.getElementById("inv-unit").value.trim();
+  const unit_price = parseFloat(document.getElementById("inv-price")?.value) || 0;
   const min_stock = parseFloat(document.getElementById("inv-min").value) || 0;
 
   if (!name || !unit) {
@@ -786,7 +825,7 @@ async function submitAddInventory() {
   try {
     const res = await Auth.fetch("/api/v1/inventory", {
       method: "POST",
-      body: JSON.stringify({ name, category, sku: sku || null, quantity, unit, min_stock })
+      body: JSON.stringify({ name, category, sku: sku || null, quantity, unit, unit_price, min_stock })
     });
     if (!res.ok) {
       const err = await res.json();
@@ -800,40 +839,55 @@ async function submitAddInventory() {
   }
 }
 
-function openStockAdjustModal(id, name, currentQty) {
-  Utils.openModal(`Adjust Stock — ${name}`, `
+function openStockAdjustModal(id, name, currentQty, currentPrice = 0, currentUnit = '') {
+  Utils.openModal(`Adjust Stock & Price — ${name}`, `
     <form id="form-stock-adj" onsubmit="event.preventDefault(); submitStockAdjust(${id});">
-      <p style="color:var(--text-muted); font-size:13px; margin-bottom:16px;">Current Stock Balance: <strong>${currentQty}</strong></p>
+      <div style="display:flex; justify-content:space-between; margin-bottom:14px; padding:10px 14px; background:rgba(201,162,39,0.08); border-radius:10px; border:1px solid rgba(205,190,150,0.3);">
+        <div><span style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Current Stock</span><div style="font-size:16px; font-weight:800; color:var(--text-main);">${currentQty} ${currentUnit}</div></div>
+        <div><span style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Price per Unit</span><div style="font-size:16px; font-weight:800; color:#c9a227;">₱${Number(currentPrice || 0).toFixed(2)}</div></div>
+      </div>
       <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Quantity Delta (+ Restock, - Deduct) <span style="color:var(--danger);">*</span></label>
-        <input type="number" step="0.01" id="adj-delta" class="input-field" required placeholder="e.g. 20 (Restock) or -5 (Deduction)" style="width:100%;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Quantity Delta (+ Restock, - Deduct)</label>
+        <input type="number" step="0.01" id="adj-delta" class="input-field" placeholder="e.g. 20 (Restock) or -5 (Deduction)" style="width:100%;">
+      </div>
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Update Unit Price (₱)</label>
+        <input type="number" step="0.01" min="0" id="adj-price" class="input-field" value="${currentPrice || 0}" placeholder="e.g. 50.00" style="width:100%;">
       </div>
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Reason / Notes</label>
-        <input type="text" id="adj-reason" class="input-field" placeholder="e.g. Supplier delivery, Weekly audit, Kitchen consumption" style="width:100%;">
+        <input type="text" id="adj-reason" class="input-field" placeholder="e.g. Supplier delivery, Weekly audit, Price change" style="width:100%;">
       </div>
     </form>
   `, `<button class="btn btn-primary" onclick="submitStockAdjust(${id})"><i class="fas fa-check"></i> Apply Adjustment</button>`);
 }
 
 async function submitStockAdjust(itemId) {
-  const delta = parseFloat(document.getElementById("adj-delta").value);
-  const reason = document.getElementById("adj-reason").value.trim();
-  if (isNaN(delta) || delta === 0) {
-    Utils.showToast("Please enter a non-zero delta quantity", "danger");
+  const deltaVal = document.getElementById("adj-delta")?.value;
+  const delta = deltaVal !== "" ? parseFloat(deltaVal) : 0;
+  const priceInput = document.getElementById("adj-price");
+  const unitPrice = priceInput && priceInput.value.trim() !== "" ? parseFloat(priceInput.value) : undefined;
+  const reason = document.getElementById("adj-reason")?.value.trim();
+
+  if ((isNaN(delta) || delta === 0) && (unitPrice === undefined || isNaN(unitPrice))) {
+    Utils.showToast("Please enter a quantity change or an updated unit price.", "danger");
     return;
   }
 
   try {
     const res = await Auth.fetch(`/api/v1/inventory/${itemId}/stock`, {
       method: "PUT",
-      body: JSON.stringify({ quantity_delta: delta, reason: reason || undefined })
+      body: JSON.stringify({
+        quantity_delta: isNaN(delta) ? 0 : delta,
+        unit_price: unitPrice !== undefined && !isNaN(unitPrice) ? unitPrice : undefined,
+        reason: reason || undefined
+      })
     });
     if (!res.ok) {
       const err = await res.json();
       throw new Error(err.detail || "Stock adjustment failed.");
     }
-    Utils.showToast("Stock quantity updated successfully", "success");
+    Utils.showToast("Stock & price updated successfully", "success");
     Utils.closeModal();
     renderInventory();
   } catch (e) {
@@ -1310,13 +1364,21 @@ async function deleteProductPrompt(id, name) {
 // 4. CASHIER POINT OF SALE (POS)
 // ─────────────────────────────────────────────────────────────────────────────
 async function renderPOS(c) {
-  const [prodRes, catRes] = await Promise.all([
+  const [prodRes, catRes, drawerRes] = await Promise.all([
     Auth.fetch("/api/v1/products"),
-    Auth.fetch("/api/v1/categories")
+    Auth.fetch("/api/v1/categories"),
+    Auth.fetch("/api/v1/shifts/drawer-summary")
   ]);
 
   const rawProducts = prodRes.ok ? await prodRes.json() : [];
   const categories = catRes.ok ? await catRes.json() : [];
+  const drawerData = drawerRes.ok ? await drawerRes.json() : { shifts: [], total_cash_in_drawers: 0, today_total_orders_amount: 0 };
+  const currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
+  const myShift = (drawerData.shifts || []).find(s => s.status === 'open' && (currentUser ? s.cashier_id === currentUser.id : true))
+               || (drawerData.shifts || []).find(s => s.status === 'open');
+  const posDrawerCash = myShift ? myShift.expected_cash : 0;
+  const posOrdersTotal = myShift ? myShift.total_sales : (drawerData.today_total_orders_amount || 0);
+
   // Exclude inactive products from POS counter & grid!
   const products = rawProducts.filter(p => p.is_active !== false && p.is_active !== 0 && p.is_active !== "0");
   cachedProducts = products;
@@ -1325,6 +1387,27 @@ async function renderPOS(c) {
   const catMap = {};
   categories.forEach(cat => { catMap[cat.id] = cat.name; });
   window.cachedCategoryMap = catMap;
+
+  if (!window._posDrawerListenerAttached) {
+    window._posDrawerListenerAttached = true;
+    window.addEventListener("storage", async (e) => {
+      if (e.key === "RESTOTRACK_DRAWER_RESET" || e.key === "RESTOTRACK_SYNC_TX") {
+        try {
+          const res = await Auth.fetch("/api/v1/shifts/drawer-summary");
+          if (res.ok) {
+            const dData = await res.json();
+            const cUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
+            const myS = (dData.shifts || []).find(s => s.status === 'open' && (cUser ? s.cashier_id === cUser.id : true))
+                     || (dData.shifts || []).find(s => s.status === 'open');
+            const dCashEl = document.getElementById("pos-cash-in-drawer-display");
+            const dOrdEl = document.getElementById("pos-complete-orders-display");
+            if (dCashEl) dCashEl.textContent = Utils.formatCurrency(myS ? myS.expected_cash : 0);
+            if (dOrdEl) dOrdEl.textContent = "Orders: " + Utils.formatCurrency(myS ? myS.total_sales : 0);
+          }
+        } catch (err) {}
+      }
+    });
+  }
 
   c.innerHTML = `
     <style>
@@ -1383,9 +1466,9 @@ async function renderPOS(c) {
             <i class="fas fa-bell"></i>
             <span id="pos-online-orders-badge" style="background:#ef4444; color:#fff; padding:1px 5px; border-radius:10px; font-size:10px; font-weight:bold; display:none;">0</span>
           </button>
-          <button id="pos-drinks-orders-btn" onclick="renderView('drinks')" style="height:38px; padding:0 12px; background:#eff6ff; color:#2563eb; border:1px solid rgba(37,99,235,0.3); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:6px; white-space:nowrap;" title="Cashier Drinks Order">
+          <button id="pos-drinks-orders-btn" onclick="renderView('drinks')" style="height:38px; padding:0 12px; background:#eff6ff; color:#2563eb; border:1px solid rgba(37,99,235,0.3); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:6px; white-space:nowrap;" title="Cashier Drinks Orders">
             <i class="fas fa-glass-water" style="color:#2563eb;"></i>
-            <span>Drinks Order</span>
+            <span>Drinks Orders</span>
             <span id="pos-drinks-badge" style="background:#2563eb; color:#fff; padding:1px 6px; border-radius:10px; font-size:10px; font-weight:bold; display:none;">0</span>
           </button>
         </div>
@@ -1421,11 +1504,11 @@ async function renderPOS(c) {
           </div>
 
           <div class="stat-card" style="padding:8px 12px; display:flex; align-items:center; gap:10px; background:#ffffff; border-radius:10px; border:1px solid rgba(205,190,150,0.3);">
-            <div style="width:32px; height:32px; border-radius:8px; background:rgba(59,130,246,0.1); color:#3b82f6; display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0;"><i class="fas fa-chart-line"></i></div>
+            <div style="width:32px; height:32px; border-radius:8px; background:rgba(201,162,39,0.12); color:#c9a227; display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0;"><i class="fas fa-vault"></i></div>
             <div style="min-width:0;">
-              <div style="font-size:9px; color:var(--text-muted); font-weight:600; text-transform:uppercase; line-height:1.1;">Today's Sales</div>
-              <div style="font-size:13px; font-weight:700; color:var(--text-main); line-height:1.1;">—</div>
-              <div style="font-size:9px; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Data unavailable</div>
+              <div style="font-size:9px; color:var(--text-muted); font-weight:600; text-transform:uppercase; line-height:1.1;">Cash in Drawer</div>
+              <div id="pos-cash-in-drawer-display" style="font-size:15px; font-weight:800; color:#c9a227; line-height:1.1;">${Utils.formatCurrency(posDrawerCash)}</div>
+              <div id="pos-complete-orders-display" style="font-size:9px; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Orders: ${Utils.formatCurrency(posOrdersTotal)}</div>
             </div>
           </div>
         </div>
@@ -1618,7 +1701,10 @@ function clearCart() {
 
 const VOICE_NUMBER_WORDS = {
   // English
-  'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+  'one': 1, 'wan': 1, 'won': 1, 'want': 1,
+  'two': 2, 'to': 2, 'too': 2, 'tu': 2,
+  'three': 3, 'tri': 3,
+  'four': 4, 'five': 5,
   'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
   // Tagalog
   'isa': 1, 'isang': 1,
@@ -1646,8 +1732,8 @@ const VOICE_NUMBER_WORDS = {
 
 const DIGIT_WORD_MAP = {
   'zero': '0', 'sero': '0', 'oh': '0',
-  'one': '1', 'wan': '1',
-  'two': '2', 'tu': '2',
+  'one': '1', 'wan': '1', 'want': '1',
+  'two': '2', 'tu': '2', 'to': '2', 'too': '2',
   'three': '3', 'tri': '3',
   'four': '4', 'for': '4',
   'five': '5', 'fayb': '5',
@@ -1727,19 +1813,26 @@ function normalizeVoicePhonetics(str) {
   s = s.replace(/\b(arozcaldo|arroz\s*caldo)\b/gi, 'arrozcaldo');
 
   // Phrased code combinations (e.g. Tagalog/English speech engine mishearing "two c two" as "ito si tito")
-  s = s.replace(/\b(?:ito|eto|to)\s+si\s+tito\b/gi, '2 c2');
-  s = s.replace(/\b(?:ito|eto|to)\s+(?:see|si|sea|c)\s*(?:two|tu|to|tito|2)\b/gi, '2 c2');
-  s = s.replace(/\b(?:ito|eto|to)\s+(?:see|si|sea|c)\s*(?:one|wan|juan|1)\b/gi, '2 c1');
+  s = s.replace(/\b(?:ito|eto)\s+si\s+tito\b/gi, '2 c2');
+  s = s.replace(/\b(?:ito|eto)\s+(?:see|si|sea|c)\s*(?:two|tu|to|tito|2)\b/gi, '2 c2');
+  s = s.replace(/\b(?:ito|eto)\s+(?:see|si|sea|c)\s*(?:one|wan|juan|want|1)\b/gi, '2 c1');
 
-  // C1, C2, C3 phonetics and misheard variants (e.g. "si tito", "tito", "si two", "see two")
+  // C1, C2, C3 phonetics and misheard variants (including "want" for "one")
   s = s.replace(/\b(?:see|si|sea)\s*tito\b/gi, 'c2');
   s = s.replace(/\btito\b/gi, 'c2');
-  s = s.replace(/\b(?:see|si|sea)\s*(?:1|one|wan|juan)\b/gi, 'c1');
-  s = s.replace(/\b(?:see|si|sea)\s*(?:2|two|tu|to)\b/gi, 'c2');
-  s = s.replace(/\b(?:see|si|sea)\s*(?:3|three|tri)\b/gi, 'c3');
-  s = s.replace(/\bc\s*(?:1|one|wan|juan)\b/gi, 'c1');
-  s = s.replace(/\bc\s*(?:2|two|tu|to)\b/gi, 'c2');
-  s = s.replace(/\bc\s*(?:3|three|tri)\b/gi, 'c3');
+  s = s.replace(/\b(?:see|si|sea|c)\s*(?:1|one|wan|juan|want)\b/gi, 'c1');
+  s = s.replace(/\b(?:see|si|sea|c)\s*(?:2|two|tu|to|too)\b/gi, 'c2');
+  s = s.replace(/\b(?:see|si|sea|c)\s*(?:3|three|tri)\b/gi, 'c3');
+
+  // Y1, Y2, Y3 phonetics and misheard variants (speech engine often hears "y one" as "z one", "zee one", "why one", "why want")
+  s = s.replace(/\b(?:why|wai|y|z|zee)\s*(?:1|one|wan|juan|want)\b/gi, 'y1');
+  s = s.replace(/\b(?:why|wai|y|z|zee)\s*(?:2|two|tu|to|too)\b/gi, 'y2');
+  s = s.replace(/\b(?:why|wai|y|z|zee)\s*(?:3|three|tri)\b/gi, 'y3');
+
+  // General single letter codes (b-z, excluding 'a') followed by digit or number word:
+  s = s.replace(/\b([b-z])\s+(?:1|one|wan|juan|want)\b/gi, '$11');
+  s = s.replace(/\b([b-z])\s+(?:2|two|tu|to|too)\b/gi, '$12');
+  s = s.replace(/\b([b-z])\s+(?:3|three|tri)\b/gi, '$13');
   s = s.replace(/\b([a-z])\s+(\d{1,2})\b/gi, '$1$2');
 
   // Convert sequences of digit words into numeric digits (e.g. "nine nine four six" -> "9946", "five three four one" -> "5341")
@@ -1775,8 +1868,33 @@ function normalizeVoicePhonetics(str) {
   return s;
 }
 
+function stripVoiceIntros(text) {
+  if (!text) return '';
+  let s = text.trim();
+  const introPatterns = [
+    /^(?:and|at|kag|then|next|tsaka|saka|\+|so)\s+/i,
+    /^(?:can\s+you\s+(?:please\s+)?give\s+(?:me\s+)?(?:a\s+)?(?:etc\s+)?|give\s+me\s+a\s+|give\s+me\s+|can\s+you\s+give\s+(?:me\s+)?(?:a\s+)?(?:etc\s+)?|can\s+you\s+give\s+|can\s+i\s+get\s+|can\s+i\s+have\s+)\s*/i,
+    /^(?:pabili\s+po\s+ng\s+|pabili\s+ng\s+|pabili\s+po\s+|pabili\s+)\s*/i,
+    /^(?:order\s+ko\s+po\s+|order\s+ko\s+|order\s+)\s*/i,
+    /^(?:pabakal\s+palihug\s+sang\s+|pabakal\s+sang\s+|pabakal\s+)\s*/i,
+    /^(?:palihug\s+ko\s+sang\s+|palihug\s+sang\s+|palihug\s+)\s*/i,
+    /^(?:paki\s+add\s+ng\s+|paki\s+add\s+|add\s+)\s*/i,
+    /^(?:baklon\s+ko\s+ang\s+|baklon\s+ko\s+|baklon\s+)\s*/i,
+    /^(?:gusto\s+ko\s+ng\s+|gusto\s+ko\s+)\s*/i,
+    /^(?:i\s+want\s+to\s+order\s+|i\s+want\s+to\s+|i\s+want\s+)\s*/i
+  ];
+  for (const p of introPatterns) {
+    s = s.replace(p, '').trim();
+  }
+  return s;
+}
+
 function parseVoiceSegment(seg, pendingQty = null) {
   let text = normalizeVoicePhonetics(seg);
+  text = text.replace(/[.,;:!?()"]/g, '').trim();
+  text = text.replace(/^(?:a|an)\s+/i, '').trim();
+  text = stripVoiceIntros(text);
+
   let qty = pendingQty || 1;
   let itemStr = text;
   let matchedStart = false;
@@ -1793,14 +1911,49 @@ function parseVoiceSegment(seg, pendingQty = null) {
     }
   }
 
-  // 1. Check digit at start (1 or 2 digits only, e.g. "1 c1 solo", "3 pos 5341", NOT 4+ digit POS codes)
+  // Robust Code + Quantity pattern:
+  // Extracts code and quantity even if there are conversational words like "order", "orders", "pcs"
+  // Matches: "y1 2", "y1 to", "c1 1", "c1 want", "c2 2", "pos 5341 2", "why want to"
+  const mCodeQty = text.match(/\b([a-z]\d+|pos\s+\d+|sku\s+\d+|\d{4,5})\s+(\d{1,2}|[a-z]+)(?:\s+(?:orders?|pcs|pieces?|buok|ka\s+bilog))?$/i);
+  if (mCodeQty) {
+    const candCode = mCodeQty[1].trim();
+    const candQ = mCodeQty[2].trim().toLowerCase();
+    let candVal = null;
+    if (/^\d{1,2}$/.test(candQ)) {
+      candVal = parseInt(candQ, 10);
+    } else if (VOICE_NUMBER_WORDS[candQ]) {
+      candVal = VOICE_NUMBER_WORDS[candQ];
+    }
+    if (candVal !== null) {
+      return { qty: Math.max(1, candVal), itemStr: candCode, isOnlyQty: false };
+    }
+  }
+
+  // Robust Quantity + Code pattern:
+  // Matches: "2 y1", "two y1", "to y1", "1 c2", "one c2", "3 c2"
+  const mQtyCode = text.match(/\b(\d{1,2}|[a-z]+)\s+(?:of\s+)?([a-z]\d+|pos\s+\d+|sku\s+\d+|\d{4,5})$/i);
+  if (mQtyCode) {
+    const candQ = mQtyCode[1].trim().toLowerCase();
+    const candCode = mQtyCode[2].trim();
+    let candVal = null;
+    if (/^\d{1,2}$/.test(candQ)) {
+      candVal = parseInt(candQ, 10);
+    } else if (VOICE_NUMBER_WORDS[candQ]) {
+      candVal = VOICE_NUMBER_WORDS[candQ];
+    }
+    if (candVal !== null && !['pos', 'sku'].includes(candCode.toLowerCase())) {
+      return { qty: Math.max(1, candVal), itemStr: candCode, isOnlyQty: false };
+    }
+  }
+
+  // 1. Check digit at start (1 or 2 digits only, e.g. "1 c1", "3 c2", "2 y1")
   const mDigitStart = text.match(/^(\d{1,2})\s+(.*)$/);
   if (mDigitStart) {
     qty = parseInt(mDigitStart[1], 10);
     itemStr = mDigitStart[2].trim();
     matchedStart = true;
   } else {
-    // 2. Check number word at start (e.g. "isa ka pos 7928", "duha ka c1 solo", "isang c1 solo", "three pos 5341")
+    // 2. Check number word at start (e.g. "one c2", "two y1", "three c2", "isa ka c1")
     for (const w of sortedWords) {
       const reg = new RegExp('^' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s+(.*)$', 'i');
       const m = text.match(reg);
@@ -1813,31 +1966,34 @@ function parseVoiceSegment(seg, pendingQty = null) {
     }
   }
 
-  // 3. Check digit or number word at end
+  // 3. Check digit or number word at end (if no start quantity matched)
   if (!matchedStart) {
     let matchedEnd = false;
-    // 3a. Trailing number words
+    // 3a. Trailing number words (do not strip digit of a SKU like "c" + "two")
     for (const w of sortedWords) {
       const reg = new RegExp('^(.*?)\\s+' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
       const m = text.match(reg);
       if (m) {
-        qty = VOICE_NUMBER_WORDS[w];
-        itemStr = m[1].trim();
-        matchedEnd = true;
-        break;
+        const prefix = m[1].trim().toLowerCase();
+        if (!['c', 'y', 'z', 'pos', 'sku'].includes(prefix)) {
+          qty = VOICE_NUMBER_WORDS[w];
+          itemStr = m[1].trim();
+          matchedEnd = true;
+          break;
+        }
       }
     }
 
     if (!matchedEnd) {
-      // 3b. Code with trailing quantity (e.g. "pos 7928 2", "sku 85372 3", "7928 2")
-      const mCodeWithQty = text.match(/^(pos\s+\d+|sku\s+\d+|\d{4,5}|c\d+)\s+(\d{1,2})$/i);
+      // 3b. Code with trailing numeric quantity (e.g. "pos 7928 2", "sku 85372 3", "c1 1")
+      const mCodeWithQty = text.match(/^(pos\s+\d+|sku\s+\d+|\d{4,5}|[a-z]\d+)\s+(\d{1,2})$/i);
       if (mCodeWithQty) {
         itemStr = mCodeWithQty[1].trim();
         qty = parseInt(mCodeWithQty[2], 10);
       } else {
-        // 3c. Regular trailing quantity (e.g. "c1 solo 1", "burger 2")
+        // 3c. Regular trailing quantity (e.g. "burger 2")
         const mDigitEnd = text.match(/^(.*?)\s+(\d{1,2})$/);
-        if (mDigitEnd && !/^(?:pos|sku|code|item|c)$/i.test(mDigitEnd[1].trim())) {
+        if (mDigitEnd && !/^(?:pos|sku|code|item|c|y|z)$/i.test(mDigitEnd[1].trim())) {
           qty = parseInt(mDigitEnd[2], 10);
           itemStr = mDigitEnd[1].trim();
         }
@@ -1845,8 +2001,8 @@ function parseVoiceSegment(seg, pendingQty = null) {
     }
   }
 
-  // 4. Clean leftover connectors (e.g. "ng", "sang", "ka", "bilog", "pcs")
-  itemStr = itemStr.replace(/^(ng|sang|ka|bilog|ka bilog|pcs|piece|buok)\s+/i, '').trim();
+  // 4. Clean leftover connectors (e.g. "ng", "sang", "ka", "bilog", "pcs", "order")
+  itemStr = itemStr.replace(/^(ng|sang|ka|bilog|ka bilog|pcs|piece|buok|order|orders)\s+/i, '').trim();
 
   return { qty: Math.max(1, qty), itemStr, isOnlyQty: false };
 }
@@ -1854,24 +2010,16 @@ function parseVoiceSegment(seg, pendingQty = null) {
 function parseFullVoiceOrder(speechText, products, pendingQty = null) {
   if (!speechText || !speechText.trim()) return [];
   let cleaned = speechText.toLowerCase().trim();
+  cleaned = stripVoiceIntros(cleaned);
 
-  // Strip intro filler words in Tagalog, Hiligaynon, and English
-  const introPatterns = [
-    /^(pabili\s+po\s+ng|pabili\s+ng|pabili\s+po|pabili)\s+/i,
-    /^(order\s+ko\s+po|order\s+ko|order)\s+/i,
-    /^(pabakal\s+palihug\s+sang|pabakal\s+sang|pabakal)\s+/i,
-    /^(palihug\s+ko\s+sang|palihug\s+sang|palihug)\s+/i,
-    /^(paki\s+add\s+ng|paki\s+add|add)\s+/i,
-    /^(baklon\s+ko\s+ang|baklon\s+ko|baklon)\s+/i,
-    /^(gusto\s+ko\s+ng|gusto\s+ko)\s+/i,
-    /^(i\s+want\s+to\s+order|i\s+want|can\s+i\s+get|give\s+me)\s+/i
-  ];
-  for (const p of introPatterns) {
-    cleaned = cleaned.replace(p, '').trim();
-  }
+  // Normalize full phrase so short codes (c1, c2, y1) are converted cleanly
+  cleaned = normalizeVoicePhonetics(cleaned);
 
-  // Split multiple items if separated by conjunctions (kag, at, and, tsaka, saka, +, with)
-  const rawSegments = cleaned.split(/\s+(?:kag|at|and|tsaka|saka|\+|with)\s+/i);
+  // Remove commas that directly follow lone numbers (e.g. "one, c2" -> "one c2")
+  cleaned = cleaned.replace(/\b(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2}),\s*/gi, '$1 ');
+
+  // Split multiple items if separated by conjunctions, punctuation, "next order", "then", "next", "period"
+  const rawSegments = cleaned.split(/[,;]|\s+(?:kag|at|and|tsaka|saka|\+|with|then\s+next|next\s+order|then|next|period)\s+/i);
   const items = [];
 
   for (const raw of rawSegments) {
@@ -2125,6 +2273,8 @@ function startVoiceRecordingDirect() {
   };
 
   window.voiceSessionCommitted = window.voiceSessionCommitted || new Set();
+  window.lastVoiceSpoken = '';
+  window.lastVoiceCommitted = false;
 
   posVoiceRecognition.onresult = function(event) {
     let interim = '';
@@ -2143,10 +2293,12 @@ function startVoiceRecordingDirect() {
       textEl.innerHTML = `Heard: <span style="color:#b91c1c;">"${spoken}"</span>`;
     }
 
-    // Process continuous speech in real-time (both interim & final)
-    if (spoken) {
-      const isFinal = Boolean(finalTranscript.trim());
-      executeVoiceOrderDirect(spoken, isFinal);
+    window.lastVoiceSpoken = spoken;
+    if (finalTranscript.trim()) {
+      window.lastVoiceCommitted = true;
+      executeVoiceOrderDirect(finalTranscript.trim(), true);
+    } else {
+      window.lastVoiceCommitted = false;
     }
   };
 
@@ -2191,6 +2343,10 @@ function stopVoiceRecordingDirect() {
     try {
       posVoiceRecognition.stop();
     } catch(e) {}
+  }
+  if (window.lastVoiceSpoken && !window.lastVoiceCommitted) {
+    executeVoiceOrderDirect(window.lastVoiceSpoken, true);
+    window.lastVoiceSpoken = '';
   }
   if (window.voiceSessionCommitted) {
     window.voiceSessionCommitted.clear();
@@ -2248,6 +2404,7 @@ let voiceCommitResetTimer = null;
 
 function executeVoiceOrderDirect(text, isFinal = true) {
   if (!text || !text.trim()) return;
+  if (!isFinal) return; // Ensure cart addition only executes on final transcript
 
   const items = parseFullVoiceOrder(text, cachedProducts, window.pendingVoiceQty);
   const textEl = document.getElementById("pos-voice-transcript-text");
@@ -2466,6 +2623,20 @@ async function submitCheckout() {
     
     clearCart();
     localStorage.setItem("RESTOTRACK_SYNC_TX", Date.now());
+
+    try {
+      const dRes = await Auth.fetch("/api/v1/shifts/drawer-summary");
+      if (dRes.ok) {
+        const dData = await dRes.json();
+        const cUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
+        const myS = (dData.shifts || []).find(s => s.status === 'open' && (cUser ? s.cashier_id === cUser.id : true))
+                 || (dData.shifts || []).find(s => s.status === 'open');
+        const dCashEl = document.getElementById("pos-cash-in-drawer-display");
+        const dOrdEl = document.getElementById("pos-complete-orders-display");
+        if (dCashEl && myS) dCashEl.textContent = Utils.formatCurrency(myS.expected_cash);
+        if (dOrdEl && myS) dOrdEl.textContent = "Orders: " + Utils.formatCurrency(myS.total_sales);
+      }
+    } catch (e) {}
   } catch (err) {
     Utils.showToast(err.message, "danger");
   }
@@ -2599,15 +2770,11 @@ async function renderKitchen(c) {
           <div style="padding:14px 20px; background:#fcfcfc; border-top:1px solid rgba(205,190,150,0.15); text-align:center;">
             ${isCompleted ? `
               <div style="color:#10b981; font-size:13px; font-weight:700; display:flex; align-items:center; justify-content:center; gap:8px; padding:6px 0;">
-                <i class="fas fa-check-circle" style="font-size:16px;"></i> Order Ready
+                <i class="fas fa-check-circle" style="font-size:16px;"></i> Order Completed
               </div>
-            ` : ord.status === 'PREPARING' ? `
-              <button class="btn btn-primary" style="width:100%; font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:8px; background:#10b981; color:#fff; border:none;" onclick="updateOrderStatus('${ord.raw_id}', 'READY')">
-                <i class="fas fa-check"></i> Finish Order
-              </button>
             ` : `
-              <button class="btn btn-outline" style="width:100%; font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:8px; color:#3b82f6; border-color:#3b82f6;" onclick="updateOrderStatus('${ord.raw_id}', 'PREPARING')">
-                <i class="fas fa-fire"></i> Accept Order
+              <button class="btn btn-primary" style="width:100%; font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:8px; background:#10b981; color:#fff; border:none; cursor:pointer;" onclick="updateOrderStatus('${ord.raw_id}', 'COMPLETED')">
+                <i class="fas fa-check-circle"></i> Complete Order
               </button>
             `}
           </div>
@@ -2771,7 +2938,7 @@ async function renderDrinksStation(c) {
     <div class="toolbar fade-up" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:24px;">
       <div>
         <h2 style="font-size:22px; font-weight:800; color:var(--text-main); margin:0;">
-          <i class="fas fa-glass-water" style="color:#2563eb; margin-right:8px;"></i>Cashier Drinks Order
+          <i class="fas fa-glass-water" style="color:#2563eb; margin-right:8px;"></i>Drinks Orders
         </h2>
         <p style="font-size:13px; color:var(--text-muted); margin-top:4px;">
           Live beverage orders received & prepared by Cashier
@@ -2886,15 +3053,11 @@ async function renderDrinksStation(c) {
               <div style="padding:14px 20px; background:#fcfcfc; border-top:1px solid rgba(205,190,150,0.15); text-align:center;">
                 ${isCompleted ? `
                   <div style="color:#10b981; font-size:13px; font-weight:700; display:flex; align-items:center; justify-content:center; gap:8px; padding:6px 0;">
-                    <i class="fas fa-check-circle" style="font-size:16px;"></i> Drinks Dispatched
+                    <i class="fas fa-check-circle" style="font-size:16px;"></i> Order Completed
                   </div>
-                ` : ord.status === 'PREPARING' ? `
-                  <button class="btn btn-primary" style="width:100%; font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:8px; background:#10b981; color:#fff; border:none; cursor:pointer;" onclick="updateDrinksStatus('${ord.raw_id}', 'COMPLETED')">
-                    <i class="fas fa-check"></i> Mark Served / Done
-                  </button>
                 ` : `
-                  <button class="btn btn-outline" style="width:100%; font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:8px; color:#2563eb; border-color:#2563eb; cursor:pointer;" onclick="updateDrinksStatus('${ord.raw_id}', 'PREPARING')">
-                    <i class="fas fa-blender"></i> Accept & Prepare Drinks
+                  <button class="btn btn-primary" style="width:100%; font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:8px; background:#10b981; color:#fff; border:none; cursor:pointer;" onclick="updateDrinksStatus('${ord.raw_id}', 'COMPLETED')">
+                    <i class="fas fa-check-circle"></i> Complete Order
                   </button>
                 `}
               </div>
@@ -3786,101 +3949,209 @@ async function submitAddSupplier() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 11. PURCHASE ORDERS
+// 11. PROFIT LOSS & CASHOUT INCOME
 // ─────────────────────────────────────────────────────────────────────────────
-let cachedPurchases = [
-  { id: "PO-2026-001", supplier: "San Miguel Foods Inc.", items: "50kg Whole Chicken, 20kg Pork Belly", total_cost: 14500, status: "RECEIVED", date: "2026-08-23" },
-  { id: "PO-2026-002", supplier: "Magnolia Fresh Farm", items: "100 Trays Fresh Eggs, 30L Cooking Oil", total_cost: 9800, status: "PENDING", date: "2026-08-24" },
-  { id: "PO-2026-003", supplier: "Baguio Greens Produce", items: "40kg Onions, 30kg Garlic, 50kg Potatoes", total_cost: 6200, status: "RECEIVED", date: "2026-08-22" }
-];
+let cachedProfitLossData = null;
 
-async function renderPurchases(c) {
-  const totalSpend = cachedPurchases.reduce((sum, p) => sum + p.total_cost, 0);
-  const pendingCount = cachedPurchases.filter(p => p.status === 'PENDING').length;
+async function renderProfitLoss(c) {
+  if (!c) c = document.getElementById("view-container");
+  if (!c) return;
+
+  let data = {
+    revenue: { total_orders_revenue: 0, today_orders_revenue: 0, cash_sales: 0, non_cash_sales: 0, total_orders_count: 0 },
+    inventory: { total_inventory_valuation: 0, total_items_count: 0, cost_of_goods_sold: 0 },
+    cashout: { total_cashout_income: 0, today_cashout_income: 0, active_drawer_cash: 0, history: [] },
+    profit_loss: { gross_profit: 0, net_profit: 0, profit_margin_percent: 0, net_cash_income: 0, is_profitable: true }
+  };
+
+  try {
+    const res = await Auth.fetch("/api/v1/analytics/profit-loss");
+    if (res.ok) {
+      data = await res.json();
+      cachedProfitLossData = data;
+    }
+  } catch (err) {
+    console.error("Failed to load profit-loss data:", err);
+  }
+
+  const rev = data.revenue || {};
+  const inv = data.inventory || {};
+  const csh = data.cashout || {};
+  const pl = data.profit_loss || {};
+  const history = csh.history || [];
 
   c.innerHTML = `
-    <div class="stats-grid">
+    <!-- Top Toolbar -->
+    <div class="toolbar fade-up" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h2 style="font-size:20px; font-weight:800; color:var(--text-main); margin:0; display:flex; align-items:center; gap:8px;">
+          <i class="fas fa-scale-balanced" style="color:#10b981;"></i> Profit Loss & Cashout Income
+        </h2>
+        <p style="font-size:12px; color:var(--text-muted); margin:4px 0 0 0;">
+          Live financial ledger: orders sales revenue, inventory price valuation, cashier drawer cashouts, and operating profit
+        </p>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <button class="btn btn-primary" onclick="openAddCashMovementModal()" style="display:inline-flex; align-items:center; gap:8px; font-weight:700; border-radius:10px;">
+          <i class="fas fa-hand-holding-dollar"></i> New Cashout
+        </button>
+        <button class="btn btn-outline btn-sm" onclick="renderProfitLoss()" title="Refresh Financials" style="border-radius:10px;">
+          <i class="fas fa-sync-alt"></i> Live Refresh
+        </button>
+      </div>
+    </div>
+
+    <!-- Financial KPI Cards -->
+    <div class="stats-grid fade-up delay-1" style="margin-bottom:24px;">
       <div class="stat-card">
-        <div class="stat-icon gold"><i class="fas fa-file-invoice-dollar"></i></div>
+        <div class="stat-icon gold"><i class="fas fa-coins"></i></div>
         <div class="stat-info">
-          <h3>Total Purchase Orders</h3>
-          <div class="stat-count" style="color:#c9a227;">${cachedPurchases.length}</div>
-          <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-shopping-cart"></i> PO Records</div>
+          <h3>Total Orders Revenue</h3>
+          <div class="stat-count" style="color:#c9a227;">${Utils.formatCurrency(rev.total_orders_revenue || 0)}</div>
+          <div class="stat-trend" style="color:var(--success, #10b981);"><i class="fas fa-receipt"></i> ${rev.total_orders_count || 0} completed order(s)</div>
         </div>
       </div>
       <div class="stat-card">
-        <div class="stat-icon orange"><i class="fas fa-clock"></i></div>
+        <div class="stat-icon green"><i class="fas fa-chart-line"></i></div>
         <div class="stat-info">
-          <h3>Pending Shipments</h3>
-          <div class="stat-count" style="color:#f97316;">${pendingCount}</div>
-          <div class="stat-trend" style="color:#f97316;">Awaiting Delivery</div>
+          <h3>Net Operating Profit</h3>
+          <div class="stat-count" style="color:${pl.is_profitable ? '#10b981' : '#ef4444'};">${Utils.formatCurrency(pl.net_profit || 0)}</div>
+          <div class="stat-trend" style="color:${pl.is_profitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${pl.profit_margin_percent || 0}% profit margin</div>
         </div>
       </div>
       <div class="stat-card">
-        <div class="stat-icon green"><i class="fas fa-truck-loading"></i></div>
+        <div class="stat-icon emerald" style="background:rgba(16,185,129,0.12); color:#10b981;"><i class="fas fa-vault"></i></div>
         <div class="stat-info">
-          <h3>Received Shipments</h3>
-          <div class="stat-count" style="color:#10b981;">${cachedPurchases.length - pendingCount}</div>
-          <div class="stat-trend" style="color:#10b981;">Stock Ingested</div>
+          <h3>Total Cashout Income</h3>
+          <div class="stat-count" style="color:#10b981;">${Utils.formatCurrency(csh.total_cashout_income || 0)}</div>
+          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-shield-halved"></i> Deposited into store safe</div>
         </div>
       </div>
       <div class="stat-card">
-        <div class="stat-icon purple"><i class="fas fa-coins"></i></div>
+        <div class="stat-icon purple" style="background:rgba(99,102,241,0.12); color:#6366f1;"><i class="fas fa-boxes-stacked"></i></div>
         <div class="stat-info">
-          <h3>Total Procurement</h3>
-          <div class="stat-count" style="color:#9333ea; font-size:20px;">${Utils.formatCurrency(totalSpend)}</div>
-          <div class="stat-trend" style="color:#9333ea;">Month-to-Date</div>
+          <h3>Inventory Stock Price Value</h3>
+          <div class="stat-count" style="color:#6366f1;">${Utils.formatCurrency(inv.total_inventory_valuation || 0)}</div>
+          <div class="stat-trend" style="color:#6366f1;"><i class="fas fa-tags"></i> Across ${inv.total_items_count || 0} items</div>
         </div>
       </div>
     </div>
 
-    <div class="toolbar fade-up delay-1" style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; flex-wrap:wrap;">
-      <div style="font-size:13px; color:var(--text-muted);">${cachedPurchases.length} purchase orders recorded</div>
-      <button class="btn btn-primary" onclick="openCreatePOModal()" style="display:inline-flex; align-items:center; gap:8px;">
-        <i class="fas fa-plus-circle"></i> Create Purchase Order
-      </button>
+    <!-- Side-by-Side Dual Analysis Sections -->
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:24px;" class="fade-up delay-2">
+      <!-- P&L Statement Card -->
+      <div class="section-card" style="margin-bottom:0;">
+        <div class="section-head" style="border-bottom:1px solid rgba(205,190,150,0.25); padding-bottom:12px;">
+          <div>
+            <h2 style="font-size:16px; margin:0;"><i class="fas fa-file-invoice-dollar" style="color:#10b981; margin-right:8px;"></i> Profit & Loss Statement (P&L)</h2>
+            <span style="font-size:12px; color:var(--text-muted);">Real-time revenue versus inventory cost breakdown</span>
+          </div>
+          <span class="badge ${pl.is_profitable ? 'badge-success' : 'badge-danger'}" style="font-size:11px; font-weight:700;">
+            ${pl.is_profitable ? 'PROFITABLE' : 'OPERATING LOSS'}
+          </span>
+        </div>
+        <div style="padding:16px 0;">
+          <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(205,190,150,0.15);">
+            <span style="font-weight:600; color:var(--text-main); font-size:13px;"><i class="fas fa-plus" style="color:#10b981; margin-right:6px;"></i> Gross Orders Revenue:</span>
+            <strong style="color:#10b981; font-size:14px;">+${Utils.formatCurrency(rev.total_orders_revenue || 0)}</strong>
+          </div>
+          <div style="display:flex; justify-content:space-between; padding:8px 0 8px 20px; font-size:12px; color:var(--text-muted); border-bottom:1px dashed rgba(205,190,150,0.15);">
+            <span>↳ Cash Sales (Drawer):</span>
+            <span>${Utils.formatCurrency(rev.cash_sales || 0)}</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; padding:8px 0 8px 20px; font-size:12px; color:var(--text-muted); border-bottom:1px solid rgba(205,190,150,0.15);">
+            <span>↳ Non-Cash Sales (GCash / Card):</span>
+            <span>${Utils.formatCurrency(rev.non_cash_sales || 0)}</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(205,190,150,0.15);">
+            <span style="font-weight:600; color:var(--text-main); font-size:13px;"><i class="fas fa-minus" style="color:#ef4444; margin-right:6px;"></i> Cost of Goods Sold (Inventory Cost):</span>
+            <strong style="color:#ef4444; font-size:14px;">-${Utils.formatCurrency(inv.cost_of_goods_sold || 0)}</strong>
+          </div>
+          <div style="display:flex; justify-content:space-between; padding:12px 0; background:rgba(201,162,39,0.06); border-radius:8px; margin-top:12px; padding:12px 14px;">
+            <span style="font-weight:800; font-size:14px; color:var(--text-main);">NET OPERATING PROFIT:</span>
+            <span style="font-weight:800; font-size:18px; color:${pl.is_profitable ? '#10b981' : '#ef4444'};">
+              ${Utils.formatCurrency(pl.net_profit || 0)}
+            </span>
+          </div>
+          <div style="margin-top:10px; font-size:11px; color:var(--text-muted); display:flex; justify-content:space-between;">
+            <span>Profit Margin: <strong>${pl.profit_margin_percent || 0}%</strong></span>
+            <span>Today's Sales Revenue: <strong>${Utils.formatCurrency(rev.today_orders_revenue || 0)}</strong></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cashout & Drawer Liquidity Card -->
+      <div class="section-card" style="margin-bottom:0;">
+        <div class="section-head" style="border-bottom:1px solid rgba(205,190,150,0.25); padding-bottom:12px;">
+          <div>
+            <h2 style="font-size:16px; margin:0;"><i class="fas fa-vault" style="color:#c9a227; margin-right:8px;"></i> Cashout Income & Safe Deposits</h2>
+            <span style="font-size:12px; color:var(--text-muted);">Funds secured in store safe vs active cashier drawer float</span>
+          </div>
+        </div>
+        <div style="padding:16px 0;">
+          <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(205,190,150,0.15);">
+            <span style="font-weight:600; color:var(--text-main); font-size:13px;"><i class="fas fa-shield-halved" style="color:#10b981; margin-right:6px;"></i> Total Cashout Income (In Store Safe):</span>
+            <strong style="color:#10b981; font-size:14px;">${Utils.formatCurrency(csh.total_cashout_income || 0)}</strong>
+          </div>
+          <div style="display:flex; justify-content:space-between; padding:8px 0 8px 20px; font-size:12px; color:var(--text-muted); border-bottom:1px dashed rgba(205,190,150,0.15);">
+            <span>↳ Today's Cashouts:</span>
+            <span>${Utils.formatCurrency(csh.today_cashout_income || 0)}</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(205,190,150,0.15);">
+            <span style="font-weight:600; color:var(--text-main); font-size:13px;"><i class="fas fa-cash-register" style="color:#c9a227; margin-right:6px;"></i> Active Cash Balance in Cashier Drawers:</span>
+            <strong style="color:#c9a227; font-size:14px;">${Utils.formatCurrency(csh.active_drawer_cash || 0)}</strong>
+          </div>
+          <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(205,190,150,0.15);">
+            <span style="font-weight:600; color:var(--text-main); font-size:13px;"><i class="fas fa-mobile-screen" style="color:#6366f1; margin-right:6px;"></i> Non-Cash Collections (E-Wallets / Bank):</span>
+            <strong style="color:#6366f1; font-size:14px;">${Utils.formatCurrency(rev.non_cash_sales || 0)}</strong>
+          </div>
+          <div style="display:flex; justify-content:space-between; padding:12px 0; background:rgba(16,185,129,0.06); border-radius:8px; margin-top:12px; padding:12px 14px;">
+            <span style="font-weight:800; font-size:14px; color:var(--text-main);">NET REALIZED CASH & DIGITAL INCOME:</span>
+            <span style="font-weight:800; font-size:18px; color:#10b981;">
+              ${Utils.formatCurrency(pl.net_cash_income || 0)}
+            </span>
+          </div>
+          <div style="margin-top:12px;">
+            <button class="btn btn-primary btn-sm" onclick="openAddCashMovementModal()" style="width:100%; justify-content:center; padding:8px 12px; font-weight:700;">
+              <i class="fas fa-hand-holding-dollar"></i> Perform Drawer Cashout & Reset Cashier to ₱0.00
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <div class="section-card">
+    <!-- Cashout & Safe Deposit Ledger Audit Table -->
+    <div class="section-card fade-up delay-3">
       <div class="section-head">
-        <h2>Purchase Orders & Deliveries</h2>
-        <span style="font-size:13px; color:var(--text-muted);">Track supplier receipts</span>
+        <div>
+          <h2><i class="fas fa-receipt" style="color:#10b981; margin-right:8px;"></i> Cashout Income & Safe Deposit Ledger</h2>
+          <span style="font-size:12px; color:var(--text-muted);">Historical records of funds cashed out from cashier drawers into the manager safe</span>
+        </div>
+        <span class="badge badge-info" style="font-size:11px; font-weight:700;">${history.length} Cashout Records</span>
       </div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>PO Number</th>
-              <th>Supplier Name</th>
-              <th>Item Description</th>
-              <th>Total Cost</th>
-              <th>Order Date</th>
+              <th>Timestamp</th>
+              <th>Shift / Cashier</th>
+              <th>Cashed Out Amount</th>
+              <th>Reason / Destination</th>
+              <th>Recorded By</th>
               <th>Status</th>
-              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            ${cachedPurchases.map(p => `
+            ${history.length === 0 ? `
+              <tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-muted);"><i class="fas fa-info-circle"></i> No cashout movements logged yet. When the manager performs a drawer cashout, it appears here.</td></tr>
+            ` : history.map(h => `
               <tr>
-                <td><strong style="color:var(--text-main); font-size:13px;">${p.id}</strong></td>
-                <td style="font-size:13px; font-weight:600;">${p.supplier}</td>
-                <td style="color:var(--text-muted); font-size:13px;">${p.items}</td>
-                <td><strong style="color:#c9a227; font-size:13px;">${Utils.formatCurrency(p.total_cost)}</strong></td>
-                <td style="color:var(--text-muted); font-size:13px;">${p.date}</td>
-                <td>
-                  <span class="badge ${p.status === 'RECEIVED' ? 'badge-success' : 'badge-warning'}" style="font-size:11px; font-weight:700;">
-                    ${p.status}
-                  </span>
-                </td>
-                <td>
-                  ${p.status === 'PENDING' ? `
-                    <button class="btn btn-primary btn-sm" onclick="markPOReceived('${p.id}')" style="font-size:11px; padding:4px 10px;">
-                      <i class="fas fa-check"></i> Receive
-                    </button>
-                  ` : `
-                    <span style="color:var(--text-muted); font-size:12px;"><i class="fas fa-check-double" style="color:var(--success);"></i> Completed</span>
-                  `}
-                </td>
+                <td style="color:var(--text-muted); font-size:12px;">${h.created_at ? new Date(h.created_at).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'}</td>
+                <td><strong style="color:var(--text-main); font-size:13px;">${h.cashier}</strong> <span style="font-size:11px; color:var(--text-muted);">(Shift #${h.shift_id})</span></td>
+                <td><strong style="color:#10b981; font-size:14px;">+${Utils.formatCurrency(h.amount)}</strong></td>
+                <td style="color:var(--text-main); font-size:13px;">${h.reason}</td>
+                <td style="color:var(--text-muted); font-size:12px;">Safe Deposit</td>
+                <td><span class="badge badge-success" style="font-size:11px; font-weight:700;"><i class="fas fa-check-circle"></i> SECURED</span></td>
               </tr>
             `).join('')}
           </tbody>
@@ -3890,60 +4161,8 @@ async function renderPurchases(c) {
   `;
 }
 
-function openCreatePOModal() {
-  Utils.openModal("Create Purchase Order", `
-    <form id="form-create-po" onsubmit="event.preventDefault(); submitCreatePO();">
-      <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Supplier <span style="color:var(--danger);">*</span></label>
-        <select id="po-supplier" class="input-field" style="width:100%;">
-          ${globalSuppliers.length > 0
-            ? globalSuppliers.map(s => `<option value="${s.supplier_name}">${s.supplier_name}${s.category ? ' (' + s.category + ')' : ''}</option>`).join('')
-            : '<option value="">No suppliers available</option>'
-          }
-        </select>
-      </div>
-      <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Items & Quantities Description <span style="color:var(--danger);">*</span></label>
-        <textarea id="po-items" class="input-field" required rows="3" placeholder="e.g. 50kg Whole Chicken, 10 Bags Jasmine Rice" style="width:100%;"></textarea>
-      </div>
-      <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Estimated Total Cost (₱) <span style="color:var(--danger);">*</span></label>
-        <input type="number" step="0.01" id="po-cost" class="input-field" required placeholder="12500" style="width:100%;">
-      </div>
-    </form>
-  `, `<button class="btn btn-primary" onclick="submitCreatePO()"><i class="fas fa-paper-plane"></i> Submit Purchase Order</button>`);
-}
-
-function submitCreatePO() {
-  const supplier = document.getElementById("po-supplier")?.value;
-  const items = document.getElementById("po-items")?.value.trim();
-  const cost = parseFloat(document.getElementById("po-cost")?.value) || 0;
-
-  if (!supplier || !items || cost <= 0) {
-    Utils.showToast("Please provide all required purchase order details.", "danger");
-    return;
-  }
-
-  const newPO = {
-    id: `PO-${new Date().getFullYear()}-${String(cachedPurchases.length + 1).padStart(3, '0')}`,
-    supplier, items, total_cost: cost,
-    status: "PENDING",
-    date: new Date().toISOString().split('T')[0]
-  };
-
-  cachedPurchases.unshift(newPO);
-  Utils.showToast("Purchase Order created successfully!", "success");
-  Utils.closeModal();
-  renderPurchases();
-}
-
-function markPOReceived(poId) {
-  const po = cachedPurchases.find(p => p.id === poId);
-  if (!po) return;
-  po.status = "RECEIVED";
-  Utils.showToast(`Purchase order ${poId} marked as RECEIVED into inventory!`, "success");
-  renderPurchases();
-}
+window.renderPurchases = renderProfitLoss;
+window.renderProfitLoss = renderProfitLoss;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 12. WASTAGE & SPOILAGE TRACKING
@@ -4752,7 +4971,7 @@ function renderCashDrawerTrackerUI(container, data) {
       </div>
       <div style="display:flex; gap:10px; align-items:center;">
         <button class="btn btn-primary" onclick="openAddCashMovementModal()" style="display:inline-flex; align-items:center; gap:8px; font-weight:700; border-radius:10px;">
-          <i class="fas fa-money-bill-transfer"></i> Record Cash Movement (Drop / In)
+          <i class="fas fa-hand-holding-dollar"></i> Cashout Cashier Drawer
         </button>
         <button class="btn btn-outline btn-sm" onclick="renderCashDrawerTracker()" title="Refresh Drawer Balances" style="border-radius:10px;">
           <i class="fas fa-sync-alt"></i> Live Refresh
@@ -4771,11 +4990,11 @@ function renderCashDrawerTrackerUI(container, data) {
         </div>
       </div>
       <div class="stat-card">
-        <div class="stat-icon green"><i class="fas fa-cash-register"></i></div>
+        <div class="stat-icon green"><i class="fas fa-receipt"></i></div>
         <div class="stat-info">
-          <h3>Active Cashier Shifts</h3>
-          <div class="stat-count" style="color:#10b981;">${data.active_drawers_count || 0}</div>
-          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-user-check"></i> On counter right now</div>
+          <h3>Complete Amount of Orders</h3>
+          <div class="stat-count" style="color:#10b981;">${Utils.formatCurrency(data.today_total_orders_amount || (data.today_total_cash_sales || 0))}</div>
+          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-check-circle"></i> Today's completed orders</div>
         </div>
       </div>
       <div class="stat-card">
@@ -4789,7 +5008,7 @@ function renderCashDrawerTrackerUI(container, data) {
       <div class="stat-card">
         <div class="stat-icon red"><i class="fas fa-arrow-down-long"></i></div>
         <div class="stat-info">
-          <h3>Total Cash Drops (Skimmed)</h3>
+          <h3>Total Cashed Out</h3>
           <div class="stat-count" style="color:#ef4444;">${Utils.formatCurrency(totalDrops)}</div>
           <div class="stat-trend" style="color:#ef4444;"><i class="fas fa-shield-halved"></i> Deposited to safe</div>
         </div>
@@ -4801,7 +5020,7 @@ function renderCashDrawerTrackerUI(container, data) {
       <div class="section-head">
         <div>
           <h2><i class="fas fa-users-viewfinder" style="color:#c9a227; margin-right:8px;"></i> Cashier Drawers & Shift Balance Breakdown</h2>
-          <span style="font-size:12px; color:var(--text-muted);">Real-time formula: [Starting Float] + [Cash Sales] + [Paid In] - [Paid Out / Drops] = [Expected Cash in Drawer]</span>
+          <span style="font-size:12px; color:var(--text-muted);">Real-time breakdown: [Starting Float] + [Cash Sales] + [Paid In] - [Paid Out / Drops] = [Expected Cash in Drawer]</span>
         </div>
         <span class="badge badge-info" style="font-size:11px; font-weight:700;">${shifts.length} Recorded Shifts</span>
       </div>
@@ -4813,11 +5032,12 @@ function renderCashDrawerTrackerUI(container, data) {
               <th>Shift Status</th>
               <th>Started At</th>
               <th>Start Float</th>
+              <th style="background:rgba(16,185,129,0.08); color:#10b981;">Complete Orders Total</th>
               <th>Cash Sales</th>
               <th>Non-Cash</th>
               <th>Paid In (+)</th>
               <th>Cash Drops (-)</th>
-              <th style="background:rgba(201,162,39,0.08);">Expected in Drawer</th>
+              <th style="background:rgba(201,162,39,0.1); color:#c9a227;">Expected in Drawer</th>
               <th>End / Actual</th>
               <th>Actions</th>
             </tr>
@@ -4896,11 +5116,12 @@ function renderDrawerTableRows(shifts) {
         <td>${statusBadge}</td>
         <td style="color:var(--text-muted); font-size:12px;">${startDate}</td>
         <td><strong style="font-size:13px; color:var(--text-main);">${Utils.formatCurrency(s.start_cash)}</strong></td>
+        <td style="background:rgba(16,185,129,0.06);"><strong style="color:#10b981; font-weight:800; font-size:14px;">${Utils.formatCurrency(s.total_sales || (s.cash_sales + s.non_cash_sales))}</strong></td>
         <td><span style="color:#10b981; font-weight:700; font-size:13px;">+${Utils.formatCurrency(s.cash_sales)}</span></td>
         <td><span style="color:#6366f1; font-size:12px;">${Utils.formatCurrency(s.non_cash_sales)}</span></td>
         <td><span style="color:#10b981; font-size:12px;">+${Utils.formatCurrency(s.paid_in)}</span></td>
         <td><span style="color:#ef4444; font-size:12px;">-${Utils.formatCurrency(s.paid_out)}</span></td>
-        <td style="background:rgba(201,162,39,0.08);">
+        <td style="background:rgba(201,162,39,0.1);">
           <strong style="color:#c9a227; font-size:15px; font-weight:800;">${Utils.formatCurrency(s.expected_cash)}</strong>
         </td>
         <td style="font-size:12px;">
@@ -4909,8 +5130,8 @@ function renderDrawerTableRows(shifts) {
         <td>
           <div style="display:flex; gap:6px;">
             ${isOpen ? `
-              <button class="btn btn-outline btn-sm" onclick="openAddCashMovementModal(${s.id})" title="Record Cash Drop or Add Cash to Drawer" style="padding:4px 8px; font-size:11px;">
-                <i class="fas fa-money-bill-transfer"></i> Drop / Add
+              <button class="btn btn-primary btn-sm" onclick="openAddCashMovementModal(${s.id})" title="Cashout Cashier Drawer and Reset to ₱0.00" style="padding:4px 10px; font-size:11px; font-weight:700;">
+                <i class="fas fa-hand-holding-dollar"></i> Cashout
               </button>
             ` : ''}
             <button class="btn btn-outline btn-sm" onclick="openShiftMovementsModal(${s.id})" title="View Cash Movement History" style="padding:4px 8px; font-size:11px;">
@@ -4960,82 +5181,77 @@ function openAddCashMovementModal(defaultShiftId = null) {
   const openShifts = shifts.filter(s => s.status === 'open');
 
   if (!openShifts.length) {
-    Utils.showToast("There are currently no active open cashier shifts. A cashier must start a shift to record drawer movements.", "warning");
+    Utils.showToast("There are currently no active open cashier shifts. A cashier must start a shift to record drawer cashout.", "warning");
     return;
   }
 
+  const targetShift = (defaultShiftId ? openShifts.find(s => s.id === defaultShiftId) : null) || openShifts[0];
+  const targetShiftId = targetShift ? targetShift.id : (openShifts[0]?.id || "");
+  const expectedCash = targetShift ? (targetShift.expected_cash || 0) : 0;
+
   const shiftOptions = openShifts.map(s => `
-    <option value="${s.id}" ${defaultShiftId && defaultShiftId === s.id ? 'selected' : ''}>
-      Shift #${s.id} — ${s.cashier_name} (@${s.cashier_username}) [Current: ${Utils.formatCurrency(s.expected_cash)}]
+    <option value="${s.id}" ${(defaultShiftId && defaultShiftId === s.id) || s.id === targetShiftId ? 'selected' : ''}>
+      Shift #${s.id} — ${s.cashier_name} (@${s.cashier_username}) [Current Drawer: ${Utils.formatCurrency(s.expected_cash)}]
     </option>
   `).join('');
 
-  Utils.openModal("Record Cash Drawer Movement", `
+  Utils.openModal("Cashout Cashier Drawer", `
     <form id="form-cash-movement" onsubmit="event.preventDefault(); submitAddCashMovement();">
-      <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Select Active Cashier Shift <span style="color:var(--danger);">*</span></label>
-        <select id="cm-shift-id" class="input-field" required style="width:100%;">
-          ${shiftOptions}
-        </select>
-      </div>
-
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
-        <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Movement Action <span style="color:var(--danger);">*</span></label>
-          <select id="cm-type" class="input-field" required style="width:100%;">
-            <option value="PAID_OUT" selected>🔻 Cash Drop (Deposit to Safe / Pull Cash)</option>
-            <option value="PAID_IN">🔺 Paid In (Float Addition / Change Replenishment)</option>
+      ${openShifts.length > 1 && !defaultShiftId ? `
+        <div class="input-group" style="margin-bottom:14px;">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Select Active Cashier Shift <span style="color:var(--danger);">*</span></label>
+          <select id="cm-shift-id" class="input-field" required style="width:100%;" onchange="const s = ((cachedDrawerData && cachedDrawerData.shifts) || []).find(x => x.id == this.value); if (s && document.getElementById('cm-amount')) { document.getElementById('cm-amount').value = (s.expected_cash || 0).toFixed(2); const info = document.getElementById('cm-expected-info'); if (info) info.textContent = Utils.formatCurrency(s.expected_cash); }">
+            ${shiftOptions}
           </select>
         </div>
-        <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Cash Amount (₱) <span style="color:var(--danger);">*</span></label>
-          <input type="number" step="0.01" min="1" id="cm-amount" class="input-field" required placeholder="e.g. 5000.00" style="width:100%;">
-        </div>
-      </div>
+      ` : `<input type="hidden" id="cm-shift-id" value="${targetShiftId}">`}
 
       <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Reason / Purpose <span style="color:var(--danger);">*</span></label>
-        <input type="text" id="cm-reason" class="input-field" required placeholder="e.g. Mid-day safe drop, Added ₱50 coins/bills change" style="width:100%;">
-      </div>
-
-      <div style="background:rgba(201,162,39,0.08); border:1px solid rgba(201,162,39,0.25); border-radius:8px; padding:12px; font-size:12px; color:var(--text-main);">
-        <i class="fas fa-info-circle" style="color:#c9a227; margin-right:6px;"></i>
-        <strong>Cash Drops</strong> deduct from the cashier's expected drawer total and transfer funds into the store safe.
-        <strong>Paid In</strong> adds funds to the drawer for change replenishment.
+        <label style="font-size:13px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:8px; text-align:center;">
+          Cash Amount (₱) <span style="color:var(--danger);">*</span>
+        </label>
+        <input type="number" step="0.01" min="0" id="cm-amount" class="input-field" required value="${expectedCash.toFixed(2)}" placeholder="0.00" style="width:100%; font-size:26px; font-weight:800; padding:12px; text-align:center; color:#c9a227; border:2px solid #c9a227; border-radius:10px;">
+        <div style="text-align:center; font-size:12px; color:var(--text-muted); margin-top:8px;">
+          Current Drawer Cash: <strong id="cm-expected-info" style="color:var(--text-main);">${Utils.formatCurrency(expectedCash)}</strong>
+        </div>
       </div>
     </form>
-  `, `<button class="btn btn-primary" onclick="submitAddCashMovement()"><i class="fas fa-save"></i> Save Movement & Update Drawer</button>`);
+  `, `<button class="btn btn-primary" onclick="submitAddCashMovement()" style="width:100%; justify-content:center; padding:12px; font-size:14px; font-weight:700; border-radius:10px;"><i class="fas fa-hand-holding-dollar"></i> Cashout & Reset Cashier Drawer to ₱0.00</button>`);
 }
 
 async function submitAddCashMovement() {
   const shiftId = parseInt(document.getElementById("cm-shift-id")?.value, 10);
-  const type = document.getElementById("cm-type")?.value;
-  const amount = parseFloat(document.getElementById("cm-amount")?.value);
-  const reason = document.getElementById("cm-reason")?.value.trim();
+  const amountVal = document.getElementById("cm-amount")?.value;
+  const amount = parseFloat(amountVal);
 
-  if (!shiftId || !type || isNaN(amount) || amount <= 0 || !reason) {
-    Utils.showToast("Please provide all required fields with an amount greater than 0.", "danger");
+  if (isNaN(amount) || amount < 0) {
+    Utils.showToast("Please provide a valid cash amount.", "danger");
     return;
   }
 
   try {
-    const res = await Auth.fetch("/api/v1/shifts/cash-movement", {
+    const res = await Auth.fetch("/api/v1/shifts/cashout", {
       method: "POST",
       body: JSON.stringify({
-        shift_id: shiftId,
-        type: type,
+        shift_id: shiftId || undefined,
         amount: amount,
-        reason: reason
+        reason: "Manager Cashout"
       })
     });
 
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || "Failed to record cash movement");
+      throw new Error(err.detail || "Failed to cashout drawer");
     }
 
-    Utils.showToast(`✅ Successfully recorded ${type === 'PAID_OUT' ? 'Cash Drop of ' : 'Float Addition of '} ₱${amount.toFixed(2)}!`, "success");
+    const data = await res.json();
+    Utils.showToast(data.message || `✅ Successfully cashed out ₱${amount.toFixed(2)}! Cashier drawer reset to ₱0.00.`, "success");
     Utils.closeModal();
+
+    // Broadcast signal so Cashier POS in other tabs/windows immediately resets drawer to ₱0.00
+    try {
+      localStorage.setItem("RESTOTRACK_DRAWER_RESET", Date.now().toString());
+    } catch (e) {}
 
     // Re-render current view if on cash_drawer or dashboard
     const currentLink = document.querySelector("aside.sidebar .nav-link.active");
@@ -5046,7 +5262,7 @@ async function submitAddCashMovement() {
       renderCashDrawerTracker();
     }
   } catch (err) {
-    console.error("Cash movement error:", err);
+    console.error("Cashout error:", err);
     Utils.showToast(err.message, "danger");
   }
 }

@@ -6,14 +6,19 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
+# Ensure sys.path includes the fastapi directory
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
 # Setup basic logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("pos_db")
 
-# Load environment variables from .env file
-base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-fastapi_env = os.path.join(base_dir, "fastapi", ".env")
-root_env = os.path.join(base_dir, ".env")
+# Load environment variables from .env file (checks fastapi/.env first, then workspace root .env)
+fastapi_env = os.path.join(parent_dir, ".env")
+root_env = os.path.join(os.path.dirname(parent_dir), ".env")
 
 if os.path.exists(fastapi_env):
     load_dotenv(fastapi_env)
@@ -44,6 +49,7 @@ if raw_db_url:
     DB_PASSWORD = os.getenv("DB_PASS") if os.getenv("DB_PASS") is not None else os.getenv("DB_PASSWORD", "")
     DB_NAME = os.getenv("DB_NAME", "pos")
 else:
+    # Check if configured for postgres or mysql
     if db_engine_type in ("postgres", "postgresql") or os.getenv("DB_PORT") == "5432":
         is_postgres = True
         is_mysql = False
@@ -54,6 +60,7 @@ else:
         DB_NAME = os.getenv("DB_NAME", "pos")
         DATABASE_URL = f"postgresql+psycopg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
     else:
+        # Default to MySQL (phpMyAdmin)
         is_mysql = True
         is_postgres = False
         DB_USER = os.getenv("DB_USER", "root")
@@ -65,6 +72,11 @@ else:
         DATABASE_URL = f"mysql+pymysql://{auth}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
 
 def check_and_create_db():
+    """
+    Connect directly to local database server and ensure the target database exists
+    before starting the SQLAlchemy connection pool.
+    Skipped for remote cloud databases.
+    """
     if DB_HOST not in ("localhost", "127.0.0.1"):
         return
 
@@ -85,6 +97,7 @@ def check_and_create_db():
             logger.info(f"Local MySQL database '{DB_NAME}' verified or created successfully.")
         except Exception as e:
             logger.warning(f"Could not verify or create MySQL database '{DB_NAME}' on startup: {e}")
+
     elif is_postgres:
         try:
             import psycopg
@@ -107,18 +120,29 @@ def check_and_create_db():
         except Exception as e:
             logger.warning(f"Could not verify or create PostgreSQL database '{DB_NAME}' on startup: {e}")
 
+# Check/create the DB if running locally
 check_and_create_db()
 
+# SQLAlchemy engine config
+# pool_pre_ping=True verifies connections before using them, preventing disconnected socket errors
+# pool_recycle=300 prevents timeouts on persistent connections
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
     pool_recycle=300
 )
 
+# Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Declarative base for ORM models
 Base = declarative_base()
 
 def get_db():
+    """
+    Dependency generator for FastAPI endpoints to get a DB session.
+    Ensures that the connection is properly closed when the request is done.
+    """
     db = SessionLocal()
     try:
         yield db

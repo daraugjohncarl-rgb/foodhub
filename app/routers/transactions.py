@@ -106,10 +106,42 @@ def create_transaction(
     if not items_data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Transaction must contain at least 1 item.")
 
-    total_amount = Decimal(str(body.get("total_amount", 0)))
+    calculated_total = Decimal("0.0")
+    validated_items = []
+
+    for item in items_data:
+        prod_id = item.get("product_id")
+        qty = int(item.get("quantity", 1))
+
+        product = db.query(models.Product).filter(
+            models.Product.id == prod_id,
+            models.Product.tenant_id == tenant_id
+        ).first()
+
+        if not product:
+            raise HTTPException(status_code=404, detail=f"Product ID {prod_id} not found or belongs to another tenant.")
+        if not product.is_active:
+            raise HTTPException(status_code=400, detail=f"Product '{product.name}' is currently inactive or unavailable.")
+
+        unit_price = product.price
+        total_price = unit_price * qty
+        calculated_total += total_price
+
+        validated_items.append(
+            models.TransactionItem(
+                product_id=prod_id,
+                quantity=qty,
+                unit_price=unit_price,
+                total_price=total_price
+            )
+        )
+
     tax_amount = Decimal(str(body.get("tax_amount", 0)))
     discount_amount = Decimal(str(body.get("discount_amount", 0)))
-    net_amount = Decimal(str(body.get("net_amount", total_amount)))
+    net_amount = calculated_total + tax_amount - discount_amount
+    if net_amount < 0:
+        net_amount = Decimal("0.0")
+
     client_tx_id = body.get("client_tx_id") or str(uuid.uuid4())
 
     tx = models.Transaction(
@@ -117,30 +149,19 @@ def create_transaction(
         shift_id=active_shift.id,
         user_id=current_user.id,
         client_tx_id=client_tx_id,
-        total_amount=total_amount,
+        total_amount=calculated_total,
         tax_amount=tax_amount,
         discount_amount=discount_amount,
         net_amount=net_amount,
-        status="completed"
+        status="pending"
     )
     db.add(tx)
     db.commit()
     db.refresh(tx)
 
     # Insert transaction items
-    for item in items_data:
-        prod_id = item.get("product_id")
-        qty = int(item.get("quantity", 1))
-        unit_price = Decimal(str(item.get("unit_price", 0)))
-        total_price = Decimal(str(item.get("total_price", unit_price * qty)))
-
-        tx_item = models.TransactionItem(
-            transaction_id=tx.id,
-            product_id=prod_id,
-            quantity=qty,
-            unit_price=unit_price,
-            total_price=total_price
-        )
+    for tx_item in validated_items:
+        tx_item.transaction_id = tx.id
         db.add(tx_item)
 
     # Insert payments

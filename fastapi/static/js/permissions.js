@@ -12,7 +12,7 @@ const ROLE_NAV_CONFIG = {
     { id: "products", label: "Products & Menu", icon: "fas fa-utensils" },
     { id: "tables", label: "Table QRs", icon: "fas fa-qrcode" },
     { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },
-    { id: "purchases", label: "Purchases", icon: "fas fa-shopping-cart" },
+    { id: "profit_loss", label: "Profit Loss & Cashout Income", icon: "fas fa-scale-balanced" },
     { id: "reports", label: "Reports & Analytics", icon: "fas fa-chart-bar" },
     { id: "logs", label: "Audit Logs", icon: "fas fa-history" },
     { id: "settings", label: "Settings", icon: "fas fa-cog" }
@@ -25,19 +25,19 @@ const ROLE_NAV_CONFIG = {
     { id: "products", label: "Products & Menu", icon: "fas fa-utensils" },
     { id: "tables", label: "Table QRs", icon: "fas fa-qrcode" },
     { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },
-    { id: "purchases", label: "Purchases", icon: "fas fa-shopping-cart" },
+    { id: "profit_loss", label: "Profit Loss & Cashout Income", icon: "fas fa-scale-balanced" },
     { id: "reports", label: "Reports & Analytics", icon: "fas fa-chart-bar" },
     { id: "logs", label: "Audit Logs", icon: "fas fa-history" }
   ],
   inventory: [
     { id: "inventory", label: "Stock Overview", icon: "fas fa-boxes" },
     { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },
-    { id: "purchases", label: "Purchase Orders", icon: "fas fa-shopping-cart" },
+    { id: "profit_loss", label: "Profit Loss & Cashout Income", icon: "fas fa-scale-balanced" },
     { id: "wastage", label: "Wastage Track", icon: "fas fa-trash-alt" }
   ],
   cashier: [
     { id: "pos", label: "Point of Sale (POS)", icon: "fas fa-cash-register" },
-    { id: "drinks", label: "Drinks Order", icon: "fas fa-glass-water", badgeId: "cashier-drinks-badge" },
+    { id: "drinks", label: "Drinks Orders", icon: "fas fa-glass-water", badgeId: "cashier-drinks-badge" },
     { id: "customer_orders", label: "Customer Orders", icon: "fas fa-mobile-alt", badgeId: "cashier-orders-badge" },
     { id: "transactions", label: "Today's Orders", icon: "fas fa-receipt" }
   ],

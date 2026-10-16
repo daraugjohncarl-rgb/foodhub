@@ -163,6 +163,7 @@ class InventoryItem(Base):
     quantity = Column(Numeric(10, 2), default=0.0, nullable=False)
     unit = Column(String(20), nullable=False)
     min_stock = Column(Numeric(10, 2), default=0.0, nullable=False)
+    unit_price = Column(Numeric(10, 2), default=0.0, nullable=False)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
