@@ -4953,7 +4953,12 @@ async function renderCashDrawerTracker(c) {
 }
 
 function renderCashDrawerTrackerUI(container, data) {
-  const shifts = (data && data.shifts) || [];
+  const allShifts = (data && data.shifts) || [];
+  const shifts = allShifts.filter(s => {
+    const role = (s.role || '').toLowerCase();
+    const uname = (s.cashier_username || '').toLowerCase();
+    return role === 'cashier' || uname === 'cashier' || (!['admin', 'manager', 'superadmin', 'kitchen', 'inventory'].includes(uname) && !['admin', 'manager', 'superadmin', 'kitchen', 'inventory'].includes(role));
+  });
   const allMovements = [];
   shifts.forEach(s => {
     (s.movements || []).forEach(m => {
@@ -5122,7 +5127,13 @@ function renderMovementsTableRows(movements) {
 
 function openAddCashMovementModal(defaultShiftId = null) {
   const shifts = (cachedDrawerData && cachedDrawerData.shifts) || [];
-  const openShifts = shifts.filter(s => s.status === 'open');
+  // Strictly filter to cashier accounts only (not admin, manager, superadmin, etc.)
+  const cashierShifts = shifts.filter(s => {
+    const role = (s.role || '').toLowerCase();
+    const uname = (s.cashier_username || '').toLowerCase();
+    return role === 'cashier' || uname === 'cashier' || (!['admin', 'manager', 'superadmin', 'kitchen', 'inventory'].includes(uname) && !['admin', 'manager', 'superadmin', 'kitchen', 'inventory'].includes(role));
+  });
+  const openShifts = cashierShifts.filter(s => s.status === 'open');
 
   if (!openShifts.length) {
     Utils.showToast("There are currently no active open cashier shifts. A cashier must start a shift to record drawer cashout.", "warning");

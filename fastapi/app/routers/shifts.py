@@ -96,9 +96,10 @@ def get_drawer_summary(
     from sqlalchemy import func
     tenant_id = _get_user_tenant_id(db, current_user)
 
-    # Fetch shifts for this tenant (open shifts first, ordered by id descending)
-    shifts = db.query(models.Shift).filter(
-        models.Shift.tenant_id == tenant_id
+    # Fetch shifts for this tenant (Cashier role accounts only, open shifts first)
+    shifts = db.query(models.Shift).join(models.User).filter(
+        models.Shift.tenant_id == tenant_id,
+        models.User.role == models.UserRole.CASHIER
     ).order_by(
         (models.Shift.status == "open").desc(),
         models.Shift.id.desc()
@@ -173,6 +174,7 @@ def get_drawer_summary(
             "cashier_id": s.user_id,
             "cashier_username": s.user.username if s.user else "unknown",
             "cashier_name": cashier_name,
+            "role": str(s.user.role.value if hasattr(s.user.role, 'value') else s.user.role).lower() if s.user else "cashier",
             "status": s.status,
             "start_time": s.start_time.isoformat() if s.start_time else None,
             "end_time": s.end_time.isoformat() if s.end_time else None,
@@ -297,9 +299,10 @@ def cashout_shift(
 
     reason = body.get("reason", "Manager Cashout")
 
-    query = db.query(models.Shift).filter(
+    query = db.query(models.Shift).join(models.User).filter(
         models.Shift.tenant_id == tenant_id,
-        models.Shift.status == "open"
+        models.Shift.status == "open",
+        models.User.role == models.UserRole.CASHIER
     )
     if shift_id:
         query = query.filter(models.Shift.id == shift_id)
