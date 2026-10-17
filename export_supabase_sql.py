@@ -72,6 +72,28 @@ for table in Base.metadata.sorted_tables:
     ddl = str(CreateTable(table).compile(dialect=postgresql.dialect())).strip()
     sql_statements.append(f'{ddl};\n')
 
+# stock_movements table definition (present in MySQL)
+sql_statements.append("""CREATE TABLE "stock_movements" (
+    "id" BIGSERIAL PRIMARY KEY,
+    "tenant_id" BIGINT NOT NULL REFERENCES "tenants" ("id") ON DELETE CASCADE,
+    "inventory_item_id" INTEGER NOT NULL REFERENCES "inventory_items" ("id") ON DELETE CASCADE,
+    "movement_type" VARCHAR(20) NOT NULL CHECK ("movement_type" IN ('OPENING','RECEIPT','SALE','ADJUSTMENT','WASTAGE','REVERSAL')),
+    "quantity_delta" NUMERIC(12, 3) NOT NULL,
+    "quantity_after" NUMERIC(12, 3) NOT NULL,
+    "unit_cost" NUMERIC(10, 2) DEFAULT NULL,
+    "reason" VARCHAR(255) DEFAULT NULL,
+    "reference_type" VARCHAR(30) DEFAULT NULL,
+    "reference_id" BIGINT DEFAULT NULL,
+    "user_id" INTEGER DEFAULT NULL REFERENCES "users" ("id") ON DELETE SET NULL,
+    "created_at" TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+CREATE INDEX "ix_stock_movements_tenant_id" ON "stock_movements" ("tenant_id");
+CREATE INDEX "ix_stock_movements_inventory_item_id" ON "stock_movements" ("inventory_item_id");
+CREATE INDEX "ix_stock_movements_user_id" ON "stock_movements" ("user_id");
+CREATE INDEX "ix_stock_movements_tenant_type_created" ON "stock_movements" ("tenant_id", "movement_type", "created_at");
+""")
+
 sql_statements.append('-- 5. Insert Existing Records')
 
 inserted_ids = {}
@@ -137,7 +159,7 @@ with engine.connect() as conn:
 
 sql_statements.append('-- 6. Synchronize Auto-Increment Sequences')
 for table_name in TABLE_ORDER:
-    sql_statements.append(f"""SELECT setval(pg_get_serial_sequence('"{table_name}"', 'id'), coalesce(max(id), 1)) FROM "{table_name}";""")
+    sql_statements.append(f"""SELECT setval(pg_get_serial_sequence('"{table_name}"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "{table_name}";""")
 
 out_path = 'c:/pos/supabase_setup.sql'
 with open(out_path, 'w', encoding='utf-8') as f:

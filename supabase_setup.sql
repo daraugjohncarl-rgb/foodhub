@@ -346,6 +346,26 @@ CREATE TABLE transaction_items (
 	FOREIGN KEY(product_id) REFERENCES products (id) ON DELETE RESTRICT
 );
 
+CREATE TABLE "stock_movements" (
+    "id" BIGSERIAL PRIMARY KEY,
+    "tenant_id" BIGINT NOT NULL REFERENCES "tenants" ("id") ON DELETE CASCADE,
+    "inventory_item_id" INTEGER NOT NULL REFERENCES "inventory_items" ("id") ON DELETE CASCADE,
+    "movement_type" VARCHAR(20) NOT NULL CHECK ("movement_type" IN ('OPENING','RECEIPT','SALE','ADJUSTMENT','WASTAGE','REVERSAL')),
+    "quantity_delta" NUMERIC(12, 3) NOT NULL,
+    "quantity_after" NUMERIC(12, 3) NOT NULL,
+    "unit_cost" NUMERIC(10, 2) DEFAULT NULL,
+    "reason" VARCHAR(255) DEFAULT NULL,
+    "reference_type" VARCHAR(30) DEFAULT NULL,
+    "reference_id" BIGINT DEFAULT NULL,
+    "user_id" INTEGER DEFAULT NULL REFERENCES "users" ("id") ON DELETE SET NULL,
+    "created_at" TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+CREATE INDEX "ix_stock_movements_tenant_id" ON "stock_movements" ("tenant_id");
+CREATE INDEX "ix_stock_movements_inventory_item_id" ON "stock_movements" ("inventory_item_id");
+CREATE INDEX "ix_stock_movements_user_id" ON "stock_movements" ("user_id");
+CREATE INDEX "ix_stock_movements_tenant_type_created" ON "stock_movements" ("tenant_id", "movement_type", "created_at");
+
 -- 5. Insert Existing Records
 -- Records for: tenants (1 rows)
 INSERT INTO "tenants" ("id", "name", "subdomain_or_code", "is_active", "created_at") VALUES (1, 'Main Branch - Blessie FoodHub', 'main-branch', TRUE, '2026-08-24 20:20:52') ON CONFLICT DO NOTHING;
@@ -1498,23 +1518,23 @@ INSERT INTO "activity_logs" ("id", "tenant_id", "user_id", "action", "performed_
 INSERT INTO "activity_logs" ("id", "tenant_id", "user_id", "action", "performed_by", "target_user", "role", "details", "created_at") VALUES (460, 1, 5, 'POS Sale', 'cashier', NULL, 'CASHIER', 'Transaction #40 processed for ₱125.00', '2026-10-17 23:47:16') ON CONFLICT DO NOTHING;
 INSERT INTO "activity_logs" ("id", "tenant_id", "user_id", "action", "performed_by", "target_user", "role", "details", "created_at") VALUES (461, 1, 5, 'Order Status Update', 'cashier', NULL, 'CASHIER', 'Order #40 status changed from PENDING to COMPLETED. Reason: Customer cancelled order', '2026-10-17 23:47:16') ON CONFLICT DO NOTHING;
 -- 6. Synchronize Auto-Increment Sequences
-SELECT setval(pg_get_serial_sequence('"tenants"', 'id'), coalesce(max(id), 1)) FROM "tenants";
-SELECT setval(pg_get_serial_sequence('"categories"', 'id'), coalesce(max(id), 1)) FROM "categories";
-SELECT setval(pg_get_serial_sequence('"suppliers"', 'id'), coalesce(max(id), 1)) FROM "suppliers";
-SELECT setval(pg_get_serial_sequence('"users"', 'id'), coalesce(max(id), 1)) FROM "users";
-SELECT setval(pg_get_serial_sequence('"restaurant_tables"', 'id'), coalesce(max(id), 1)) FROM "restaurant_tables";
-SELECT setval(pg_get_serial_sequence('"inventory_items"', 'id'), coalesce(max(id), 1)) FROM "inventory_items";
-SELECT setval(pg_get_serial_sequence('"products"', 'id'), coalesce(max(id), 1)) FROM "products";
-SELECT setval(pg_get_serial_sequence('"product_recipes"', 'id'), coalesce(max(id), 1)) FROM "product_recipes";
-SELECT setval(pg_get_serial_sequence('"purchase_orders"', 'id'), coalesce(max(id), 1)) FROM "purchase_orders";
-SELECT setval(pg_get_serial_sequence('"purchase_order_items"', 'id'), coalesce(max(id), 1)) FROM "purchase_order_items";
-SELECT setval(pg_get_serial_sequence('"shifts"', 'id'), coalesce(max(id), 1)) FROM "shifts";
-SELECT setval(pg_get_serial_sequence('"shift_cash_movements"', 'id'), coalesce(max(id), 1)) FROM "shift_cash_movements";
-SELECT setval(pg_get_serial_sequence('"transactions"', 'id'), coalesce(max(id), 1)) FROM "transactions";
-SELECT setval(pg_get_serial_sequence('"transaction_items"', 'id'), coalesce(max(id), 1)) FROM "transaction_items";
-SELECT setval(pg_get_serial_sequence('"payments"', 'id'), coalesce(max(id), 1)) FROM "payments";
-SELECT setval(pg_get_serial_sequence('"customer_orders"', 'id'), coalesce(max(id), 1)) FROM "customer_orders";
-SELECT setval(pg_get_serial_sequence('"customer_order_items"', 'id'), coalesce(max(id), 1)) FROM "customer_order_items";
-SELECT setval(pg_get_serial_sequence('"incident_reports"', 'id'), coalesce(max(id), 1)) FROM "incident_reports";
-SELECT setval(pg_get_serial_sequence('"activity_logs"', 'id'), coalesce(max(id), 1)) FROM "activity_logs";
-SELECT setval(pg_get_serial_sequence('"stock_movements"', 'id'), coalesce(max(id), 1)) FROM "stock_movements";
+SELECT setval(pg_get_serial_sequence('"tenants"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "tenants";
+SELECT setval(pg_get_serial_sequence('"categories"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "categories";
+SELECT setval(pg_get_serial_sequence('"suppliers"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "suppliers";
+SELECT setval(pg_get_serial_sequence('"users"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "users";
+SELECT setval(pg_get_serial_sequence('"restaurant_tables"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "restaurant_tables";
+SELECT setval(pg_get_serial_sequence('"inventory_items"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "inventory_items";
+SELECT setval(pg_get_serial_sequence('"products"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "products";
+SELECT setval(pg_get_serial_sequence('"product_recipes"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "product_recipes";
+SELECT setval(pg_get_serial_sequence('"purchase_orders"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "purchase_orders";
+SELECT setval(pg_get_serial_sequence('"purchase_order_items"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "purchase_order_items";
+SELECT setval(pg_get_serial_sequence('"shifts"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "shifts";
+SELECT setval(pg_get_serial_sequence('"shift_cash_movements"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "shift_cash_movements";
+SELECT setval(pg_get_serial_sequence('"transactions"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "transactions";
+SELECT setval(pg_get_serial_sequence('"transaction_items"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "transaction_items";
+SELECT setval(pg_get_serial_sequence('"payments"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "payments";
+SELECT setval(pg_get_serial_sequence('"customer_orders"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "customer_orders";
+SELECT setval(pg_get_serial_sequence('"customer_order_items"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "customer_order_items";
+SELECT setval(pg_get_serial_sequence('"incident_reports"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "incident_reports";
+SELECT setval(pg_get_serial_sequence('"activity_logs"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "activity_logs";
+SELECT setval(pg_get_serial_sequence('"stock_movements"', 'id'), coalesce(max(id), 1), max(id) IS NOT NULL) FROM "stock_movements";
