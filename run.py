@@ -69,6 +69,7 @@ def main():
     if args.test:
         print("\n[Running Inbox POS System E2E Validation Tests...]")
         try:
+            # pyrefly: ignore[missing-import]
             import test_complete_system
             test_complete_system.run_e2e_tests()
         except ImportError as e:
@@ -78,6 +79,7 @@ def main():
     if args.audit:
         print("\n[Running Static Route and Asset Audit...]")
         try:
+            # pyrefly: ignore[missing-import]
             import audit_system
             audit_system.test_system()
         except ImportError as e:
