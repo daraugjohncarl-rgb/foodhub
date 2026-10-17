@@ -4994,8 +4994,14 @@ function renderCashDrawerTrackerUI(container, data) {
           Live cash drawer balance, cashier floats, sales collections, and safe drops
         </p>
       </div>
-      <div style="display:flex; gap:10px; align-items:center;">
-        <button class="btn btn-outline btn-sm" onclick="renderCashDrawerTracker(null, true)" title="Refresh Drawer Balances" style="border-radius:10px;">
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <button class="btn btn-outline btn-sm" onclick="openEditCashierDrawerModal(null)" title="Edit Cashier Drawer" style="display:inline-flex; align-items:center; gap:6px; color:#c9a227; border-color:#c9a227; font-weight:700; border-radius:10px; padding:6px 14px;">
+          <i class="fas fa-pen-to-square"></i> Edit Drawer
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="openAddCashMovementModal(null, 'manager_income')" title="Transfer Cashier Drawer to Manager" style="display:inline-flex; align-items:center; gap:8px; font-weight:700; border-radius:10px; padding:6px 14px;">
+          <i class="fas fa-hand-holding-dollar"></i> Transfer to Manager
+        </button>
+        <button class="btn btn-outline btn-sm" onclick="renderCashDrawerTracker(null, true)" title="Refresh Drawer Balances" style="border-radius:10px; padding:6px 12px;">
           <i class="fas fa-sync-alt"></i> Live Refresh
         </button>
       </div>
@@ -5377,13 +5383,21 @@ function openShiftMovementsModal(shiftId) {
   Utils.openModal(`Shift #${s.id} Cash Movements Audit Log`, bodyHtml);
 }
 
-function openEditCashierDrawerModal(shiftId, cashierName, currentCash) {
+function openEditCashierDrawerModal(shiftId = null, cashierName = null, currentCash = null) {
   const shifts = (cachedDrawerData && cachedDrawerData.shifts) || [];
-  const shiftObj = shifts.find(s => s.id === shiftId);
-  if (shiftObj && shiftObj.status !== 'open') {
+  let targetShift = shiftId ? shifts.find(s => s.id === shiftId) : shifts.find(s => s.status === 'open');
+  if (!targetShift && shifts.length) targetShift = shifts[0];
+  if (!targetShift) {
+    Utils.showToast("No cashier shifts recorded yet.", "warning");
+    return;
+  }
+  if (targetShift.status !== 'open') {
     Utils.showToast("Only active open shifts can be edited. Closed shifts are locked.", "warning");
     return;
   }
+  shiftId = targetShift.id;
+  cashierName = cashierName || targetShift.cashier_name || 'Cashier';
+  currentCash = currentCash !== null && currentCash !== undefined ? currentCash : (targetShift.expected_cash || 0);
 
   const bodyHtml = `
     <form id="edit-cashier-drawer-form" onsubmit="submitEditCashierDrawer(event, ${shiftId})" style="display:flex; flex-direction:column; gap:16px;">
