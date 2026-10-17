@@ -74,6 +74,8 @@ for table in Base.metadata.sorted_tables:
 
 sql_statements.append('-- 5. Insert Existing Records')
 
+inserted_ids = {}
+
 with engine.connect() as conn:
     for table_name in TABLE_ORDER:
         table = Base.metadata.tables.get(table_name)
@@ -81,18 +83,40 @@ with engine.connect() as conn:
             continue
         rows = conn.execute(text(f'SELECT * FROM `{table_name}`')).fetchall()
         if not rows:
+            inserted_ids[table_name] = set()
             continue
         
         sql_statements.append(f'-- Records for: {table_name} ({len(rows)} rows)')
         cols = [c.name for c in table.columns]
         col_names_str = ', '.join([f'"{c}"' for c in cols])
         
+        current_table_ids = set()
         for r in rows:
             r_dict = dict(r._mapping)
+            if 'id' in r_dict and r_dict['id'] is not None:
+                current_table_ids.add(r_dict['id'])
+                
             vals = []
+            skip_row = False
             for c in cols:
                 col_obj = table.columns[c]
                 v = r_dict.get(c)
+                
+                # Check foreign key integrity
+                if v is not None and col_obj.foreign_keys:
+                    for fk in col_obj.foreign_keys:
+                        target_table = fk.column.table.name
+                        target_col = fk.column.name
+                        if target_col == 'id' and target_table in inserted_ids:
+                            if v not in inserted_ids[target_table]:
+                                if col_obj.nullable:
+                                    v = None
+                                else:
+                                    skip_row = True
+                                    break
+                    if skip_row:
+                        break
+                
                 if v is None:
                     vals.append('NULL')
                 elif isinstance(col_obj.type, models.Boolean) or c == 'is_active':
@@ -104,8 +128,12 @@ with engine.connect() as conn:
                 else:
                     escaped = str(v).replace("'", "''")
                     vals.append(f"'{escaped}'")
-            vals_str = ', '.join(vals)
-            sql_statements.append(f'INSERT INTO "{table_name}" ({col_names_str}) VALUES ({vals_str}) ON CONFLICT DO NOTHING;')
+                    
+            if not skip_row:
+                vals_str = ', '.join(vals)
+                sql_statements.append(f'INSERT INTO "{table_name}" ({col_names_str}) VALUES ({vals_str}) ON CONFLICT DO NOTHING;')
+                
+        inserted_ids[table_name] = current_table_ids
 
 sql_statements.append('-- 6. Synchronize Auto-Increment Sequences')
 for table_name in TABLE_ORDER:

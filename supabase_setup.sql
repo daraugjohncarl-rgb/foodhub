@@ -1015,7 +1015,7 @@ INSERT INTO "customer_order_items" ("id", "customer_order_id", "name", "variant"
 INSERT INTO "customer_order_items" ("id", "customer_order_id", "name", "variant", "price", "quantity", "product_id") VALUES (12, 12, '1 Bucket Ice', 'Regular', '15.00', 2, 270) ON CONFLICT DO NOTHING;
 INSERT INTO "customer_order_items" ("id", "customer_order_id", "name", "variant", "price", "quantity", "product_id") VALUES (13, 13, '1 Bucket Ice', 'Regular', '15.00', 2, 270) ON CONFLICT DO NOTHING;
 INSERT INTO "customer_order_items" ("id", "customer_order_id", "name", "variant", "price", "quantity", "product_id") VALUES (14, 14, 'Spaghetti w/ Bread — Single', 'Regular', '125.00', 2, 214) ON CONFLICT DO NOTHING;
-INSERT INTO "customer_order_items" ("id", "customer_order_id", "name", "variant", "price", "quantity", "product_id") VALUES (15, 15, 'Snacks Special', NULL, '120.00', 2, 353) ON CONFLICT DO NOTHING;
+INSERT INTO "customer_order_items" ("id", "customer_order_id", "name", "variant", "price", "quantity", "product_id") VALUES (15, 15, 'Snacks Special', NULL, '120.00', 2, NULL) ON CONFLICT DO NOTHING;
 INSERT INTO "customer_order_items" ("id", "customer_order_id", "name", "variant", "price", "quantity", "product_id") VALUES (16, 16, '1.5 L — Gin, Ice, Juice', 'Regular', '190.00', 2, NULL) ON CONFLICT DO NOTHING;
 INSERT INTO "customer_order_items" ("id", "customer_order_id", "name", "variant", "price", "quantity", "product_id") VALUES (17, 17, '1 Bucket Ice', 'Regular', '15.00', 2, NULL) ON CONFLICT DO NOTHING;
 INSERT INTO "customer_order_items" ("id", "customer_order_id", "name", "variant", "price", "quantity", "product_id") VALUES (18, 18, 'Spaghetti w/ Bread — Single', NULL, '125.00', 1, 214) ON CONFLICT DO NOTHING;
