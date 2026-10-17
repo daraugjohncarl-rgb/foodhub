@@ -4412,6 +4412,10 @@ function updateOnlineOrdersBadge() {
   });
 }
 
+window.fetchPendingOnlineOrders = fetchPendingOnlineOrders;
+window.checkPendingCustomerOrders = fetchPendingOnlineOrders;
+window.updateOnlineOrdersBadge = updateOnlineOrdersBadge;
+
 function openOnlineOrdersModal() {
   let ordersHtml = "<p style='color:var(--text-muted);'>No pending online orders.</p>";
   if (pendingOnlineOrders.length > 0) {
@@ -4462,20 +4466,23 @@ function processOnlineOrder(orderId) {
   clearCart();
   
   order.items.forEach(it => {
+    let resolvedProduct = null;
     if (it.product_id) {
-      const prod = cachedProducts.find(p => p.id === it.product_id);
-      if (prod) {
-        const existing = posCart.find(c => c.product_id === it.product_id);
-        if (existing) {
-          existing.quantity += it.quantity;
-        } else {
-          posCart.push({ product_id: it.product_id, name: prod.name, price: it.price, quantity: it.quantity });
-        }
+      resolvedProduct = cachedProducts.find(p => p.id === it.product_id);
+    }
+    if (!resolvedProduct && it.name) {
+      resolvedProduct = cachedProducts.find(p => (p.name || '').toLowerCase().trim() === (it.name || '').toLowerCase().trim());
+    }
+
+    if (resolvedProduct) {
+      const existing = posCart.find(c => c.product_id === resolvedProduct.id);
+      if (existing) {
+        existing.quantity += it.quantity;
       } else {
-        posCart.push({ product_id: it.product_id, name: it.name, price: it.price, quantity: it.quantity });
+        posCart.push({ product_id: resolvedProduct.id, name: resolvedProduct.name, price: it.price || resolvedProduct.price, quantity: it.quantity });
       }
     } else {
-      Utils.showToast(`Cannot process item ${it.name}: Missing product ID`, "danger");
+      posCart.push({ product_id: it.product_id || 0, name: it.name, price: it.price, quantity: it.quantity });
     }
   });
   
@@ -5672,31 +5679,46 @@ window.submitAddCashMovement = submitAddCashMovement;
             Utils.showToast(`🔔 New Order Received: ${data.order_number || ''} (${data.customer_name || 'Customer'})`, "info");
           }
         }
+        // Always refresh pending customer online orders and badges immediately
+        if (typeof fetchPendingOnlineOrders === 'function') {
+          fetchPendingOnlineOrders().then(() => {
+            const modalTitle = document.querySelector("#modal-content h3");
+            if (modalTitle && modalTitle.textContent.includes("Pending Online Orders")) {
+              openOnlineOrdersModal();
+            }
+          });
+        }
         if (activeView === "kitchen" && typeof renderKitchen === "function") {
           renderKitchen();
         } else if ((activeView === "drinks" || activeView === "drinks_station") && typeof renderDrinksStation === "function") {
           renderDrinksStation();
-        } else if (activeView === "customer_orders" && typeof renderCustomerOrdersView === "function") {
-          renderCustomerOrdersView();
+        } else if (activeView === "customer_orders" && typeof loadCustomerOrdersTable === "function") {
+          loadCustomerOrdersTable();
         } else if (activeView === "transactions" && typeof renderTransactions === "function") {
           renderTransactions();
         } else if (activeView === "dashboard" && typeof renderDashboard === "function") {
           renderDashboard();
-        } else if (activeView === "pos") {
-          if (typeof checkPendingCustomerOrders === 'function') {
-            checkPendingCustomerOrders();
-          }
         }
         break;
 
       case "ORDER_UPDATED":
+      case "CUSTOMER_ORDER_UPDATED":
       case "KITCHEN_UPDATED":
+        // Always refresh pending customer online orders and badges immediately
+        if (typeof fetchPendingOnlineOrders === 'function') {
+          fetchPendingOnlineOrders().then(() => {
+            const modalTitle = document.querySelector("#modal-content h3");
+            if (modalTitle && modalTitle.textContent.includes("Pending Online Orders")) {
+              openOnlineOrdersModal();
+            }
+          });
+        }
         if (activeView === "kitchen" && typeof renderKitchen === "function") {
           renderKitchen();
         } else if ((activeView === "drinks" || activeView === "drinks_station") && typeof renderDrinksStation === "function") {
           renderDrinksStation();
-        } else if (activeView === "customer_orders" && typeof renderCustomerOrdersView === "function") {
-          renderCustomerOrdersView();
+        } else if (activeView === "customer_orders" && typeof loadCustomerOrdersTable === "function") {
+          loadCustomerOrdersTable();
         } else if (activeView === "transactions" && typeof renderTransactions === "function") {
           renderTransactions();
         } else if (activeView === "dashboard" && typeof renderDashboard === "function") {

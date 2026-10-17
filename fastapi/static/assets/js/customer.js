@@ -264,9 +264,14 @@ document.addEventListener("DOMContentLoaded", () => {
         cart = [];
         updateCart();
         window.scrollTo(0, 0);
+        openCustomerOrdersModal();
     });
 
-    // 6. Search
+    // 6. Connect Customer Real-Time WebSocket and init badges
+    updateCustomerOrdersBadge();
+    connectCustomerWebSocket();
+
+    // 7. Search
     const searchInput = document.getElementById("searchInput");
     if (searchInput) {
         searchInput.addEventListener("input", event => {
@@ -764,6 +769,33 @@ async function submitOrder(event) {
         const successTotalEl = document.getElementById("successTotal");
         if (successTotalEl) successTotalEl.textContent = peso(total);
 
+        // Update live status text
+        const liveStatusEl = document.getElementById("liveStatusText");
+        if (liveStatusEl) {
+            liveStatusEl.textContent = "🟡 Awaiting Cashier Confirmation";
+            liveStatusEl.style.color = "#b45309";
+        }
+
+        // Save order to persistent customer orders
+        const savedOrder = {
+            id: data.order_id,
+            order_number: data.order_number,
+            customer_name: customerName,
+            table_number: tableNumber,
+            order_type: orderType,
+            total_amount: total,
+            status: "pending",
+            items: cart.map(i => ({ name: i.name, variant: i.variant, price: i.price, quantity: i.quantity })),
+            created_at: new Date().toISOString()
+        };
+        saveCustomerOrder(savedOrder);
+
+        // Clear cart so previous order items don't stay in cart
+        cart = [];
+        updateCart();
+        updateCustomerOrdersBadge();
+        startOrderLiveTracking(data.order_number);
+
     } catch (error) {
         console.error("Order submission failed:", error);
         showToast("Failed to place order. Please try again.");
@@ -1028,6 +1060,235 @@ function customerLogout() {
     showToast("Signed out successfully.");
 }
 
+/* =========================================================
+   REAL-TIME CUSTOMER ORDER TRACKING & WEBSOCKET ENGINE
+========================================================= */
+let customerWs = null;
+let orderTrackingTimer = null;
+
+function saveCustomerOrder(order) {
+    try {
+        const list = JSON.parse(localStorage.getItem("customer_orders") || "[]");
+        const idx = list.findIndex(o => o.order_number === order.order_number);
+        if (idx >= 0) {
+            list[idx] = { ...list[idx], ...order };
+        } else {
+            list.unshift(order);
+        }
+        localStorage.setItem("customer_orders", JSON.stringify(list.slice(0, 30)));
+    } catch (e) {}
+}
+
+function getCustomerOrders() {
+    try {
+        return JSON.parse(localStorage.getItem("customer_orders") || "[]");
+    } catch (e) {
+        return [];
+    }
+}
+
+function updateCustomerOrdersBadge() {
+    const badge = document.getElementById("custOrdersBadge");
+    if (!badge) return;
+    const orders = getCustomerOrders();
+    const activeOrders = orders.filter(o => o.status !== "completed" && o.status !== "rejected" && o.status !== "cancelled");
+    if (activeOrders.length > 0) {
+        badge.textContent = activeOrders.length;
+        badge.style.display = "inline-block";
+    } else if (orders.length > 0) {
+        badge.textContent = orders.length;
+        badge.style.display = "inline-block";
+    } else {
+        badge.style.display = "none";
+    }
+}
+
+function getStatusBadgeHtml(status) {
+    const s = (status || "").toLowerCase();
+    switch (s) {
+        case "pending":
+            return '<span style="background:#fef3c7; color:#92400e; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;">🟡 Pending Cashier</span>';
+        case "accepted":
+        case "preparing":
+            return '<span style="background:#dbeafe; color:#1e40af; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;">🔵 Preparing</span>';
+        case "ready":
+            return '<span style="background:#d1fae5; color:#065f46; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;">🟢 Ready</span>';
+        case "completed":
+            return '<span style="background:#f3f4f6; color:#374151; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;">✅ Completed</span>';
+        case "rejected":
+        case "cancelled":
+            return '<span style="background:#fee2e2; color:#991b1b; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;">🔴 Cancelled</span>';
+        default:
+            return `<span style="background:#f4f4f5; color:#71717a; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;">${status || 'Pending'}</span>`;
+    }
+}
+
+function openCustomerOrdersModal() {
+    const overlay = document.getElementById("customerOrdersOverlay");
+    if (overlay) {
+        overlay.style.display = "flex";
+        overlay.classList.add("active");
+        document.body.classList.add("modal-open");
+    }
+    renderCustomerOrdersModalList();
+}
+
+function closeCustomerOrdersModal() {
+    const overlay = document.getElementById("customerOrdersOverlay");
+    if (overlay) {
+        overlay.style.display = "none";
+        overlay.classList.remove("active");
+        document.body.classList.remove("modal-open");
+    }
+}
+
+async function renderCustomerOrdersModalList() {
+    const listEl = document.getElementById("customerOrdersList");
+    if (!listEl) return;
+
+    let orders = getCustomerOrders();
+    if (!orders || orders.length === 0) {
+        listEl.innerHTML = `
+            <div style="text-align: center; color: #71717a; padding: 30px 10px;">
+                <i style="font-size: 28px; margin-bottom: 8px; display: block;">📋</i>
+                <strong>No active orders found</strong>
+                <p style="font-size: 12px; margin-top: 4px;">Orders you place from the menu will appear here live!</p>
+            </div>
+        `;
+        return;
+    }
+
+    // Refresh live status for recent orders
+    for (const o of orders.slice(0, 5)) {
+        if (o.status !== "completed" && o.status !== "rejected" && o.status !== "cancelled") {
+            try {
+                const res = await fetch(`/api/v1/customer-orders/track/${o.order_number}`);
+                if (res.ok) {
+                    const trackData = await res.json();
+                    if (trackData && trackData.status) {
+                        o.status = trackData.status;
+                        saveCustomerOrder(o);
+                    }
+                }
+            } catch (e) {}
+        }
+    }
+
+    listEl.innerHTML = orders.map(o => {
+        const itemsStr = (o.items || []).map(i => `${i.quantity}x ${i.name}`).join(", ") || "Menu Items";
+        return `
+            <div style="padding: 14px; border: 1px solid #e4e4e7; border-radius: 14px; margin-bottom: 12px; background: #fafafa;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div>
+                        <strong style="font-size: 14px; color: #18181b;">${o.order_number}</strong>
+                        <span style="font-size: 11px; color: #71717a; margin-left: 6px;">${o.table_number ? 'Table ' + o.table_number : o.order_type || 'Takeout'}</span>
+                    </div>
+                    ${getStatusBadgeHtml(o.status)}
+                </div>
+                <div style="font-size: 12px; color: #52525b; margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                    ${itemsStr}
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
+                    <span style="font-weight: 800; color: #c9a227; font-size: 14px;">${peso(o.total_amount)}</span>
+                    <span style="color: #a1a1aa; font-size: 11px;">${o.created_at ? new Date(o.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : ''}</span>
+                </div>
+            </div>
+        `;
+    }).join("");
+
+    updateCustomerOrdersBadge();
+}
+
+function handleCustomerOrderUpdate(data) {
+    if (!data) return;
+    const orderNumber = data.order_number;
+    const status = data.status;
+
+    const orders = getCustomerOrders();
+    const matched = orders.find(o => o.order_number === orderNumber);
+    if (matched) {
+        matched.status = status;
+        saveCustomerOrder(matched);
+        updateCustomerOrdersBadge();
+
+        const overlay = document.getElementById("customerOrdersOverlay");
+        if (overlay && overlay.classList.contains("active")) {
+            renderCustomerOrdersModalList();
+        }
+
+        // If current success screen is active with this order, update live text
+        const curOrderEl = document.getElementById("orderNumber");
+        if (curOrderEl && curOrderEl.textContent.trim() === orderNumber) {
+            const liveStatusEl = document.getElementById("liveStatusText");
+            if (liveStatusEl) {
+                if (status === "accepted" || status === "preparing") {
+                    liveStatusEl.textContent = "🔵 Order Confirmed & Preparing in Kitchen";
+                    liveStatusEl.style.color = "#1e40af";
+                } else if (status === "ready") {
+                    liveStatusEl.textContent = "🟢 Order Ready for Pickup / Serving!";
+                    liveStatusEl.style.color = "#065f46";
+                } else if (status === "completed") {
+                    liveStatusEl.textContent = "✅ Order Completed. Thank you!";
+                    liveStatusEl.style.color = "#15803d";
+                } else if (status === "rejected" || status === "cancelled") {
+                    liveStatusEl.textContent = "🔴 Order Cancelled";
+                    liveStatusEl.style.color = "#991b1b";
+                }
+            }
+        }
+
+        showToast(`🔔 Order ${orderNumber} is now ${status.toUpperCase()}!`);
+    }
+}
+
+function startOrderLiveTracking(orderNumber) {
+    if (orderTrackingTimer) clearInterval(orderTrackingTimer);
+    orderTrackingTimer = setInterval(async () => {
+        try {
+            const res = await fetch(`/api/v1/customer-orders/track/${orderNumber}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data && data.status) {
+                    handleCustomerOrderUpdate(data);
+                    if (data.status === "completed" || data.status === "rejected" || data.status === "cancelled") {
+                        clearInterval(orderTrackingTimer);
+                        orderTrackingTimer = null;
+                    }
+                }
+            }
+        } catch (e) {}
+    }, 4000);
+}
+
+function connectCustomerWebSocket() {
+    try {
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const host = window.location.host;
+        if (!host) return;
+
+        const wsUrl = `${protocol}//${host}/api/v1/ws/${tenantId}`;
+        customerWs = new WebSocket(wsUrl);
+
+        customerWs.onmessage = (event) => {
+            if (event.data === "pong") return;
+            try {
+                const payload = JSON.parse(event.data);
+                if (!payload || !payload.event) return;
+
+                if (payload.event === "ORDER_UPDATED" || payload.event === "CUSTOMER_ORDER_UPDATED") {
+                    handleCustomerOrderUpdate(payload.data);
+                } else if (payload.event === "INVENTORY_UPDATED" || payload.event === "MENU_UPDATED") {
+                    if (typeof fetchMenu === "function") fetchMenu();
+                }
+            } catch (e) {}
+        };
+
+        customerWs.onclose = () => {
+            setTimeout(connectCustomerWebSocket, 6000);
+        };
+    } catch (e) {}
+}
+
 // Make accessible to window
 window.openCustomerAuthModal = openCustomerAuthModal;
 window.closeCustomerAuthModal = closeCustomerAuthModal;
@@ -1035,3 +1296,6 @@ window.switchCustomerAuthTab = switchCustomerAuthTab;
 window.handleCustomerLogin = handleCustomerLogin;
 window.handleCustomerRegister = handleCustomerRegister;
 window.customerLogout = customerLogout;
+window.openCustomerOrdersModal = openCustomerOrdersModal;
+window.closeCustomerOrdersModal = closeCustomerOrdersModal;
+window.renderCustomerOrdersModalList = renderCustomerOrdersModalList;

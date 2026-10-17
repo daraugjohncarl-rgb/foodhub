@@ -91,6 +91,7 @@ def get_dashboard_stats(
         ).join(models.Transaction).filter(
             models.Transaction.shift_id == s.id,
             models.Payment.status == "completed",
+            models.Transaction.status == "completed",
             func.lower(models.Payment.payment_method).like("%cash%")
         ).scalar() or Decimal("0.0")
 
@@ -222,7 +223,7 @@ def get_profit_loss(
         ).join(models.Transaction).filter(
             models.Transaction.shift_id.in_(open_shift_ids),
             models.Payment.status == "completed",
-            ~models.Transaction.status.in_(["cancelled", "rejected"]),
+            models.Transaction.status == "completed",
             func.lower(models.Payment.payment_method).like("%cash%")
         ).scalar() or Decimal("0.0")
 

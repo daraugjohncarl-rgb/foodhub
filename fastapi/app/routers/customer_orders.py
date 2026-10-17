@@ -208,6 +208,11 @@ def update_customer_order_status(order_id: int, body: dict, db: Session = Depend
             "order_number": order.order_number,
             "status": new_status
         })
+        notify_realtime_event(order.tenant_id or 1, "CUSTOMER_ORDER_UPDATED", {
+            "order_id": order.id,
+            "order_number": order.order_number,
+            "status": new_status
+        })
     except Exception:
         pass
 

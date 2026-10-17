@@ -153,7 +153,7 @@ def create_transaction(
         tax_amount=tax_amount,
         discount_amount=discount_amount,
         net_amount=net_amount,
-        status="pending"
+        status=body.get("status") or "completed"
     )
     db.add(tx)
     db.commit()
@@ -176,7 +176,7 @@ def create_transaction(
             transaction_id=tx.id,
             payment_method=p.get("payment_method", "Cash"),
             amount=Decimal(str(p.get("amount", net_amount))),
-            status="completed"
+            status="completed" if tx.status == "completed" else "pending"
         )
         db.add(pm)
 

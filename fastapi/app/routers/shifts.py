@@ -149,7 +149,7 @@ def get_drawer_summary(
         ).join(models.Payment, models.Payment.transaction_id == models.Transaction.id).filter(
             models.Transaction.shift_id.in_(shift_ids),
             models.Payment.status == "completed",
-            ~models.Transaction.status.in_(["cancelled", "rejected"])
+            models.Transaction.status == "completed"
         ).group_by(models.Transaction.shift_id).all()
 
         for r in pmt_rows:
