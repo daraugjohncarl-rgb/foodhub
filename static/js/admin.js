@@ -45,6 +45,22 @@ document.addEventListener("DOMContentLoaded", async () => {
         });
     }
 
+    // Auto-fit & auto-resize on window resize/orientation change
+    function handleResponsiveSidebar() {
+        const w = window.innerWidth;
+        if (w > 768) {
+            if (sidebar) sidebar.classList.remove("open");
+            if (sidebarOverlay) sidebarOverlay.classList.remove("open");
+        }
+        if (w > 1180) {
+            if (sidebar) sidebar.classList.remove("expanded");
+            document.body.classList.remove("sidebar-expanded");
+            if (mainContent) mainContent.classList.remove("sidebar-expanded");
+        }
+    }
+    window.addEventListener("resize", handleResponsiveSidebar);
+    window.addEventListener("orientationchange", handleResponsiveSidebar);
+
     // 3. Live Clock & Date Header
     function updateClock() {
         const now = new Date();

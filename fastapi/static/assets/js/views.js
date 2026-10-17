@@ -4917,19 +4917,34 @@ function printAllQRs() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 let cachedDrawerData = null;
+let drawerRefreshDebounceTimer = null;
 
-async function renderCashDrawerTracker(c) {
+function debouncedDrawerRefresh(silent = true) {
+  if (drawerRefreshDebounceTimer) clearTimeout(drawerRefreshDebounceTimer);
+  drawerRefreshDebounceTimer = setTimeout(() => {
+    if (typeof renderCashDrawerTracker === "function") {
+      renderCashDrawerTracker(null, silent);
+    }
+  }, 100);
+}
+
+async function renderCashDrawerTracker(c, silent = false) {
   const container = c || document.getElementById("view-container");
   if (!container) return;
 
-  container.innerHTML = `
-    <div style="display:flex; justify-content:center; align-items:center; min-height:260px; color:var(--text-muted, #71717a);">
-      <div style="text-align:center;">
-        <i class="fas fa-spinner fa-spin" style="font-size:2rem; margin-bottom:0.75rem; color:#c9a227;"></i>
-        <p style="font-size:14px; font-weight:500;">Loading cashier drawer records...</p>
+  const hasContent = container.querySelector(".section-card") !== null;
+
+  // Only show full loading spinner if container is empty and not a silent refresh
+  if (!hasContent && !silent) {
+    container.innerHTML = `
+      <div style="display:flex; justify-content:center; align-items:center; min-height:260px; color:var(--text-muted, #71717a);">
+        <div style="text-align:center;">
+          <i class="fas fa-spinner fa-spin" style="font-size:2rem; margin-bottom:0.75rem; color:#c9a227;"></i>
+          <p style="font-size:14px; font-weight:500;">Loading cashier drawer records...</p>
+        </div>
       </div>
-    </div>
-  `;
+    `;
+  }
 
   try {
     const res = await Auth.fetch("/api/v1/shifts/drawer-summary");
@@ -4938,13 +4953,15 @@ async function renderCashDrawerTracker(c) {
     renderCashDrawerTrackerUI(container, cachedDrawerData);
   } catch (err) {
     console.error("Cash Drawer Error:", err);
-    container.innerHTML = `
-      <div class="section-card" style="padding:24px; border:1px solid rgba(239,68,68,0.35);">
-        <h3 style="color:var(--danger, #ef4444); font-size:16px; font-weight:700;"><i class="fas fa-exclamation-triangle"></i> Error Loading Cash Drawer Data</h3>
-        <p style="color:var(--text-muted, #71717a); margin:10px 0; font-size:13px;">${err.message || "Failed to communicate with backend."}</p>
-        <button class="btn btn-outline btn-sm" onclick="renderCashDrawerTracker()"><i class="fas fa-redo"></i> Retry</button>
-      </div>
-    `;
+    if (!hasContent) {
+      container.innerHTML = `
+        <div class="section-card" style="padding:24px; border:1px solid rgba(239,68,68,0.35);">
+          <h3 style="color:var(--danger, #ef4444); font-size:16px; font-weight:700;"><i class="fas fa-exclamation-triangle"></i> Error Loading Cash Drawer Data</h3>
+          <p style="color:var(--text-muted, #71717a); margin:10px 0; font-size:13px;">${err.message || "Failed to communicate with backend."}</p>
+          <button class="btn btn-outline btn-sm" onclick="renderCashDrawerTracker()"><i class="fas fa-redo"></i> Retry</button>
+        </div>
+      `;
+    }
   }
 }
 
@@ -4981,7 +4998,7 @@ function renderCashDrawerTrackerUI(container, data) {
         <button class="btn btn-primary" onclick="openAddCashMovementModal(null, 'manager_income')" style="display:inline-flex; align-items:center; gap:8px; font-weight:700; border-radius:10px;">
           <i class="fas fa-hand-holding-dollar"></i> Transfer to Manager Profit Income
         </button>
-        <button class="btn btn-outline btn-sm" onclick="renderCashDrawerTracker()" title="Refresh Drawer Balances" style="border-radius:10px;">
+        <button class="btn btn-outline btn-sm" onclick="renderCashDrawerTracker(null, true)" title="Refresh Drawer Balances" style="border-radius:10px;">
           <i class="fas fa-sync-alt"></i> Live Refresh
         </button>
       </div>
@@ -5065,25 +5082,14 @@ function renderDrawerTableRows(shifts) {
         </td>
         <td>${statusBadge}</td>
         <td style="color:var(--text-muted); font-size:12px;">${startDate}</td>
-        <td style="background:rgba(201,162,39,0.08); min-width:210px;">
+        <td style="background:rgba(201,162,39,0.08); min-width:170px;">
           ${isOpen ? `
-          <div style="display:flex; align-items:center; gap:6px;">
-            <div style="position:relative; display:inline-flex; align-items:center;">
-              <span style="position:absolute; left:8px; font-weight:800; color:#c9a227; font-size:12px; pointer-events:none;">₱</span>
-              <input type="number" step="0.01" id="drawer-amount-input-${s.id}" 
-                value="${parseFloat(s.expected_cash || 0).toFixed(2)}"
-                style="width:96px; padding:5px 6px 5px 20px; font-size:13px; font-weight:800; color:#c9a227; border:1.5px solid #c9a227; border-radius:6px; background:var(--bg-card, #fff);"
-                onkeydown="if(event.key==='Enter') saveCashierDrawerCash(${s.id})"
-                title="Edit cashier drawer amount and press Save"
-              />
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div style="display:inline-flex; align-items:center; padding:6px 14px; border:1.5px solid #c9a227; border-radius:8px; font-weight:800; color:#c9a227; background:var(--bg-card, #fff); font-size:13.5px; cursor:default; user-select:none; pointer-events:none;" title="Active Cashier Drawer Float">
+              ${Utils.formatCurrency(s.expected_cash || 0)}
             </div>
-            <button type="button" class="btn btn-primary btn-sm" onclick="saveCashierDrawerCash(${s.id})" 
-              title="Save Cashier Drawer"
-              style="padding:5px 9px; font-size:12px; background:#c9a227; border-color:#c9a227; color:#fff; cursor:pointer; border-radius:6px; font-weight:700;">
-              <i class="fas fa-check"></i> Save
-            </button>
             <button type="button" class="btn btn-outline btn-sm" onclick="openEditCashierDrawerModal(${s.id}, '${(s.cashier_name || '').replace(/'/g, "\\'")}', ${s.expected_cash || 0})" 
-              title="Open Modal to Edit Drawer with Note"
+              title="Edit Cashier Drawer"
               style="padding:5px 8px; font-size:12px; color:#c9a227; border-color:#c9a227; cursor:pointer; border-radius:6px;">
               <i class="fas fa-pen-to-square"></i>
             </button>
@@ -5488,6 +5494,14 @@ async function submitEditCashierDrawer(event, shiftId) {
     return;
   }
 
+  // Update cached data locally so UI updates smoothly
+  if (cachedDrawerData && Array.isArray(cachedDrawerData.shifts)) {
+    const s = cachedDrawerData.shifts.find(item => item.id === shiftId);
+    if (s) {
+      s.expected_cash = amount;
+    }
+  }
+
   try {
     const res = await Auth.fetch(`/api/v1/shifts/${shiftId}/drawer-cash`, {
       method: "PUT",
@@ -5511,7 +5525,7 @@ async function submitEditCashierDrawer(event, shiftId) {
       localStorage.setItem("RESTOTRACK_DRAWER_RESET", Date.now().toString());
     } catch (e) {}
 
-    renderCashDrawerTracker();
+    debouncedDrawerRefresh(true);
   } catch (err) {
     console.error("Submit edit cashier drawer error:", err);
     Utils.showToast(err.message, "danger");
@@ -5591,7 +5605,7 @@ window.submitAddCashMovement = submitAddCashMovement;
         } catch (e) {}
 
         if (activeView === "cash_drawer") {
-          if (typeof renderCashDrawerTracker === "function") renderCashDrawerTracker();
+          debouncedDrawerRefresh(true);
         } else if (activeView === "profit_loss" || activeView === "purchases") {
           if (typeof renderProfitLoss === "function") renderProfitLoss();
         } else if (activeView === "dashboard") {
@@ -5668,8 +5682,8 @@ window.submitAddCashMovement = submitAddCashMovement;
           if (typeof renderProfitLoss === "function") renderProfitLoss();
         } else if (activeView === "dashboard" && typeof renderDashboard === "function") {
           renderDashboard();
-        } else if (activeView === "cash_drawer" && typeof renderCashDrawerTracker === "function") {
-          renderCashDrawerTracker();
+        } else if (activeView === "cash_drawer") {
+          debouncedDrawerRefresh(true);
         }
         break;
     }
@@ -5761,7 +5775,7 @@ window.submitAddCashMovement = submitAddCashMovement;
             case "TRANSFER_TO_ADMIN":
               cachedDrawerData = null;
               cachedProfitLossData = null;
-              if (activeView === "cash_drawer") renderCashDrawerTracker();
+              if (activeView === "cash_drawer") debouncedDrawerRefresh(true);
               else if (activeView === "profit_loss" || activeView === "purchases") renderProfitLoss();
               else if (activeView === "dashboard") renderDashboard();
               break;
