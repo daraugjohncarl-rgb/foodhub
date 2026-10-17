@@ -164,8 +164,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         });
     }
 
-    // Default to POS Terminal
+    // Restore current feature from URL hash or session, fallback to pos
     if (typeof renderView === "function") {
-        renderView("pos");
+        const initialView = (window.location.hash ? window.location.hash.replace("#", "") : "") || sessionStorage.getItem("active_feature") || "pos";
+        renderView(initialView);
     }
 });

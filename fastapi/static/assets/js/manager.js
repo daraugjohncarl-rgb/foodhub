@@ -164,8 +164,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         });
     }
 
-    // Default to Dashboard
+    // Restore current feature from URL hash or session, fallback to dashboard
     if (typeof renderView === "function") {
-        renderView("dashboard");
+        const initialView = (window.location.hash ? window.location.hash.replace("#", "") : "") || sessionStorage.getItem("active_feature") || "dashboard";
+        renderView(initialView);
     }
 });

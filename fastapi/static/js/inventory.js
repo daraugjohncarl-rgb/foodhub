@@ -164,8 +164,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         });
     }
 
-    // Default to Stock Overview
+    // Restore current feature from URL hash or session, fallback to inventory
     if (typeof renderView === "function") {
-        renderView("inventory");
+        const initialView = (window.location.hash ? window.location.hash.replace("#", "") : "") || sessionStorage.getItem("active_feature") || "inventory";
+        renderView(initialView);
     }
 });

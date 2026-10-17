@@ -14,6 +14,29 @@ async function renderView(viewId, container) {
   if (!container) container = document.getElementById("view-container");
   if (!container) return;
 
+  if (viewId) {
+    try {
+      if (window.location.hash !== "#" + viewId) {
+        history.replaceState(null, "", "#" + viewId);
+      }
+      sessionStorage.setItem("active_feature", viewId);
+    } catch (e) {}
+
+    // Synchronize active sidebar navigation link and header title
+    document.querySelectorAll("aside.sidebar .nav-link").forEach(link => {
+      const href = (link.getAttribute("href") || "").replace("#", "");
+      if (href === viewId) {
+        link.classList.add("active");
+        const pageTitle = document.getElementById("current-page-title");
+        if (pageTitle && link.getAttribute("data-title")) {
+          pageTitle.innerText = link.getAttribute("data-title");
+        }
+      } else {
+        link.classList.remove("active");
+      }
+    });
+  }
+
   container.innerHTML = `
     <div style="display:flex; justify-content:center; align-items:center; min-height:260px; color:var(--text-muted, #71717a);">
       <div style="text-align:center;">

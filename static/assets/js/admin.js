@@ -128,6 +128,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         });
     }
 
-    // Initial render
-    renderView("dashboard");
+    // Initial render: restore current feature from URL hash or session, fallback to dashboard
+    const initialView = (window.location.hash ? window.location.hash.replace("#", "") : "") || sessionStorage.getItem("active_feature") || "dashboard";
+    renderView(initialView);
 });

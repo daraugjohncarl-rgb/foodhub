@@ -137,9 +137,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         });
     }
 
-    // Default to Kitchen Screen
+    // Restore current feature from URL hash or session, fallback to kitchen
     if (typeof renderView === "function") {
-        renderView("kitchen");
+        const initialView = (window.location.hash ? window.location.hash.replace("#", "") : "") || sessionStorage.getItem("active_feature") || "kitchen";
+        renderView(initialView);
     }
 
     // Periodic auto-refresh

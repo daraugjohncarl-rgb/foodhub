@@ -66,6 +66,9 @@ function buildSidebarMenu(role, onNavigate) {
     menuEl.innerHTML = "";
   }
 
+  const currentSaved = (window.location.hash ? window.location.hash.replace("#", "") : "") || sessionStorage.getItem("active_feature") || "";
+  const hasSavedItem = items.some(it => it.id === currentSaved);
+
   items.forEach((item, index) => {
     const li = document.createElement("li");
     li.className = "nav-item";
@@ -73,9 +76,15 @@ function buildSidebarMenu(role, onNavigate) {
 
     const a = document.createElement("a");
     a.href = `#${item.id}`;
-    a.className = "nav-link" + (index === 0 ? " active" : "");
+    const isActive = hasSavedItem ? (item.id === currentSaved) : (index === 0);
+    a.className = "nav-link" + (isActive ? " active" : "");
     a.setAttribute("data-title", item.label);
     a.innerHTML = `<i class="${item.icon}"></i><span>${item.label}</span>${item.badgeId ? `<span id="${item.badgeId}" style="margin-left:auto; background:#ef4444; color:#fff; font-size:10px; font-weight:700; padding:2px 7px; border-radius:10px; display:none;">0</span>` : ''}`;
+
+    if (isActive) {
+      const pageTitle = document.getElementById("current-page-title");
+      if (pageTitle) pageTitle.innerText = item.label;
+    }
     
     a.onclick = (e) => {
       e.preventDefault();
