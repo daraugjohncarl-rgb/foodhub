@@ -164,12 +164,12 @@ async function renderDashboard(c) {
           <div class="stat-trend" style="color:${plStats.profit_loss?.is_profitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${plStats.profit_loss?.profit_margin_percent || 0}% margin</div>
         </div>
       </div>
-      <div class="stat-card" style="cursor:pointer;" onclick="renderView('profit_loss')" title="Click to view Cashout Income">
-        <div class="stat-icon gold" style="background:rgba(201,162,39,0.12); color:#c9a227;"><i class="fas fa-vault"></i></div>
+      <div class="stat-card" style="cursor:pointer;" onclick="renderView('profit_loss')" title="Click to view Transfer Income to Admin">
+        <div class="stat-icon emerald" style="background:rgba(16,185,129,0.12); color:#10b981;"><i class="fas fa-paper-plane"></i></div>
         <div class="stat-info">
-          <h3>Cashout Income</h3>
-          <div class="stat-count" style="color:#c9a227;">${Utils.formatCurrency(plStats.cashout?.total_cashout_income || 0)}</div>
-          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-shield-halved"></i> Secured in safe</div>
+          <h3>Transfer Income to Admin</h3>
+          <div class="stat-count" style="color:#10b981;">${Utils.formatCurrency((plStats.cashout?.admin_transfer_income !== undefined ? plStats.cashout?.admin_transfer_income : plStats.cashout?.total_transferred_to_admin) || plStats.cashout?.total_cashout_income || 0)}</div>
+          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-vault"></i> Transfer income to admin</div>
         </div>
       </div>
       <div class="stat-card">
@@ -4019,9 +4019,9 @@ async function renderProfitLoss(c) {
         </div>
       </div>
       <div class="stat-card">
-        <div class="stat-icon emerald" style="background:rgba(16,185,129,0.12); color:#10b981;"><i class="fas fa-vault"></i></div>
+        <div class="stat-icon emerald" style="background:rgba(16,185,129,0.12); color:#10b981;"><i class="fas fa-paper-plane"></i></div>
         <div class="stat-info">
-          <h3>${isAdmin ? 'Transfer Income from Manager' : 'Cashout Income & Safe Deposits'}</h3>
+          <h3>${isAdmin ? 'Transfer Income from Manager' : 'Transfer Income to Admin'}</h3>
           <div class="stat-count" style="color:#10b981;">${Utils.formatCurrency(isAdmin ? (csh.admin_transfer_income !== undefined ? csh.admin_transfer_income : (csh.total_transferred_to_admin || 0)) : (csh.manager_safe_cash !== undefined ? csh.manager_safe_cash : (csh.total_cashout_income || 0)))}</div>
           <div class="stat-trend" style="color:#10b981;"><i class="fas ${isAdmin ? 'fa-paper-plane' : 'fa-vault'}"></i> ${isAdmin ? 'Transferred to admin safe' : 'Manager safe balance (after transfers to Admin)'}</div>
         </div>
@@ -4079,21 +4079,21 @@ async function renderProfitLoss(c) {
         </div>
       </div>
 
-      <!-- Cashout Income & Safe Deposits Card -->
+      <!-- Transfer Income to Admin Card -->
       <div class="section-card" style="margin-bottom:0;">
         <div class="section-head" style="border-bottom:1px solid rgba(205,190,150,0.25); padding-bottom:12px;">
           <div>
-            <h2 style="font-size:16px; margin:0;"><i class="fas fa-vault" style="color:#c9a227; margin-right:8px;"></i> ${isAdmin ? 'Transfer Income from Manager' : 'Cashout Income & Safe Deposits'}</h2>
-            <span style="font-size:12px; color:var(--text-muted);">${isAdmin ? 'Transfer income received from manager secured in store safe vs active cashier drawer float' : 'Manager overall cashout income from the cashier secured in store safe vs active cashier drawer float'}</span>
+            <h2 style="font-size:16px; margin:0;"><i class="fas fa-paper-plane" style="color:#10b981; margin-right:8px;"></i> ${isAdmin ? 'Transfer Income from Manager' : 'Transfer Income to Admin'}</h2>
+            <span style="font-size:12px; color:var(--text-muted);">${isAdmin ? 'Transfer income received from manager secured in admin safe vs active cashier drawer float' : 'Transfer income to admin secured in store safe vs active cashier drawer float'}</span>
           </div>
         </div>
         <div style="padding:16px 0;">
           <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(205,190,150,0.15);">
-            <span style="font-weight:600; color:var(--text-main); font-size:13px;"><i class="fas ${isAdmin ? 'fa-paper-plane' : 'fa-vault'}" style="color:#10b981; margin-right:6px;"></i> ${isAdmin ? 'Total Transfer Income from Manager (In Admin Safe):' : 'Total Cashout Income (In Store Safe):'}</span>
+            <span style="font-weight:600; color:var(--text-main); font-size:13px;"><i class="fas ${isAdmin ? 'fa-paper-plane' : 'fa-vault'}" style="color:#10b981; margin-right:6px;"></i> ${isAdmin ? 'Total Transfer Income from Manager (In Admin Safe):' : 'Total Transfer Income to Admin:'}</span>
             <strong style="color:#10b981; font-size:14px;">${Utils.formatCurrency(isAdmin ? (csh.admin_transfer_income !== undefined ? csh.admin_transfer_income : (csh.total_transferred_to_admin || 0)) : (csh.manager_safe_cash !== undefined ? csh.manager_safe_cash : (csh.total_cashout_income || 0)))}</strong>
           </div>
           <div style="display:flex; justify-content:space-between; padding:8px 0 8px 20px; font-size:12px; color:var(--text-muted); border-bottom:1px dashed rgba(205,190,150,0.15);">
-            <span>↳ ${isAdmin ? "Today's Transfer Income from Manager:" : "Today's Cashouts:"}</span>
+            <span>↳ ${isAdmin ? "Today's Transfer Income from Manager:" : "Today's Transfer Income to Admin:"}</span>
             <span>${Utils.formatCurrency(isAdmin ? (csh.today_transferred_to_admin || 0) : (csh.today_cashout_income || 0))}</span>
           </div>
           ${!isAdmin && (csh.total_transferred_to_admin || 0) > 0 ? `
@@ -4129,10 +4129,10 @@ async function renderProfitLoss(c) {
     <div class="section-card fade-up delay-3">
       <div class="section-head">
         <div>
-          <h2><i class="fas fa-receipt" style="color:#10b981; margin-right:8px;"></i> ${isAdmin ? 'Transfer Income from Manager Ledger' : 'Cashout Income & Safe Deposit Ledger'}</h2>
-          <span style="font-size:12px; color:var(--text-muted);">${isAdmin ? 'Historical records of transfer income received from manager into the admin safe' : 'Historical records of manager overall cashout income from cashier drawers into the manager safe'}</span>
+          <h2><i class="fas fa-receipt" style="color:#10b981; margin-right:8px;"></i> ${isAdmin ? 'Transfer Income from Manager Ledger' : 'Transfer Income to Admin Ledger'}</h2>
+          <span style="font-size:12px; color:var(--text-muted);">${isAdmin ? 'Historical records of transfer income received from manager into the admin safe' : 'Historical records of transfer income to admin into the store safe'}</span>
         </div>
-        <span class="badge badge-info" style="font-size:11px; font-weight:700;">${history.length} ${isAdmin ? 'Transfer' : 'Cashout'} Records</span>
+        <span class="badge badge-info" style="font-size:11px; font-weight:700;">${history.length} Transfer Records</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -5065,16 +5065,27 @@ function renderDrawerTableRows(shifts) {
         </td>
         <td>${statusBadge}</td>
         <td style="color:var(--text-muted); font-size:12px;">${startDate}</td>
-        <td style="background:rgba(201,162,39,0.08); min-width:160px;">
+        <td style="background:rgba(201,162,39,0.08); min-width:210px;">
           ${isOpen ? `
-          <div style="display:flex; align-items:center; gap:8px;">
-            <div style="display:inline-flex; align-items:center; padding:5px 14px; border:1.5px solid #c9a227; border-radius:6px; font-weight:800; color:#c9a227; background:var(--bg-card, #fff); font-size:13px; cursor:default; user-select:none; pointer-events:none;" title="Active Cashier Drawer">
-              ${Utils.formatCurrency(s.expected_cash || 0)}
+          <div style="display:flex; align-items:center; gap:6px;">
+            <div style="position:relative; display:inline-flex; align-items:center;">
+              <span style="position:absolute; left:8px; font-weight:800; color:#c9a227; font-size:12px; pointer-events:none;">₱</span>
+              <input type="number" step="0.01" id="drawer-amount-input-${s.id}" 
+                value="${parseFloat(s.expected_cash || 0).toFixed(2)}"
+                style="width:96px; padding:5px 6px 5px 20px; font-size:13px; font-weight:800; color:#c9a227; border:1.5px solid #c9a227; border-radius:6px; background:var(--bg-card, #fff);"
+                onkeydown="if(event.key==='Enter') saveCashierDrawerCash(${s.id})"
+                title="Edit cashier drawer amount and press Save"
+              />
             </div>
+            <button type="button" class="btn btn-primary btn-sm" onclick="saveCashierDrawerCash(${s.id})" 
+              title="Save Cashier Drawer"
+              style="padding:5px 9px; font-size:12px; background:#c9a227; border-color:#c9a227; color:#fff; cursor:pointer; border-radius:6px; font-weight:700;">
+              <i class="fas fa-check"></i> Save
+            </button>
             <button type="button" class="btn btn-outline btn-sm" onclick="openEditCashierDrawerModal(${s.id}, '${(s.cashier_name || '').replace(/'/g, "\\'")}', ${s.expected_cash || 0})" 
-              title="Open Modal to Edit Drawer"
+              title="Open Modal to Edit Drawer with Note"
               style="padding:5px 8px; font-size:12px; color:#c9a227; border-color:#c9a227; cursor:pointer; border-radius:6px;">
-              <i class="fas fa-up-right-from-square"></i>
+              <i class="fas fa-pen-to-square"></i>
             </button>
           </div>
           ` : `
