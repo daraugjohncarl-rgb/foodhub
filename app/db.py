@@ -43,11 +43,20 @@ if raw_db_url:
 
     is_mysql = "mysql" in DATABASE_URL
     is_postgres = "postgres" in DATABASE_URL
-    DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
-    DB_PORT = os.getenv("DB_PORT", "3306" if is_mysql else "5432")
-    DB_USER = os.getenv("DB_USER", "root" if is_mysql else "postgres")
-    DB_PASSWORD = os.getenv("DB_PASS") if os.getenv("DB_PASS") is not None else os.getenv("DB_PASSWORD", "")
-    DB_NAME = os.getenv("DB_NAME", "pos")
+    from sqlalchemy.engine import make_url
+    try:
+        url_obj = make_url(DATABASE_URL)
+        DB_HOST = url_obj.host or os.getenv("DB_HOST", "127.0.0.1")
+        DB_PORT = str(url_obj.port) if url_obj.port else os.getenv("DB_PORT", "3306" if is_mysql else "5432")
+        DB_USER = url_obj.username or os.getenv("DB_USER", "root" if is_mysql else "postgres")
+        DB_PASSWORD = url_obj.password if url_obj.password is not None else os.getenv("DB_PASSWORD", "")
+        DB_NAME = url_obj.database or os.getenv("DB_NAME", "pos")
+    except Exception:
+        DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
+        DB_PORT = os.getenv("DB_PORT", "3306" if is_mysql else "5432")
+        DB_USER = os.getenv("DB_USER", "root" if is_mysql else "postgres")
+        DB_PASSWORD = os.getenv("DB_PASS") if os.getenv("DB_PASS") is not None else os.getenv("DB_PASSWORD", "")
+        DB_NAME = os.getenv("DB_NAME", "pos")
 else:
     # Check if configured for postgres or mysql
     if db_engine_type in ("postgres", "postgresql") or os.getenv("DB_PORT") == "5432":
