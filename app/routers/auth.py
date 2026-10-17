@@ -1,3 +1,4 @@
+from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -42,6 +43,11 @@ def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
         
+    # Enforce single-device login: increment token_version to invalidate any previous device sessions
+    user.token_version = (user.token_version or 0) + 1
+    db.commit()
+    db.refresh(user)
+
     # Construct JWT token payload
     # Ensure role is converted to its string representation
     role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
@@ -49,11 +55,12 @@ def login(
         "sub": str(user.id),
         "username": user.username,
         "role": role_str,
-        "tenant_id": user.tenant_id
+        "tenant_id": user.tenant_id,
+        "token_version": user.token_version
     }
     
-    # Generate the access token
-    access_token = create_access_token(data=token_payload)
+    # Generate the access token (valid for exactly 1 day / 24 hours)
+    access_token = create_access_token(data=token_payload, expires_delta=timedelta(days=1))
     
     # Audit log: record login event
     try:
@@ -153,9 +160,11 @@ def register_customer(
         "sub": str(new_user.id),
         "username": new_user.username,
         "role": "CUSTOMER",
-        "tenant_id": new_user.tenant_id
+        "tenant_id": new_user.tenant_id,
+        "token_version": new_user.token_version or 0
     }
-    access_token = create_access_token(data=token_payload)
+    # Generate access token so customer is logged in immediately (valid for 1 day / 24 hours)
+    access_token = create_access_token(data=token_payload, expires_delta=timedelta(days=1))
 
     return {
         "success": True,

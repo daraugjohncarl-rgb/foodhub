@@ -8,7 +8,7 @@ import jwt
 # Defaults to a secure fallback token in development environments
 SECRET_KEY = os.getenv("JWT_SECRET", "super_secret_fallback_key_for_pos_inbox_2026")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 720  # 12 hours (720 minutes)
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 1 day (24 hours / 1440 minutes)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """

@@ -68,6 +68,7 @@ class UserResponse(BaseModel):
     phone: Optional[str] = None
     role: Any
     is_active: bool = True
+    token_version: Optional[int] = 0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

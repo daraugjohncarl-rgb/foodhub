@@ -33,6 +33,13 @@ def get_current_user(
         if user_id_str is None:
             raise credentials_exception
         user_id = int(user_id_str)
+        token_version = payload.get("token_version")
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired after 1 day. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     except (JWTError, ValueError):
         # ValueError handles cases where user_id string cannot be parsed as an integer
         raise credentials_exception
@@ -49,6 +56,15 @@ def get_current_user(
             detail="User account is deactivated."
         )
         
+    # Single-device enforcement: Check if a newer login occurred on another device
+    if token_version is not None and getattr(user, "token_version", None) is not None:
+        if token_version != user.token_version:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Your account has been logged in on another device. You have been logged out on this device.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
     return user
 
 

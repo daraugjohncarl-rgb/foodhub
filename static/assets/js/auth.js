@@ -26,7 +26,20 @@ const Auth = {
   },
 
   isAuthenticated() {
-    return !!this.getToken();
+    const token = this.getToken();
+    if (!token) return false;
+    try {
+      const parts = token.split(".");
+      if (parts.length === 3) {
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+        if (payload.exp && Date.now() >= payload.exp * 1000) {
+          console.warn("Session expired after 1 day. Logging out.");
+          this.logout();
+          return false;
+        }
+      }
+    } catch (e) {}
+    return true;
   },
 
   getDashboardUrl(role) {
@@ -169,7 +182,17 @@ const Auth = {
     try {
       const res = await fetch(url, config);
       if (res.status === 401) {
-        console.warn("Session expired or unauthorized (401). Redirecting to login.");
+        let errorDetail = "";
+        try {
+          const clone = res.clone();
+          const errData = await clone.json();
+          errorDetail = errData.detail || "";
+        } catch (e) {}
+
+        console.warn("Session expired or unauthorized (401).", errorDetail);
+        if (errorDetail && errorDetail.toLowerCase().includes("another device")) {
+          alert("Notice: Your account was logged in from another device. You have been automatically logged out on this device.");
+        }
         this.logout();
         throw new Error("Unauthorized");
       }
@@ -224,3 +247,14 @@ Auth.requireRole = requireRole;
 window.Auth = Auth;
 window.requireRole = requireRole;
 window.logout = () => Auth.logout();
+
+// Periodic session heartbeat: validates single-device session and 1-day expiration in background
+if (typeof window !== "undefined") {
+  setInterval(async () => {
+    if (Auth.isAuthenticated() && window.location.pathname !== "/" && window.location.pathname !== "/index.html" && window.location.pathname !== "/login") {
+      try {
+        await Auth.fetch("/api/v1/auth/me");
+      } catch (e) {}
+    }
+  }, 45000);
+}
