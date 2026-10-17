@@ -72,9 +72,7 @@ for table in Base.metadata.sorted_tables:
     ddl = str(CreateTable(table).compile(dialect=postgresql.dialect())).strip()
     sql_statements.append(f'{ddl};\n')
 
-# Add Data inserts
 sql_statements.append('-- 5. Insert Existing Records')
-sql_statements.append('SET session_replication_role = "replica";\n')
 
 with engine.connect() as conn:
     for table_name in TABLE_ORDER:
@@ -108,11 +106,7 @@ with engine.connect() as conn:
                     vals.append(f"'{escaped}'")
             vals_str = ', '.join(vals)
             sql_statements.append(f'INSERT INTO "{table_name}" ({col_names_str}) VALUES ({vals_str}) ON CONFLICT DO NOTHING;')
-        sql_statements.append('')
 
-sql_statements.append('SET session_replication_role = "DEFAULT";\n')
-
-# Add sequence updates
 sql_statements.append('-- 6. Synchronize Auto-Increment Sequences')
 for table_name in TABLE_ORDER:
     sql_statements.append(f"""SELECT setval(pg_get_serial_sequence('"{table_name}"', 'id'), coalesce(max(id), 1)) FROM "{table_name}";""")

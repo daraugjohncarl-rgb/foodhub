@@ -347,11 +347,8 @@ CREATE TABLE transaction_items (
 );
 
 -- 5. Insert Existing Records
-SET session_replication_role = "replica";
-
 -- Records for: tenants (1 rows)
 INSERT INTO "tenants" ("id", "name", "subdomain_or_code", "is_active", "created_at") VALUES (1, 'Main Branch - Blessie FoodHub', 'main-branch', TRUE, '2026-08-24 20:20:52') ON CONFLICT DO NOTHING;
-
 -- Records for: categories (12 rows)
 INSERT INTO "categories" ("id", "tenant_id", "name", "description", "created_at", "updated_at") VALUES (25, 1, 'Snacks', 'Snacks Menu', '2026-08-24 22:09:23', '2026-08-24 22:09:23') ON CONFLICT DO NOTHING;
 INSERT INTO "categories" ("id", "tenant_id", "name", "description", "created_at", "updated_at") VALUES (26, 1, 'Bilao Snacks', 'Bilao Snacks Menu', '2026-08-24 22:09:23', '2026-08-24 22:09:23') ON CONFLICT DO NOTHING;
@@ -365,12 +362,10 @@ INSERT INTO "categories" ("id", "tenant_id", "name", "description", "created_at"
 INSERT INTO "categories" ("id", "tenant_id", "name", "description", "created_at", "updated_at") VALUES (34, 1, 'Cold Coffee', 'Cold Coffee Menu', '2026-08-24 22:09:23', '2026-08-24 22:09:23') ON CONFLICT DO NOTHING;
 INSERT INTO "categories" ("id", "tenant_id", "name", "description", "created_at", "updated_at") VALUES (35, 1, 'Hot Coffee', 'Hot Coffee Menu', '2026-08-24 22:09:23', '2026-08-24 22:09:23') ON CONFLICT DO NOTHING;
 INSERT INTO "categories" ("id", "tenant_id", "name", "description", "created_at", "updated_at") VALUES (36, 1, 'Unli Samgyupsal', 'Unli Samgyupsal Menu', '2026-08-24 22:09:23', '2026-08-24 22:09:23') ON CONFLICT DO NOTHING;
-
 -- Records for: suppliers (3 rows)
 INSERT INTO "suppliers" ("id", "tenant_id", "supplier_name", "contact_number", "category", "contact_person", "email", "address", "products_supplied", "status", "notes", "created_at", "updated_at") VALUES (4, 1, 'Ginebra Supplier', '+63 907 002 5333', 'Beverages', NULL, NULL, NULL, 'Ginebra', 'Active', NULL, '2026-10-15 21:53:08', '2026-10-15 21:53:08') ON CONFLICT DO NOTHING;
 INSERT INTO "suppliers" ("id", "tenant_id", "supplier_name", "contact_number", "category", "contact_person", "email", "address", "products_supplied", "status", "notes", "created_at", "updated_at") VALUES (5, 1, 'CLVB Supplier', '+63 966 245 9939', 'Beverages', NULL, NULL, NULL, 'CLVB', 'Active', NULL, '2026-10-15 21:53:08', '2026-10-15 21:53:08') ON CONFLICT DO NOTHING;
 INSERT INTO "suppliers" ("id", "tenant_id", "supplier_name", "contact_number", "category", "contact_person", "email", "address", "products_supplied", "status", "notes", "created_at", "updated_at") VALUES (6, 1, 'Mako’s Beer Supplier', '+63 981 406 5671', 'Beverages', NULL, NULL, NULL, 'Mako’s Beer', 'Active', NULL, '2026-10-15 21:53:08', '2026-10-15 21:53:08') ON CONFLICT DO NOTHING;
-
 -- Records for: users (8 rows)
 INSERT INTO "users" ("id", "tenant_id", "username", "first_name", "last_name", "email", "phone", "password_hash", "role", "is_active", "token_version", "created_at", "updated_at") VALUES (1, NULL, 'superadmin', NULL, NULL, 'superadmin@inboxpos.com', NULL, '$2b$12$67bNSDGZ7W3J.sfl/6pJfOqERxeiEfNqI3zGzLeWfET7.faImFwjm', 'SUPER_ADMIN', TRUE, 2, '2026-08-24 20:20:52', '2026-10-17 23:27:06') ON CONFLICT DO NOTHING;
 INSERT INTO "users" ("id", "tenant_id", "username", "first_name", "last_name", "email", "phone", "password_hash", "role", "is_active", "token_version", "created_at", "updated_at") VALUES (2, 1, 'admin', NULL, NULL, 'admin@inboxpos.com', NULL, '$2b$12$8Xt/UtrY3X/Mor6sQF5QfO6V2lSFulbqlm7U9gWatBtSBJPVz7Z6S', 'ADMIN', TRUE, 11, '2026-08-24 20:20:52', '2026-10-17 23:27:07') ON CONFLICT DO NOTHING;
@@ -380,10 +375,8 @@ INSERT INTO "users" ("id", "tenant_id", "username", "first_name", "last_name", "
 INSERT INTO "users" ("id", "tenant_id", "username", "first_name", "last_name", "email", "phone", "password_hash", "role", "is_active", "token_version", "created_at", "updated_at") VALUES (6, 1, 'kitchen', 'jojo', 'banes', 'kitchen@gmail.com', '09846473821', '$2b$12$.CRT1Xx.ZLM7OhGrV9iiNOM6u8gvkIEb94HLRAQGYM2EwzsE4jz6u', 'KITCHEN', TRUE, 2, '2026-08-24 22:22:58', '2026-10-17 23:27:10') ON CONFLICT DO NOTHING;
 INSERT INTO "users" ("id", "tenant_id", "username", "first_name", "last_name", "email", "phone", "password_hash", "role", "is_active", "token_version", "created_at", "updated_at") VALUES (11, 1, 'customer', 'jane', 'doe', 'customer@gmai;.com', NULL, '$2b$12$unsga1PvfBRbxdqrPT4iDuddIivAg0TT6ujX5igeu3n1Fb675gFZS', 'CUSTOMER', TRUE, 0, '2026-10-16 00:35:48', '2026-10-16 00:35:48') ON CONFLICT DO NOTHING;
 INSERT INTO "users" ("id", "tenant_id", "username", "first_name", "last_name", "email", "phone", "password_hash", "role", "is_active", "token_version", "created_at", "updated_at") VALUES (12, 1, 'customer_1792082724', 'Maria', 'Santos', 'maria_1792082724@example.com', '09171234567', '$2b$12$6J5yBbpJqdwskgPBd4TzoeixY2M2TMyrGzB8aT4thvmYC/IKfqKc.', 'CUSTOMER', TRUE, 0, '2026-10-16 00:45:24', '2026-10-17 00:54:45') ON CONFLICT DO NOTHING;
-
 -- Records for: restaurant_tables (1 rows)
 INSERT INTO "restaurant_tables" ("id", "tenant_id", "table_number", "status") VALUES (6, 1, '1', 'active') ON CONFLICT DO NOTHING;
-
 -- Records for: inventory_items (253 rows)
 INSERT INTO "inventory_items" ("id", "tenant_id", "name", "category", "sku", "quantity", "unit", "min_stock", "unit_price", "created_at", "updated_at") VALUES (1, 1, 'Rice', 'Kitchen', 'KIT-7846', '50.00', 'kg', '10.00', '52.00', '2026-08-24 21:27:09', '2026-10-17 00:33:41') ON CONFLICT DO NOTHING;
 INSERT INTO "inventory_items" ("id", "tenant_id", "name", "category", "sku", "quantity", "unit", "min_stock", "unit_price", "created_at", "updated_at") VALUES (2, 1, 'Cooking oil', 'Kitchen', 'KIT-2258', '30.00', 'L', '5.00', '85.00', '2026-08-24 21:27:09', '2026-10-17 00:33:41') ON CONFLICT DO NOTHING;
@@ -638,7 +631,6 @@ INSERT INTO "inventory_items" ("id", "tenant_id", "name", "category", "sku", "qu
 INSERT INTO "inventory_items" ("id", "tenant_id", "name", "category", "sku", "quantity", "unit", "min_stock", "unit_price", "created_at", "updated_at") VALUES (251, 1, 'Display Shelf', 'FURNITURE & FIXTURES', 'FUR-0170', '4.00', 'units', '1.00', '50.00', '2026-08-24 21:27:10', '2026-10-17 00:33:41') ON CONFLICT DO NOTHING;
 INSERT INTO "inventory_items" ("id", "tenant_id", "name", "category", "sku", "quantity", "unit", "min_stock", "unit_price", "created_at", "updated_at") VALUES (252, 1, 'Kitchen Rack', 'FURNITURE & FIXTURES', 'FUR-9731', '4.00', 'units', '1.00', '50.00', '2026-08-24 21:27:10', '2026-10-17 00:33:41') ON CONFLICT DO NOTHING;
 INSERT INTO "inventory_items" ("id", "tenant_id", "name", "category", "sku", "quantity", "unit", "min_stock", "unit_price", "created_at", "updated_at") VALUES (253, 1, 'Storage Rack', 'FURNITURE & FIXTURES', 'FUR-0346', '4.00', 'units', '1.00', '50.00', '2026-08-24 21:27:10', '2026-10-17 00:33:41') ON CONFLICT DO NOTHING;
-
 -- Records for: products (136 rows)
 INSERT INTO "products" ("id", "tenant_id", "category_id", "name", "sku", "barcode", "price", "cost", "is_active", "image_url", "created_at", "updated_at") VALUES (214, 1, 25, 'Spaghetti w/ Bread — Single', 'POS-2746', NULL, '125.00', '68.75', TRUE, NULL, '2026-08-24 22:09:23', '2026-08-24 22:09:23') ON CONFLICT DO NOTHING;
 INSERT INTO "products" ("id", "tenant_id", "category_id", "name", "sku", "barcode", "price", "cost", "is_active", "image_url", "created_at", "updated_at") VALUES (215, 1, 25, 'Spaghetti w/ Bread — Barkada', 'POS-0058', NULL, '550.00', '302.50', TRUE, NULL, '2026-08-24 22:09:23', '2026-08-24 22:09:23') ON CONFLICT DO NOTHING;
@@ -776,7 +768,6 @@ INSERT INTO "products" ("id", "tenant_id", "category_id", "name", "sku", "barcod
 INSERT INTO "products" ("id", "tenant_id", "category_id", "name", "sku", "barcode", "price", "cost", "is_active", "image_url", "created_at", "updated_at") VALUES (350, 1, 33, 'Buko Frappe — 22 oz', 'POS-63D5C717', NULL, '100.00', '55.00', TRUE, NULL, '2026-10-16 19:28:24', '2026-10-16 19:28:24') ON CONFLICT DO NOTHING;
 INSERT INTO "products" ("id", "tenant_id", "category_id", "name", "sku", "barcode", "price", "cost", "is_active", "image_url", "created_at", "updated_at") VALUES (351, 1, 34, 'Iced Caramel Macchiato — 16 oz', 'POS-43A83EF2', NULL, '60.00', '33.00', TRUE, NULL, '2026-10-16 19:28:24', '2026-10-16 19:28:24') ON CONFLICT DO NOTHING;
 INSERT INTO "products" ("id", "tenant_id", "category_id", "name", "sku", "barcode", "price", "cost", "is_active", "image_url", "created_at", "updated_at") VALUES (352, 1, 34, 'Iced Caramel Macchiato — 22 oz', 'POS-CF10E352', NULL, '75.00', '41.25', TRUE, NULL, '2026-10-16 19:28:24', '2026-10-16 19:28:24') ON CONFLICT DO NOTHING;
-
 -- Records for: shifts (31 rows)
 INSERT INTO "shifts" ("id", "tenant_id", "user_id", "start_time", "end_time", "start_cash", "end_cash", "status", "created_at", "updated_at") VALUES (1, 1, 5, '2026-08-24 22:21:48', '2026-10-16 17:24:42', '0.00', '0.00', 'closed', '2026-08-24 22:21:48', '2026-10-17 01:24:42') ON CONFLICT DO NOTHING;
 INSERT INTO "shifts" ("id", "tenant_id", "user_id", "start_time", "end_time", "start_cash", "end_cash", "status", "created_at", "updated_at") VALUES (2, 1, 2, '2026-10-15 21:52:26', '2026-10-16 16:46:07', '100.00', '1206.00', 'closed', '2026-10-15 21:52:26', '2026-10-17 00:46:07') ON CONFLICT DO NOTHING;
@@ -809,7 +800,6 @@ INSERT INTO "shifts" ("id", "tenant_id", "user_id", "start_time", "end_time", "s
 INSERT INTO "shifts" ("id", "tenant_id", "user_id", "start_time", "end_time", "start_cash", "end_cash", "status", "created_at", "updated_at") VALUES (31, 1, 5, '2026-10-17 08:31:25', '2026-10-17 00:40:12', '0.00', '0.00', 'closed', '2026-10-17 08:31:25', '2026-10-17 08:40:12') ON CONFLICT DO NOTHING;
 INSERT INTO "shifts" ("id", "tenant_id", "user_id", "start_time", "end_time", "start_cash", "end_cash", "status", "created_at", "updated_at") VALUES (32, 1, 5, '2026-10-17 08:40:12', '2026-10-17 12:27:37', '0.00', '2720.00', 'closed', '2026-10-17 08:40:12', '2026-10-17 20:27:37') ON CONFLICT DO NOTHING;
 INSERT INTO "shifts" ("id", "tenant_id", "user_id", "start_time", "end_time", "start_cash", "end_cash", "status", "created_at", "updated_at") VALUES (33, 1, 5, '2026-10-17 20:27:37', NULL, '0.00', NULL, 'open', '2026-10-17 20:27:37', '2026-10-17 20:27:37') ON CONFLICT DO NOTHING;
-
 -- Records for: shift_cash_movements (51 rows)
 INSERT INTO "shift_cash_movements" ("id", "tenant_id", "shift_id", "user_id", "type", "amount", "reason", "created_at") VALUES (1, 1, 1, 3, 'PAID_OUT', '10.00', 'Safe drop cash test', '2026-10-16 03:38:56') ON CONFLICT DO NOTHING;
 INSERT INTO "shift_cash_movements" ("id", "tenant_id", "shift_id", "user_id", "type", "amount", "reason", "created_at") VALUES (3, 1, 2, 2, 'PAID_OUT', '100.00', 'Test Cashout', '2026-10-17 00:46:07') ON CONFLICT DO NOTHING;
@@ -862,7 +852,6 @@ INSERT INTO "shift_cash_movements" ("id", "tenant_id", "shift_id", "user_id", "t
 INSERT INTO "shift_cash_movements" ("id", "tenant_id", "shift_id", "user_id", "type", "amount", "reason", "created_at") VALUES (56, 1, 32, 3, 'PAID_OUT', '80.00', 'Cashier drawer edited in management tracker (Adjusted from ₱2880.00 to ₱2800.00)', '2026-10-17 20:26:04') ON CONFLICT DO NOTHING;
 INSERT INTO "shift_cash_movements" ("id", "tenant_id", "shift_id", "user_id", "type", "amount", "reason", "created_at") VALUES (57, 1, 32, 3, 'PAID_OUT', '80.00', 'Transfer to Admin', '2026-10-17 20:27:37') ON CONFLICT DO NOTHING;
 INSERT INTO "shift_cash_movements" ("id", "tenant_id", "shift_id", "user_id", "type", "amount", "reason", "created_at") VALUES (58, 1, 33, 3, 'PAID_IN', '1500.00', 'Cashier drawer edited via modal (Adjusted from ₱0.00 to ₱1500.00)', '2026-10-17 20:28:52') ON CONFLICT DO NOTHING;
-
 -- Records for: transactions (40 rows)
 INSERT INTO "transactions" ("id", "tenant_id", "shift_id", "user_id", "client_tx_id", "total_amount", "tax_amount", "discount_amount", "net_amount", "status", "fulfillment_status", "created_at") VALUES (1, 1, 1, 5, 'b98a1092-e5de-41cc-a42f-36d93266f33e', '0.00', '0.00', '0.00', '0.00', 'completed', 'pending', '2026-08-24 22:21:48') ON CONFLICT DO NOTHING;
 INSERT INTO "transactions" ("id", "tenant_id", "shift_id", "user_id", "client_tx_id", "total_amount", "tax_amount", "discount_amount", "net_amount", "status", "fulfillment_status", "created_at") VALUES (2, 1, 1, 5, 'a8813494-f6e2-4741-bdfb-eb8465c82e63', '0.00', '0.00', '0.00', '0.00', 'completed', 'pending', '2026-08-24 23:40:20') ON CONFLICT DO NOTHING;
@@ -904,7 +893,6 @@ INSERT INTO "transactions" ("id", "tenant_id", "shift_id", "user_id", "client_tx
 INSERT INTO "transactions" ("id", "tenant_id", "shift_id", "user_id", "client_tx_id", "total_amount", "tax_amount", "discount_amount", "net_amount", "status", "fulfillment_status", "created_at") VALUES (38, 1, 33, 5, 'eabd02c6-f31d-429e-ba50-fd0d666b2522', '30.00', '0.00', '0.00', '30.00', 'rejected', 'pending', '2026-10-17 20:41:06') ON CONFLICT DO NOTHING;
 INSERT INTO "transactions" ("id", "tenant_id", "shift_id", "user_id", "client_tx_id", "total_amount", "tax_amount", "discount_amount", "net_amount", "status", "fulfillment_status", "created_at") VALUES (39, 1, 33, 5, '734a6eb0-ff3a-4267-95ae-3594dd756c9c', '30.00', '0.00', '0.00', '30.00', 'rejected', 'pending', '2026-10-17 23:27:10') ON CONFLICT DO NOTHING;
 INSERT INTO "transactions" ("id", "tenant_id", "shift_id", "user_id", "client_tx_id", "total_amount", "tax_amount", "discount_amount", "net_amount", "status", "fulfillment_status", "created_at") VALUES (40, 1, 33, 5, 'feb643a6-eb0b-4968-85ed-8eabe71db450', '125.00', '0.00', '0.00', '125.00', 'completed', 'pending', '2026-10-17 23:47:16') ON CONFLICT DO NOTHING;
-
 -- Records for: transaction_items (46 rows)
 INSERT INTO "transaction_items" ("id", "transaction_id", "product_id", "quantity", "unit_price", "total_price") VALUES (1, 1, 270, 1, '0.00', '0.00') ON CONFLICT DO NOTHING;
 INSERT INTO "transaction_items" ("id", "transaction_id", "product_id", "quantity", "unit_price", "total_price") VALUES (2, 1, 263, 1, '0.00', '0.00') ON CONFLICT DO NOTHING;
@@ -952,7 +940,6 @@ INSERT INTO "transaction_items" ("id", "transaction_id", "product_id", "quantity
 INSERT INTO "transaction_items" ("id", "transaction_id", "product_id", "quantity", "unit_price", "total_price") VALUES (44, 38, 270, 2, '15.00', '30.00') ON CONFLICT DO NOTHING;
 INSERT INTO "transaction_items" ("id", "transaction_id", "product_id", "quantity", "unit_price", "total_price") VALUES (45, 39, 270, 2, '15.00', '30.00') ON CONFLICT DO NOTHING;
 INSERT INTO "transaction_items" ("id", "transaction_id", "product_id", "quantity", "unit_price", "total_price") VALUES (46, 40, 214, 1, '125.00', '125.00') ON CONFLICT DO NOTHING;
-
 -- Records for: payments (40 rows)
 INSERT INTO "payments" ("id", "transaction_id", "payment_method", "amount", "status", "created_at") VALUES (1, 1, 'CASH', '0.00', 'completed', '2026-08-24 22:21:48') ON CONFLICT DO NOTHING;
 INSERT INTO "payments" ("id", "transaction_id", "payment_method", "amount", "status", "created_at") VALUES (2, 2, 'CASH', '0.00', 'completed', '2026-08-24 23:40:20') ON CONFLICT DO NOTHING;
@@ -994,7 +981,6 @@ INSERT INTO "payments" ("id", "transaction_id", "payment_method", "amount", "sta
 INSERT INTO "payments" ("id", "transaction_id", "payment_method", "amount", "status", "created_at") VALUES (38, 38, 'Cash', '30.00', 'cancelled', '2026-10-17 20:41:06') ON CONFLICT DO NOTHING;
 INSERT INTO "payments" ("id", "transaction_id", "payment_method", "amount", "status", "created_at") VALUES (39, 39, 'Cash', '30.00', 'cancelled', '2026-10-17 23:27:10') ON CONFLICT DO NOTHING;
 INSERT INTO "payments" ("id", "transaction_id", "payment_method", "amount", "status", "created_at") VALUES (40, 40, 'Cash', '125.00', 'completed', '2026-10-17 23:47:16') ON CONFLICT DO NOTHING;
-
 -- Records for: customer_orders (18 rows)
 INSERT INTO "customer_orders" ("id", "tenant_id", "order_number", "customer_name", "order_type", "table_number", "notes", "total_amount", "status", "tracking_token", "created_at") VALUES (1, 1, 'CUST-7164F4', 'Carl Daraug', 'Dine In', 'T-708', 'Extra gravy, less ice please', '250.00', 'rejected', NULL, '2026-10-15 23:38:28') ON CONFLICT DO NOTHING;
 INSERT INTO "customer_orders" ("id", "tenant_id", "order_number", "customer_name", "order_type", "table_number", "notes", "total_amount", "status", "tracking_token", "created_at") VALUES (2, 1, 'CUST-CC0540', 'Carl Daraug', 'Dine In', 'T-727', 'Extra gravy, less ice please', '250.00', 'rejected', NULL, '2026-10-15 23:38:47') ON CONFLICT DO NOTHING;
@@ -1014,7 +1000,6 @@ INSERT INTO "customer_orders" ("id", "tenant_id", "order_number", "customer_name
 INSERT INTO "customer_orders" ("id", "tenant_id", "order_number", "customer_name", "order_type", "table_number", "notes", "total_amount", "status", "tracking_token", "created_at") VALUES (16, 1, 'CUST-58CE46', 'Maria Santos', 'Dine-in', 'Table 8', 'Extra crispy fries please', '380.00', 'accepted', 'sQxkVj2kBhINcvqz7JIoeKCLhV-23dEd', '2026-10-17 20:23:41') ON CONFLICT DO NOTHING;
 INSERT INTO "customer_orders" ("id", "tenant_id", "order_number", "customer_name", "order_type", "table_number", "notes", "total_amount", "status", "tracking_token", "created_at") VALUES (17, 1, 'CUST-839768', 'Maria Santos', 'Dine-in', 'Table 8', 'Extra crispy fries please', '30.00', 'accepted', 'hoE-KKcvNS8LhPrYuMv0a1gfYedyGtAI', '2026-10-17 20:41:06') ON CONFLICT DO NOTHING;
 INSERT INTO "customer_orders" ("id", "tenant_id", "order_number", "customer_name", "order_type", "table_number", "notes", "total_amount", "status", "tracking_token", "created_at") VALUES (18, 1, 'CUST-7EECB0', 'Juan Dela Cruz', 'Dine In', '5', NULL, '125.00', 'rejected', 'G8m6kIPpzA3-rwsRfnePtP0eryaBRFJE', '2026-10-17 23:47:17') ON CONFLICT DO NOTHING;
-
 -- Records for: customer_order_items (18 rows)
 INSERT INTO "customer_order_items" ("id", "customer_order_id", "name", "variant", "price", "quantity", "product_id") VALUES (1, 1, 'Spaghetti w/ Bread — Single', NULL, '125.00', 2, 214) ON CONFLICT DO NOTHING;
 INSERT INTO "customer_order_items" ("id", "customer_order_id", "name", "variant", "price", "quantity", "product_id") VALUES (2, 2, 'Spaghetti w/ Bread — Single', NULL, '125.00', 2, 214) ON CONFLICT DO NOTHING;
@@ -1034,7 +1019,6 @@ INSERT INTO "customer_order_items" ("id", "customer_order_id", "name", "variant"
 INSERT INTO "customer_order_items" ("id", "customer_order_id", "name", "variant", "price", "quantity", "product_id") VALUES (16, 16, '1.5 L — Gin, Ice, Juice', 'Regular', '190.00', 2, NULL) ON CONFLICT DO NOTHING;
 INSERT INTO "customer_order_items" ("id", "customer_order_id", "name", "variant", "price", "quantity", "product_id") VALUES (17, 17, '1 Bucket Ice', 'Regular', '15.00', 2, NULL) ON CONFLICT DO NOTHING;
 INSERT INTO "customer_order_items" ("id", "customer_order_id", "name", "variant", "price", "quantity", "product_id") VALUES (18, 18, 'Spaghetti w/ Bread — Single', NULL, '125.00', 1, 214) ON CONFLICT DO NOTHING;
-
 -- Records for: incident_reports (15 rows)
 INSERT INTO "incident_reports" ("id", "tenant_id", "user_id", "title", "category", "priority", "status", "description", "admin_notes", "created_at", "updated_at") VALUES (1, 1, 3, 'Kitchen Thermal Printer Paper Jam', 'HARDWARE', 'HIGH', 'IN_PROGRESS', 'The kitchen receipt printer keeps jamming when printing takeout orders.', 'Replacement printer cartridge dispatched to branch.', '2026-10-15 21:52:36', '2026-10-15 21:52:36') ON CONFLICT DO NOTHING;
 INSERT INTO "incident_reports" ("id", "tenant_id", "user_id", "title", "category", "priority", "status", "description", "admin_notes", "created_at", "updated_at") VALUES (2, 1, 3, 'Kitchen Thermal Printer Paper Jam', 'HARDWARE', 'HIGH', 'IN_PROGRESS', 'The kitchen receipt printer keeps jamming when printing takeout orders.', 'Replacement printer cartridge dispatched to branch.', '2026-10-15 21:53:13', '2026-10-15 21:53:13') ON CONFLICT DO NOTHING;
@@ -1051,7 +1035,6 @@ INSERT INTO "incident_reports" ("id", "tenant_id", "user_id", "title", "category
 INSERT INTO "incident_reports" ("id", "tenant_id", "user_id", "title", "category", "priority", "status", "description", "admin_notes", "created_at", "updated_at") VALUES (13, 1, 3, 'Kitchen Thermal Printer Paper Jam', 'HARDWARE', 'HIGH', 'IN_PROGRESS', 'The kitchen receipt printer keeps jamming when printing takeout orders.', 'Replacement printer cartridge dispatched to branch.', '2026-10-17 20:23:39', '2026-10-17 20:23:39') ON CONFLICT DO NOTHING;
 INSERT INTO "incident_reports" ("id", "tenant_id", "user_id", "title", "category", "priority", "status", "description", "admin_notes", "created_at", "updated_at") VALUES (14, 1, 3, 'Kitchen Thermal Printer Paper Jam', 'HARDWARE', 'HIGH', 'IN_PROGRESS', 'The kitchen receipt printer keeps jamming when printing takeout orders.', 'Replacement printer cartridge dispatched to branch.', '2026-10-17 20:41:05', '2026-10-17 20:41:06') ON CONFLICT DO NOTHING;
 INSERT INTO "incident_reports" ("id", "tenant_id", "user_id", "title", "category", "priority", "status", "description", "admin_notes", "created_at", "updated_at") VALUES (15, 1, 3, 'Kitchen Thermal Printer Paper Jam', 'HARDWARE', 'HIGH', 'IN_PROGRESS', 'The kitchen receipt printer keeps jamming when printing takeout orders.', 'Replacement printer cartridge dispatched to branch.', '2026-10-17 23:27:10', '2026-10-17 23:27:10') ON CONFLICT DO NOTHING;
-
 -- Records for: activity_logs (461 rows)
 INSERT INTO "activity_logs" ("id", "tenant_id", "user_id", "action", "performed_by", "target_user", "role", "details", "created_at") VALUES (1, NULL, 1, 'Login', 'superadmin', 'superadmin', 'SUPER_ADMIN', 'User ''superadmin'' logged in successfully.', '2026-08-24 20:21:26') ON CONFLICT DO NOTHING;
 INSERT INTO "activity_logs" ("id", "tenant_id", "user_id", "action", "performed_by", "target_user", "role", "details", "created_at") VALUES (2, NULL, 1, 'Login', 'superadmin', 'superadmin', 'SUPER_ADMIN', 'User ''superadmin'' logged in successfully.', '2026-08-24 21:21:42') ON CONFLICT DO NOTHING;
@@ -1514,9 +1497,6 @@ INSERT INTO "activity_logs" ("id", "tenant_id", "user_id", "action", "performed_
 INSERT INTO "activity_logs" ("id", "tenant_id", "user_id", "action", "performed_by", "target_user", "role", "details", "created_at") VALUES (459, NULL, 5, 'Login', 'cashier', 'cashier', 'CASHIER', 'User ''cashier'' logged in successfully.', '2026-10-17 23:47:16') ON CONFLICT DO NOTHING;
 INSERT INTO "activity_logs" ("id", "tenant_id", "user_id", "action", "performed_by", "target_user", "role", "details", "created_at") VALUES (460, 1, 5, 'POS Sale', 'cashier', NULL, 'CASHIER', 'Transaction #40 processed for ₱125.00', '2026-10-17 23:47:16') ON CONFLICT DO NOTHING;
 INSERT INTO "activity_logs" ("id", "tenant_id", "user_id", "action", "performed_by", "target_user", "role", "details", "created_at") VALUES (461, 1, 5, 'Order Status Update', 'cashier', NULL, 'CASHIER', 'Order #40 status changed from PENDING to COMPLETED. Reason: Customer cancelled order', '2026-10-17 23:47:16') ON CONFLICT DO NOTHING;
-
-SET session_replication_role = "DEFAULT";
-
 -- 6. Synchronize Auto-Increment Sequences
 SELECT setval(pg_get_serial_sequence('"tenants"', 'id'), coalesce(max(id), 1)) FROM "tenants";
 SELECT setval(pg_get_serial_sequence('"categories"', 'id'), coalesce(max(id), 1)) FROM "categories";
