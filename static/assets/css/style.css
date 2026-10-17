@@ -640,10 +640,13 @@ body.sidebar-collapsed .sidebar .logout-btn i {
     color: var(--text-muted);
 }
 
-.header-actions {
-    display: flex;
-    align-items: center;
-    gap: 18px;
+.header-actions,
+.notif-btn,
+#notifBell,
+.notif-dropdown,
+.header-avatar,
+.top-header .avatar-fallback {
+    display: none !important;
 }
 
 .live-clock-badge {
