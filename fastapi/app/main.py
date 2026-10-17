@@ -253,10 +253,16 @@ if os.path.exists(os.path.join(STATIC_DIR, "assets")):
 
 # Explicit HTML Page Routes for Roles
 @app.get("/", response_class=FileResponse)
+@app.head("/")
 @app.get("/login", response_class=FileResponse)
+@app.head("/login")
 @app.get("/auth/login", response_class=FileResponse)
 def get_login_page():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+@app.api_route("/health", methods=["GET", "HEAD"])
+def health_check():
+    return {"status": "ok"}
 
 @app.get("/admin", response_class=FileResponse)
 @app.get("/admin.html", response_class=FileResponse)
@@ -391,6 +397,7 @@ def get_settings_page():
 
 
 @app.get("/test-db")
+@app.head("/test-db")
 def test_db(db: Session = Depends(get_db)):
     """
     Endpoint to verify database connectivity.
