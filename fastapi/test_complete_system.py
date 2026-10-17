@@ -101,7 +101,7 @@ def run_e2e_tests():
     assert prods_res.status_code == 200
     products = prods_res.json()
     assert len(products) > 0, "Expected seeded products in menu"
-    test_product = products[0]
+    test_product = next(p for p in products if p.get('is_active'))
     print(f"  ✓ Products listed: {len(products)} products available (e.g. {test_product['name']} @ ₱{test_product['price']})")
 
     # Inventory
