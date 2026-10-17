@@ -399,6 +399,7 @@ class CustomerOrder(Base):
     notes = Column(Text, nullable=True)
     total_amount = Column(Numeric(10, 2), default=0.0, nullable=False)
     status = Column(String(20), default="pending", nullable=False) # pending, accepted, rejected
+    tracking_token = Column(String(64), nullable=True, index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
     items = relationship("CustomerOrderItem", back_populates="customer_order", cascade="all, delete-orphan")

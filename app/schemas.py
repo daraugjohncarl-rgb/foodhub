@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field, model_validator
-from typing import List, Optional, Any
+from pydantic import BaseModel, Field, model_validator, ConfigDict, field_validator
+from typing import List, Optional, Any, Literal
 from decimal import Decimal
 from datetime import datetime
 from app.models import UserRole, ReportCategory, ReportPriority, ReportStatus, PurchaseOrderStatus
@@ -580,4 +580,55 @@ class PurchaseOrderResponse(BaseModel):
                 obj["items"] = data.items
             return obj
         return data
+
+
+# ─────────────────────────────────────────────
+# Customer QR orders & Tables
+# ─────────────────────────────────────────────
+
+CUSTOMER_ORDER_MAX_QUANTITY = 50
+CUSTOMER_ORDER_MAX_ITEMS = 50
+
+class CustomerOrderItemIn(BaseModel):
+    product_id: int = Field(..., gt=0)
+    quantity: int = Field(..., gt=0, le=CUSTOMER_ORDER_MAX_QUANTITY)
+    variant: Optional[str] = Field(None, max_length=100)
+
+class CustomerOrderCreate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    tenant_id: int = Field(1, gt=0, description="Branch from the QR code; defaults to the main branch")
+    customer_name: str = Field(..., min_length=1, max_length=100)
+    order_type: Literal["Dine In", "Take Out"] = "Dine In"
+    table_number: Optional[str] = Field(None, max_length=50)
+    notes: Optional[str] = Field(None, max_length=500)
+    items: List[CustomerOrderItemIn] = Field(..., min_length=1, max_length=CUSTOMER_ORDER_MAX_ITEMS)
+
+    @field_validator("customer_name", "table_number", "notes", mode="before")
+    @classmethod
+    def _strip(cls, v):
+        if v is None:
+            return None
+        v = str(v).strip()
+        return v or None
+
+class CustomerOrderStatusUpdate(BaseModel):
+    status: Literal["accepted", "rejected", "completed"]
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _lower(cls, v):
+        return v.strip().lower() if isinstance(v, str) else v
+
+class TableCreate(BaseModel):
+    table_number: str = Field(..., min_length=1, max_length=50)
+
+    @field_validator("table_number", mode="before")
+    @classmethod
+    def _strip(cls, v):
+        return str(v).strip() if v is not None else v
+
+class TableUpdate(BaseModel):
+    status: Literal["active", "inactive"]
+
 

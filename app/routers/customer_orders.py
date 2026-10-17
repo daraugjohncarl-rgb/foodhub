@@ -1,196 +1,209 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-# pyrefly: ignore [missing-import]
-from sqlalchemy.orm import Session, joinedload
+import secrets
+from decimal import Decimal
 from typing import List, Optional
 from datetime import datetime
 
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from sqlalchemy.orm import Session, joinedload
+
 from app.db import get_db
 import app.models as models
-from app.core.dependencies import get_current_user
+import app.schemas as schemas
 
 router = APIRouter(prefix="/customer-orders", tags=["Customer Orders"])
 
+
+def _money(val) -> float:
+    return float(val or 0.0)
+
+
+def _items(order: models.CustomerOrder):
+    return [
+        {
+            "name": item.name,
+            "variant": item.variant,
+            "price": _money(item.price),
+            "quantity": item.quantity,
+            "product_id": getattr(item, "product_id", None)
+        } for item in (order.items or [])
+    ]
+
+
+def _staff_view(order: models.CustomerOrder) -> dict:
+    return {
+        "id": order.id,
+        "order_number": order.order_number,
+        "customer_name": order.customer_name,
+        "order_type": order.order_type,
+        "table_number": order.table_number,
+        "status": order.status,
+        "notes": order.notes,
+        "total_amount": _money(order.total_amount),
+        "created_at": order.created_at.isoformat() if order.created_at else None,
+        "items": _items(order),
+        "tracking_token": getattr(order, "tracking_token", None)
+    }
+
+
+def _public_view(order: models.CustomerOrder) -> dict:
+    return {
+        "order_number": order.order_number,
+        "status": order.status,
+        "order_type": order.order_type,
+        "table_number": order.table_number,
+        "total_amount": _money(order.total_amount),
+        "created_at": order.created_at.isoformat() if order.created_at else None,
+        "items": _items(order),
+        "tracking_token": getattr(order, "tracking_token", None)
+    }
+
+
 @router.post("", status_code=status.HTTP_201_CREATED, summary="Submit a customer order from the QR menu")
-def submit_customer_order(body: dict, db: Session = Depends(get_db)):
+def submit_customer_order(body: schemas.CustomerOrderCreate, db: Session = Depends(get_db)):
     """
-    Called by the customer QR menu to submit a new order.
+    Public endpoint used by the QR menu.
+    Validates tenant, table number, product status, and quantities via CustomerOrderCreate schema.
+    Calculates prices server-side, records order, and broadcasts real-time WebSocket events.
     """
-    order_number = body.get("order_number")
-    customer_name = body.get("customer_name")
-    order_type = body.get("order_type")
-    
-    table_number = body.get("table_number")
-    if table_number is not None:
-        table_number = str(table_number)
-        
-    tenant_id = int(body.get("tenant_id", 1))
-    
-    notes = body.get("notes")
-    if notes is not None:
-        notes = str(notes)
-        
-    items = body.get("items", [])
+    tenant = db.query(models.Tenant).filter(
+        models.Tenant.id == body.tenant_id,
+        models.Tenant.is_active.is_(True)
+    ).first()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This restaurant is not accepting orders.")
 
-    if not items:
-        raise HTTPException(status_code=400, detail="Missing order items in order")
+    if body.table_number:
+        tables = db.query(models.RestaurantTable).filter(models.RestaurantTable.tenant_id == tenant.id)
+        if tables.first() is not None:
+            raw_t = str(body.table_number).strip()
+            digits = "".join(filter(str.isdigit, raw_t))
+            match = tables.filter(
+                (models.RestaurantTable.table_number == raw_t) |
+                (models.RestaurantTable.table_number == digits)
+            ).first()
+            if match and match.status != "active":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This table is not taking orders right now. Please ask the staff for help.",
+                )
 
-    if not customer_name or not str(customer_name).strip():
-        if table_number and str(table_number).strip():
-            customer_name = f"Table {str(table_number).strip()} Guest"
-        else:
-            customer_name = "Guest Customer"
-    else:
-        customer_name = str(customer_name).strip()
-        
-    if not order_number:
-        import uuid
-        order_number = f"CUST-{uuid.uuid4().hex[:6].upper()}"
+    product_ids = {item.product_id for item in body.items}
+    products = {
+        p.id: p for p in db.query(models.Product).filter(
+            models.Product.id.in_(product_ids),
+            models.Product.tenant_id == tenant.id
+        )
+    }
 
-    total_amount = 0.0
-    valid_items = []
-    
-    for item in items:
-        prod_id = item.get("product_id")
-        qty = int(item.get("quantity", 1))
-
-        if not prod_id:
-            # Fallback: look up by product name
-            item_name = item.get("name")
-            if item_name:
-                found_prod = db.query(models.Product).filter(
-                    models.Product.name.ilike(str(item_name).strip()),
-                    models.Product.tenant_id == tenant_id
-                ).first()
-                if found_prod:
-                    prod_id = found_prod.id
-
-        if not prod_id:
-            raise HTTPException(status_code=400, detail="Missing product_id in order items")
-        if qty <= 0:
-            raise HTTPException(status_code=400, detail=f"Invalid quantity {qty} for product {prod_id}")
-            
-        product = db.query(models.Product).filter(models.Product.id == prod_id).first()
-        if not product:
-            raise HTTPException(status_code=404, detail=f"Product with ID {prod_id} not found")
+    total = Decimal("0")
+    order_items = []
+    for item in body.items:
+        product = products.get(item.product_id)
+        if product is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Product {item.product_id} is not on this menu.")
         if not product.is_active:
-            raise HTTPException(status_code=400, detail=f"Product {product.name} is currently unavailable")
-            
-        real_price = float(product.price)
-        total_amount += real_price * qty
-        
-        valid_items.append(models.CustomerOrderItem(
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{product.name} is currently unavailable.")
+        price = Decimal(str(product.price))
+        total += price * item.quantity
+        order_items.append(models.CustomerOrderItem(
             name=product.name,
-            variant=item.get("variant"),
-            price=real_price,
-            quantity=qty,
-            product_id=product.id
+            variant=item.variant,
+            price=price,
+            quantity=item.quantity,
+            product_id=product.id,
         ))
 
-    # Check if order_number already exists (should be unique)
-    existing = db.query(models.CustomerOrder).filter(models.CustomerOrder.order_number == order_number).first()
-    if existing:
-        return {"message": "Order already exists"}
-
-    import traceback
-    
-    try:
-        new_order = models.CustomerOrder(
-            order_number=order_number,
-            customer_name=customer_name,
-            order_type=order_type,
-            table_number=table_number,
-            tenant_id=tenant_id,
-            notes=notes,
-            total_amount=total_amount,
+    order = None
+    for _ in range(5):
+        order_num = f"CUST-{secrets.token_hex(4).upper()}"
+        tracking_tok = secrets.token_urlsafe(24)
+        order = models.CustomerOrder(
+            tenant_id=tenant.id,
+            order_number=order_num,
+            tracking_token=tracking_tok,
+            customer_name=body.customer_name,
+            order_type=body.order_type,
+            table_number=body.table_number,
+            notes=body.notes,
+            total_amount=round(float(total), 2),
             status="pending"
         )
-        db.add(new_order)
-        db.flush()
-
-        # Add items
-        for new_item in valid_items:
-            new_item.customer_order_id = new_order.id
-            db.add(new_item)
-        
-        db.commit()
-
-        # Real-time WebSocket event broadcast
+        order.items = list(order_items)
+        db.add(order)
         try:
-            from app.core.websocket import notify_realtime_event
-            notify_realtime_event(tenant_id, "CUSTOMER_ORDER_CREATED", {
-                "order_id": new_order.id,
-                "order_number": new_order.order_number,
-                "customer_name": new_order.customer_name,
-                "table_number": new_order.table_number,
-                "total_amount": float(new_order.total_amount)
-            })
-            notify_realtime_event(tenant_id, "ORDER_CREATED", {
-                "order_id": new_order.id,
-                "order_number": new_order.order_number
-            })
+            db.commit()
+            db.refresh(order)
+            break
         except Exception:
-            pass
-    except Exception as e:
-        db.rollback()
-        import sys
-        error_msg = f"Database error during customer order creation:\n{traceback.format_exc()}"
-        print(error_msg, file=sys.stderr, flush=True)
-        raise HTTPException(status_code=500, detail="An internal error occurred while processing your order. Please try again or contact staff.")
+            db.rollback()
+            order_items = [models.CustomerOrderItem(name=i.name, variant=i.variant, price=i.price,
+                                                    quantity=i.quantity, product_id=i.product_id) for i in order_items]
+    else:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Could not place the order. Please try again.")
 
-    return {"message": "Order placed successfully", "order_id": new_order.id, "order_number": new_order.order_number}
-
-
-@router.get("/pending", summary="Get all pending customer orders for the POS")
-def get_pending_orders(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """
-    Polled by the POS cashier dashboard to show incoming orders.
-    """
-    tenant_id = current_user.tenant_id or 1
-    orders = db.query(models.CustomerOrder).options(
-        joinedload(models.CustomerOrder.items)
-    ).filter(
-        models.CustomerOrder.status == "pending",
-        models.CustomerOrder.tenant_id == tenant_id
-    ).order_by(models.CustomerOrder.created_at.asc()).all()
-
-    result = []
-    for order in orders:
-        result.append({
-            "id": order.id,
+    # Real-time WebSocket event broadcast to POS Cashier, Kitchen KDS, and Admin
+    try:
+        from app.core.websocket import notify_realtime_event
+        notify_realtime_event(tenant.id, "ORDER_CREATED", {
+            "order_id": order.id,
             "order_number": order.order_number,
             "customer_name": order.customer_name,
             "order_type": order.order_type,
             "table_number": order.table_number,
-            "notes": order.notes,
-            "total_amount": float(order.total_amount),
-            "created_at": order.created_at.isoformat(),
-            "items": [
-                {
-                    "name": item.name,
-                    "variant": item.variant,
-                    "price": float(item.price),
-                    "quantity": item.quantity,
-                    "product_id": getattr(item, "product_id", None)
-                } for item in order.items
-            ]
+            "total_amount": float(order.total_amount)
         })
+        notify_realtime_event(tenant.id, "CUSTOMER_ORDER_CREATED", {
+            "order_id": order.id,
+            "order_number": order.order_number,
+            "customer_name": order.customer_name,
+            "order_type": order.order_type,
+            "table_number": order.table_number,
+            "total_amount": float(order.total_amount)
+        })
+    except Exception:
+        pass
 
-    return result
+    return {
+        "message": "Order placed successfully",
+        "order_id": order.id,
+        "order_number": order.order_number,
+        "tracking_token": order.tracking_token,
+        "total_amount": float(order.total_amount),
+    }
+
+
+@router.get("/pending", summary="Get all pending customer orders for the POS")
+def get_pending_orders(db: Session = Depends(get_db)):
+    """
+    Polled by the POS cashier dashboard or received via WebSockets to show incoming orders.
+    """
+    orders = db.query(models.CustomerOrder).options(
+        joinedload(models.CustomerOrder.items)
+    ).filter(
+        models.CustomerOrder.status.in_(["pending", "accepted"])
+    ).order_by(models.CustomerOrder.created_at.asc()).all()
+
+    return [_staff_view(order) for order in orders]
 
 
 @router.put("/{order_id}/status", summary="Update customer order status")
-def update_customer_order_status(order_id: int, body: dict, db: Session = Depends(get_db)):
+def update_customer_order_status(
+    order_id: int,
+    body: schemas.CustomerOrderStatusUpdate,
+    db: Session = Depends(get_db)
+):
     """
-    Used by the POS to accept or reject a customer order.
+    Used by the POS to accept, reject, or complete a customer order.
     """
-    new_status = body.get("status")
-    if new_status not in ["accepted", "rejected", "completed"]:
-        raise HTTPException(status_code=400, detail="Invalid status")
-
     order = db.query(models.CustomerOrder).filter(models.CustomerOrder.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
+    new_status = body.status
+    if new_status not in ["accepted", "rejected", "completed", "pending"]:
+        raise HTTPException(status_code=400, detail="Invalid status")
+
+    previous = order.status
     order.status = new_status
     db.commit()
 
@@ -200,7 +213,8 @@ def update_customer_order_status(order_id: int, body: dict, db: Session = Depend
         notify_realtime_event(order.tenant_id or 1, "ORDER_UPDATED", {
             "order_id": order.id,
             "order_number": order.order_number,
-            "status": new_status
+            "status": new_status,
+            "previous_status": previous
         })
     except Exception:
         pass
@@ -209,7 +223,11 @@ def update_customer_order_status(order_id: int, body: dict, db: Session = Depend
 
 
 @router.get("/history", summary="Get customer past orders by name or tenant")
-def get_customer_history(customer_name: Optional[str] = None, limit: int = 20, db: Session = Depends(get_db)):
+def get_customer_history(
+    customer_name: Optional[str] = None,
+    limit: int = 20,
+    db: Session = Depends(get_db)
+):
     """
     Returns recent customer orders filtered by customer name.
     """
@@ -220,86 +238,53 @@ def get_customer_history(customer_name: Optional[str] = None, limit: int = 20, d
         q = q.filter(models.CustomerOrder.customer_name.ilike(f"%{customer_name.strip()}%"))
 
     orders = q.order_by(models.CustomerOrder.created_at.desc()).limit(limit).all()
-
-    result = []
-    for order in orders:
-        result.append({
-            "id": order.id,
-            "order_number": order.order_number,
-            "customer_name": order.customer_name,
-            "order_type": order.order_type,
-            "table_number": order.table_number,
-            "status": order.status,
-            "notes": order.notes,
-            "total_amount": float(order.total_amount),
-            "created_at": order.created_at.isoformat() if order.created_at else None,
-            "items": [
-                {
-                    "name": item.name,
-                    "variant": item.variant,
-                    "price": float(item.price),
-                    "quantity": item.quantity,
-                    "product_id": getattr(item, "product_id", None)
-                } for item in order.items
-            ]
-        })
-    return result
+    return [_staff_view(order) for order in orders]
 
 
-@router.get("/track/{order_number}", summary="Track order status by order number")
-def track_customer_order(order_number: str, db: Session = Depends(get_db)):
+@router.get("/track/{token_or_number}", summary="Track order status by order number or tracking token")
+def track_customer_order(token_or_number: str, db: Session = Depends(get_db)):
     """
-    Allows customers to track the status of their order live.
+    Allows customers to track the status of their order live using either their tracking token or order number.
     """
+    val = token_or_number.strip()
     order = db.query(models.CustomerOrder).options(
         joinedload(models.CustomerOrder.items)
-    ).filter(models.CustomerOrder.order_number == order_number.strip().upper()).first()
+    ).filter(
+        (models.CustomerOrder.tracking_token == val) |
+        (models.CustomerOrder.order_number == val.upper())
+    ).first()
 
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    return {
-        "id": order.id,
-        "order_number": order.order_number,
-        "customer_name": order.customer_name,
-        "order_type": order.order_type,
-        "table_number": order.table_number,
-        "status": order.status,
-        "notes": order.notes,
-        "total_amount": float(order.total_amount),
-        "created_at": order.created_at.isoformat() if order.created_at else None,
-        "items": [
-            {
-                "name": item.name,
-                "variant": item.variant,
-                "price": float(item.price),
-                "quantity": item.quantity,
-                "product_id": getattr(item, "product_id", None)
-            } for item in order.items
-        ]
-    }
+    return _public_view(order)
 
 
 @router.get("/menu", summary="Get the public menu for a specific tenant")
 def get_public_menu(tenant_id: int = 1, db: Session = Depends(get_db)):
     """
-    Public endpoint to fetch active categories and their active products for a specific tenant.
+    Public endpoint: active categories and active products for the branch QR ordering.
     """
-    categories = db.query(models.Category).filter(models.Category.tenant_id == tenant_id).all()
-    
+    tenant = db.query(models.Tenant).filter(models.Tenant.id == tenant_id, models.Tenant.is_active.is_(True)).first()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Menu not found")
+
+    categories = db.query(models.Category).filter(models.Category.tenant_id == tenant_id).order_by(models.Category.id).all()
+    products = (
+        db.query(models.Product)
+        .filter(models.Product.tenant_id == tenant_id, models.Product.is_active.is_(True))
+        .order_by(models.Product.id)
+        .all()
+    )
+    by_category = {}
+    for p in products:
+        by_category.setdefault(p.category_id, []).append(p)
+
     result = []
     for cat in categories:
-        products = db.query(models.Product).filter(
-            models.Product.category_id == cat.id,
-            models.Product.is_active != False,
-            models.Product.is_active != 0,
-            models.Product.is_active.isnot(None),
-            models.Product.tenant_id == tenant_id
-        ).all()
-        
-        if not products:
+        items = by_category.get(cat.id)
+        if not items:
             continue
-            
         result.append({
             "id": cat.id,
             "name": cat.name,
@@ -312,8 +297,7 @@ def get_public_menu(tenant_id: int = 1, db: Session = Depends(get_db)):
                     "price": float(p.price),
                     "is_active": bool(p.is_active),
                     "image_url": getattr(p, "image_url", None)
-                } for p in products
+                } for p in items
             ]
         })
-        
     return result
