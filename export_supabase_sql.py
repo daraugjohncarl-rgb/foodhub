@@ -93,9 +93,12 @@ with engine.connect() as conn:
             r_dict = dict(r._mapping)
             vals = []
             for c in cols:
+                col_obj = table.columns[c]
                 v = r_dict.get(c)
                 if v is None:
                     vals.append('NULL')
+                elif isinstance(col_obj.type, models.Boolean) or c == 'is_active':
+                    vals.append('TRUE' if bool(v) else 'FALSE')
                 elif isinstance(v, bool):
                     vals.append('TRUE' if v else 'FALSE')
                 elif isinstance(v, (int, float)):
