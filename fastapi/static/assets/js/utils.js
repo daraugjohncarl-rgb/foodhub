@@ -14,7 +14,7 @@ const Utils = {
     const toast = document.createElement("div");
     toast.className = `toast toast-${type === 'danger' ? 'danger' : type === 'success' ? 'success' : 'info'}`;
     const icon = type === 'success' ? '✓' : type === 'danger' ? '⚠️' : 'ℹ';
-    toast.innerHTML = `<span>${esc(icon)}</span> <span>${esc(msg)}</span>`;
+    toast.innerHTML = `<span>${icon}</span> <span>${msg}</span>`;
     container.appendChild(toast);
 
     setTimeout(() => {
@@ -37,7 +37,7 @@ const Utils = {
     const content = document.getElementById("modal-content");
     content.innerHTML = `
       <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; padding:18px 24px; border-bottom:1px solid rgba(205,190,150,0.25);">
-        <h3 style="font-size:16px; font-weight:700; color:var(--text-main, #18181b);">${esc(title)}</h3>
+        <h3 style="font-size:16px; font-weight:700; color:var(--text-main, #18181b);">${title}</h3>
         <button type="button" class="btn-icon" onclick="Utils.closeModal()" style="border:none; background:transparent; cursor:pointer; font-size:16px; color:var(--text-muted);"><i class="fas fa-times"></i></button>
       </div>
       <div class="modal-body" style="padding:22px 24px;">${bodyHTML}</div>
@@ -59,7 +59,7 @@ const Utils = {
   confirmAction(title, msg, onConfirm) {
     this.openModal(
       title,
-      `<p style="margin: 0.5rem 0; color: var(--text-main); font-size: 0.95rem;">${esc(msg)}</p>`,
+      `<p style="margin: 0.5rem 0; color: var(--text-main); font-size: 0.95rem;">${msg}</p>`,
       `
         <button class="btn btn-outline" onclick="Utils.closeModal()">Cancel</button>
         <button class="btn btn-danger" id="confirm-btn-action">Confirm</button>
@@ -71,22 +71,19 @@ const Utils = {
     };
   },
 
-  /** Human-readable message from a FastAPI error body ({detail: "..."} or a 422 validation list). */
-  errorMessage(body, fallback = "Request failed.") {
-    if (!body) return fallback;
-    if (typeof body.detail === "string") return body.detail;
-    if (Array.isArray(body.detail) && body.detail.length) {
-      return body.detail.map(d => {
-        const field = Array.isArray(d.loc) ? d.loc.filter(p => p !== "body").join(".") : "";
-        return field ? `${field}: ${d.msg}` : d.msg;
-      }).join("; ");
-    }
-    return fallback;
-  },
-
   formatCurrency(amount) {
     const num = Number(amount) || 0;
     return "₱" + num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  },
+
+  formatId(prefix, id, digits = 4) {
+    if (!id && id !== 0) return '—';
+    if (typeof id === 'string' && id.includes('-') && !/^[0-9a-f]{8}-/i.test(id)) {
+      return id;
+    }
+    const num = parseInt(id, 10);
+    if (isNaN(num)) return `${prefix}-${id}`;
+    return `${prefix}-${String(num).padStart(digits, '0')}`;
   },
 
   exportCSV(filename, rows) {
@@ -111,17 +108,20 @@ generateReceiptHTML(order) {
     const itemsHtml = (order.items || []).map(it => `
       <div class="receipt-item">
         <span style="flex:1; padding-right:10px; word-break: break-word;">
-            ${esc(it.name)}<br>
-            <small>${esc(it.quantity || 1)} x ₱${esc(Number(it.unit_price || it.price).toFixed(2))}</small>
+            ${it.name}<br>
+            <small>${it.quantity || 1} x ₱${Number(it.unit_price || it.price).toFixed(2)}</small>
         </span>
-        <span style="white-space:nowrap;">₱${esc((Number(it.unit_price || it.price) * (it.quantity || 1)).toFixed(2))}</span>
+        <span style="white-space:nowrap;">₱${(Number(it.unit_price || it.price) * (it.quantity || 1)).toFixed(2)}</span>
       </div>
     `).join("");
 
     const dateStr = order.date ? new Date(order.date).toLocaleString() : new Date().toLocaleString();
     const cashierName = order.cashier || "Cashier";
-    const receiptNo = order.receiptNumber || "N/A";
-    const subtotal = Number(order.total_amount || order.net_amount || 0); // Assuming no discount/tax currently handled
+    let receiptNo = order.receiptNumber || "N/A";
+    if (order.id && (!receiptNo || receiptNo === "N/A" || receiptNo.length > 20)) {
+      receiptNo = Utils.formatId('TXN', order.id);
+    }
+    const subtotal = Number(order.total_amount || order.net_amount || 0);
     const discount = Number(order.discount_amount || 0);
     const total = subtotal - discount; // Adjust if subtotal already implies net
 
@@ -133,9 +133,9 @@ generateReceiptHTML(order) {
             <p style="margin:2px 0;">Bago City, Negros Occidental</p>
           </div>
           <div class="receipt-divider"></div>
-          <p style="margin:2px 0;">Receipt No: ${esc(receiptNo)}</p>
-          <p style="margin:2px 0;">Date: ${esc(dateStr)}</p>
-          <p style="margin:2px 0;">Cashier: ${esc(cashierName)}</p>
+          <p style="margin:2px 0;">Receipt No: ${receiptNo}</p>
+          <p style="margin:2px 0;">Date: ${dateStr}</p>
+          <p style="margin:2px 0;">Cashier: ${cashierName}</p>
           <div class="receipt-divider"></div>
           <div style="font-size:0.85rem;">
             ${itemsHtml}
@@ -143,28 +143,28 @@ generateReceiptHTML(order) {
           <div class="receipt-divider"></div>
           <div class="receipt-totals">
             <span>Subtotal:</span>
-            <span>₱${esc(subtotal.toFixed(2))}</span>
+            <span>₱${subtotal.toFixed(2)}</span>
           </div>
           <div class="receipt-totals">
             <span>Discount:</span>
-            <span>₱${esc(discount.toFixed(2))}</span>
+            <span>₱${discount.toFixed(2)}</span>
           </div>
           <div class="receipt-totals bold">
             <span>TOTAL:</span>
-            <span>₱${esc(total.toFixed(2))}</span>
+            <span>₱${total.toFixed(2)}</span>
           </div>
           <br>
           <div class="receipt-totals">
-            <span>Payment (${esc(order.payment_method || 'Cash')}):</span>
+            <span>Payment (${order.payment_method || 'Cash'}):</span>
             <span></span>
           </div>
           <div class="receipt-totals">
             <span>Amount Received:</span>
-            <span>₱${esc(Number(order.amount_paid || order.total_amount || 0).toFixed(2))}</span>
+            <span>₱${Number(order.amount_paid || order.total_amount || 0).toFixed(2)}</span>
           </div>
           <div class="receipt-totals">
             <span>Change:</span>
-            <span>₱${esc(Math.max(0, Number(order.amount_paid || order.total_amount || 0) - total).toFixed(2))}</span>
+            <span>₱${Math.max(0, Number(order.amount_paid || order.total_amount || 0) - total).toFixed(2)}</span>
           </div>
           <div class="receipt-divider"></div>
           <div class="receipt-header" style="margin-top:16px;">
@@ -196,7 +196,14 @@ generateReceiptHTML(order) {
     // Store for print button
     window.currentReceiptOrder = order;
 
+    const cancelBtn = order.id ? `
+      <button class="btn btn-outline" onclick="Utils.closeModal(); if (typeof promptRejectOrder === 'function') promptRejectOrder(${order.id});" style="border-color:#ef4444; color:#ef4444; font-size:12px; font-weight:700;" title="Cancel & Reject Order">
+        <i class="fas fa-ban"></i> Cancel / Reject Order
+      </button>
+    ` : '';
+
     const footer = `
+      ${cancelBtn}
       <button class="btn btn-outline" onclick="Utils.closeModal()">Close</button>
       <button class="btn btn-primary" onclick="Utils.printReceipt(window.currentReceiptOrder)"><i class="fas fa-print"></i> Print Receipt</button>
     `;
@@ -224,59 +231,73 @@ generateReceiptHTML(order) {
     const sidebarToggle = document.getElementById("sidebarToggle");
     const mobileMenuBtn = document.getElementById("mobileMenuBtn");
     const sidebarOverlay = document.getElementById("sidebarOverlay");
-    const mainContent = document.querySelector(".main-content");
+    const mainContent = document.querySelector(".main-content") || document.getElementById("mainContent");
 
     if (!sidebar) return;
 
+    const isMobile = () => window.innerWidth <= 768;
+    const updateIcon = (collapsed) => {
+      if (!sidebarToggle) return;
+      sidebarToggle.innerHTML = '<i class="fas fa-bars"></i>';
+      sidebarToggle.setAttribute('title', collapsed ? 'Expand Sidebar' : 'Collapse Sidebar');
+    };
+
     // Apply saved state on load (desktop only)
-    const isMobile = window.innerWidth <= 768;
     const savedCollapsed = localStorage.getItem('sidebar_collapsed') === 'true';
-    
-    if (!isMobile && savedCollapsed) {
+    if (!isMobile() && savedCollapsed) {
       sidebar.classList.add('collapsed');
+      document.body.classList.add('sidebar-collapsed');
       if (mainContent) mainContent.classList.add('sidebar-collapsed');
-      if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-bars"></i>';
-    } else if (!isMobile) {
-      if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-times"></i>';
+      updateIcon(true);
+    } else {
+      sidebar.classList.remove('collapsed');
+      document.body.classList.remove('sidebar-collapsed');
+      if (mainContent) mainContent.classList.remove('sidebar-collapsed');
+      updateIcon(false);
     }
 
-    if (sidebarToggle) {
-      sidebarToggle.addEventListener("click", () => {
-        if (window.innerWidth <= 768) {
-          // Mobile: Toggle off-canvas
+    // Bind sidebarToggle with guard against duplicate handlers
+    if (sidebarToggle && !sidebarToggle.dataset.bound) {
+      sidebarToggle.dataset.bound = "true";
+      sidebarToggle.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (isMobile()) {
           sidebar.classList.remove('open');
           if (sidebarOverlay) sidebarOverlay.classList.remove('open');
         } else {
-          // Desktop: Collapse/Expand
           const isCollapsed = sidebar.classList.toggle('collapsed');
-          if (mainContent) mainContent.classList.toggle('sidebar-collapsed');
-          
-          if (isCollapsed) {
-            sidebarToggle.innerHTML = '<i class="fas fa-bars"></i>';
-          } else {
-            sidebarToggle.innerHTML = '<i class="fas fa-times"></i>';
-          }
-          
-          localStorage.setItem('sidebar_collapsed', isCollapsed);
+          document.body.classList.toggle('sidebar-collapsed', isCollapsed);
+          if (mainContent) mainContent.classList.toggle('sidebar-collapsed', isCollapsed);
+          updateIcon(isCollapsed);
+          localStorage.setItem('sidebar_collapsed', isCollapsed ? 'true' : 'false');
         }
       });
     }
 
-    if (mobileMenuBtn && sidebarOverlay) {
-      mobileMenuBtn.addEventListener("click", () => {
+    // Bind mobile menu button
+    if (mobileMenuBtn && !mobileMenuBtn.dataset.bound) {
+      mobileMenuBtn.dataset.bound = "true";
+      mobileMenuBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         sidebar.classList.add("open");
-        sidebarOverlay.classList.add("open");
+        if (sidebarOverlay) sidebarOverlay.classList.add("open");
       });
+    }
 
+    // Overlay click to close
+    if (sidebarOverlay && !sidebarOverlay.dataset.bound) {
+      sidebarOverlay.dataset.bound = "true";
       sidebarOverlay.addEventListener("click", () => {
         sidebar.classList.remove("open");
         sidebarOverlay.classList.remove("open");
       });
     }
 
-    // Optional: Window resize handling to prevent stuck states
     window.addEventListener("resize", () => {
-      if (window.innerWidth > 768) {
+      if (!isMobile()) {
         sidebar.classList.remove("open");
         if (sidebarOverlay) sidebarOverlay.classList.remove("open");
       }

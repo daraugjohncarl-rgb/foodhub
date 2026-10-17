@@ -52,9 +52,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         notifList.innerHTML = notifications.map(n => `
-            <div class="notif-item ${esc(n.unread ? 'unread' : '')}">
-                <div>${esc(n.text)}</div>
-                <div class="notif-time">${esc(n.time)}</div>
+            <div class="notif-item ${n.unread ? 'unread' : ''}">
+                <div>${n.text}</div>
+                <div class="notif-time">${n.time}</div>
             </div>
         `).join('');
     }

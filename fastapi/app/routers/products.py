@@ -1,25 +1,30 @@
 """
-Products & Categories Router
-============================
-Reads are open to every staff role of the branch (the POS needs them); writes require ADMIN or SUPER_ADMIN.
-tenant_id is always derived from the caller (SUPER_ADMIN may pass ?tenant_id=) — never from the request body.
+Products & Categories Router — Admin Module
+============================================
+All endpoints require ADMIN or SUPER_ADMIN role.
+tenant_id is always auto-scoped from the JWT — never accepted from the client body.
 """
-from typing import List, Optional
-
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.exc import IntegrityError
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.exc import IntegrityError
+from typing import List, Optional
+from decimal import Decimal
+import os
+import uuid
+import shutil
 
 from app.db import get_db
 import app.models as models
 import app.schemas as schemas
-from app.core import audit
-from app.core.dependencies import get_admin_tenant_id, get_tenant_scope, require_permission, resolve_tenant_id
+from app.core.dependencies import (
+    require_admin,
+    get_admin_tenant_id,
+    require_manager_or_admin,
+    get_manager_or_admin_tenant_id,
+    get_current_user
+)
 
-router = APIRouter(tags=["Admin — Products & Categories"])
-
-can_read_catalog = require_permission("catalog.read")
-can_write_catalog = require_permission("catalog.write")
+router = APIRouter(tags=["Admin & Manager — Products & Categories"])
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -33,10 +38,12 @@ can_write_catalog = require_permission("catalog.write")
 )
 def list_categories(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(can_read_catalog),
-    tenant_id: int = Depends(get_tenant_scope),
+    current_user: models.User = Depends(get_current_user),
 ):
-    return db.query(models.Category).filter(models.Category.tenant_id == tenant_id).order_by(models.Category.name).all()
+    q = db.query(models.Category)
+    if current_user.tenant_id:
+        q = q.filter(models.Category.tenant_id == current_user.tenant_id)
+    return q.order_by(models.Category.name).all()
 
 
 @router.post(
@@ -48,8 +55,8 @@ def list_categories(
 def create_category(
     body: schemas.CategoryCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(can_write_catalog),
-    tenant_id: int = Depends(get_admin_tenant_id),
+    current_user: models.User = Depends(require_manager_or_admin),
+    tenant_id: int = Depends(get_manager_or_admin_tenant_id),
 ):
     category = models.Category(
         tenant_id=tenant_id,
@@ -79,19 +86,19 @@ def create_category(
     summary="List products for the calling user's tenant"
 )
 def list_products(
-    search: Optional[str] = Query(None, max_length=100, description="Partial match on product name or SKU"),
+    search: Optional[str] = Query(None, description="Partial match on product name or SKU"),
     category_id: Optional[int] = Query(None, description="Filter by category"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
-    limit: int = Query(200, ge=1, le=500),
+    limit: int = Query(200, le=500),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(can_read_catalog),
-    tenant_id: int = Depends(get_tenant_scope),
+    current_user: models.User = Depends(get_current_user),
 ):
     q = (
         db.query(models.Product)
         .options(joinedload(models.Product.category))
-        .filter(models.Product.tenant_id == tenant_id)
     )
+    if current_user.tenant_id:
+        q = q.filter(models.Product.tenant_id == current_user.tenant_id)
     if search:
         term = f"%{search.strip()}%"
         q = q.filter(
@@ -104,40 +111,6 @@ def list_products(
     return q.order_by(models.Product.name).limit(limit).all()
 
 
-def _check_category(db: Session, tenant_id: int, category_id: Optional[int]) -> None:
-    if category_id is None:
-        return
-    cat = db.query(models.Category.id).filter(
-        models.Category.id == category_id,
-        models.Category.tenant_id == tenant_id
-    ).first()
-    if not cat:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Category {category_id} not found in your tenant."
-        )
-
-
-def _duplicate_detail(db: Session, tenant_id: int, name: Optional[str], sku: Optional[str], exclude_id=None) -> Optional[str]:
-    q = db.query(models.Product).filter(models.Product.tenant_id == tenant_id)
-    if exclude_id is not None:
-        q = q.filter(models.Product.id != exclude_id)
-    if name and q.filter(models.Product.name == name).first():
-        return f"A product named '{name}' already exists in your tenant."
-    if sku and q.filter(models.Product.sku == sku).first():
-        return f"A product with SKU '{sku}' already exists in your tenant."
-    return None
-
-
-def _load_product(db: Session, product_id: int) -> models.Product:
-    return (
-        db.query(models.Product)
-        .options(joinedload(models.Product.category))
-        .filter(models.Product.id == product_id)
-        .first()
-    )
-
-
 @router.post(
     "/products",
     response_model=schemas.AdminProductResponse,
@@ -147,35 +120,51 @@ def _load_product(db: Session, product_id: int) -> models.Product:
 def create_product(
     body: schemas.AdminProductCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(can_write_catalog),
-    tenant_id: int = Depends(get_admin_tenant_id),
+    current_user: models.User = Depends(require_manager_or_admin),
+    tenant_id: int = Depends(get_manager_or_admin_tenant_id),
 ):
-    _check_category(db, tenant_id, body.category_id)
-    name, sku = body.name.strip(), body.sku.strip()
-    duplicate = _duplicate_detail(db, tenant_id, name, sku)
-    if duplicate:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=duplicate)
+    # Verify the category (if provided) belongs to the same tenant
+    if body.category_id is not None:
+        cat = db.query(models.Category).filter(
+            models.Category.id == body.category_id,
+            models.Category.tenant_id == tenant_id
+        ).first()
+        if not cat:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Category {body.category_id} not found in your tenant."
+            )
 
     product = models.Product(
         tenant_id=tenant_id,
         category_id=body.category_id,
-        name=name,
-        sku=sku,
+        name=body.name.strip(),
+        sku=body.sku.strip(),
         barcode=body.barcode,
         price=body.price,
-        cost=body.cost,
+        cost=body.cost if body.cost is not None else Decimal("0.0"),
         is_active=body.is_active if body.is_active is not None else True,
         image_url=body.image_url,
     )
     db.add(product)
-    audit.record(db, current_user, "Product Created", tenant_id=tenant_id, details=f"{name} ({sku})")
     try:
         db.commit()
+        db.refresh(product)
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail="A product with this name or SKU already exists in your tenant.")
-    return _load_product(db, product.id)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A product with this name or SKU already exists in your tenant."
+        )
+
+    # Re-query with relationship loaded for response serialisation
+    product = (
+        db.query(models.Product)
+        .options(joinedload(models.Product.category))
+        .filter(models.Product.id == product.id)
+        .first()
+    )
+    return product
 
 
 @router.put(
@@ -187,8 +176,8 @@ def update_product(
     product_id: int,
     body: schemas.AdminProductUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(can_write_catalog),
-    tenant_id: int = Depends(get_admin_tenant_id),
+    current_user: models.User = Depends(require_manager_or_admin),
+    tenant_id: int = Depends(get_manager_or_admin_tenant_id),
 ):
     product = db.query(models.Product).filter(
         models.Product.id == product_id,
@@ -197,39 +186,50 @@ def update_product(
     if not product:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found.")
 
-    changes = body.model_dump(exclude_unset=True)
-    _check_category(db, tenant_id, changes.get("category_id"))
-    if "name" in changes:
-        changes["name"] = changes["name"].strip()
-    if "sku" in changes:
-        changes["sku"] = changes["sku"].strip()
-    duplicate = _duplicate_detail(db, tenant_id, changes.get("name"), changes.get("sku"), exclude_id=product.id)
-    if duplicate:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=duplicate)
+    # Verify new category belongs to same tenant
+    if body.category_id is not None:
+        cat = db.query(models.Category).filter(
+            models.Category.id == body.category_id,
+            models.Category.tenant_id == tenant_id
+        ).first()
+        if not cat:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Category {body.category_id} not found in your tenant."
+            )
 
-    for field, value in changes.items():
+    # Apply only provided fields
+    for field, value in body.model_dump(exclude_unset=True).items():
         setattr(product, field, value)
-    audit.record(db, current_user, "Product Updated", tenant_id=tenant_id,
-                 details=f"{product.name}: {', '.join(sorted(changes)) or 'no changes'}")
+
     try:
         db.commit()
+        db.refresh(product)
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail="A product with this name or SKU already exists.")
-    return _load_product(db, product.id)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A product with this name or SKU already exists."
+        )
+
+    product = (
+        db.query(models.Product)
+        .options(joinedload(models.Product.category))
+        .filter(models.Product.id == product.id)
+        .first()
+    )
+    return product
 
 
 @router.delete(
     "/products/{product_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Soft-delete a product (sets is_active = False)"
+    summary="Delete or deactivate a product"
 )
-def deactivate_product(
+def delete_product(
     product_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(can_write_catalog),
-    tenant_id: int = Depends(get_admin_tenant_id),
+    current_user: models.User = Depends(require_manager_or_admin),
+    tenant_id: int = Depends(get_manager_or_admin_tenant_id),
 ):
     product = db.query(models.Product).filter(
         models.Product.id == product_id,
@@ -237,78 +237,62 @@ def deactivate_product(
     ).first()
     if not product:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found.")
-    product.is_active = False
-    audit.record(db, current_user, "Product Deactivated", tenant_id=tenant_id, details=product.name)
-    db.commit()
+
+    # Check if this product has existing sales transactions
+    has_orders = db.query(models.TransactionItem).filter(models.TransactionItem.product_id == product_id).first()
+    if has_orders:
+        product.is_active = False
+        db.commit()
+        return {"status": "archived", "message": f"Product '{product.name}' has transaction records and has been deactivated/archived."}
+    else:
+        db.delete(product)
+        db.commit()
+        return {"status": "deleted", "message": f"Product '{product.name}' has been deleted permanently."}
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# RECIPES (M4): ingredients deducted from inventory for each unit sold
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _recipe_payload(db: Session, product: models.Product):
-    rows = (
-        db.query(models.ProductRecipe, models.InventoryItem)
-        .join(models.InventoryItem, models.InventoryItem.id == models.ProductRecipe.inventory_item_id)
-        .filter(models.ProductRecipe.product_id == product.id)
-        .order_by(models.InventoryItem.name)
-        .all()
-    )
-    return [
-        schemas.RecipeLineResponse(
-            inventory_item_id=item.id, inventory_item_name=item.name, unit=item.unit, quantity=line.quantity,
-        )
-        for line, item in rows
-    ]
-
-
-@router.get("/products/{product_id}/recipe", response_model=List[schemas.RecipeLineResponse])
-def get_recipe(
-    product_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(can_read_catalog),
-    tenant_id: int = Depends(get_tenant_scope),
+@router.post(
+    "/products/upload-image",
+    summary="Upload a menu product image"
+)
+def upload_product_image(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(require_manager_or_admin),
 ):
-    product = db.query(models.Product).filter(models.Product.id == product_id, models.Product.tenant_id == tenant_id).first()
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found.")
-    return _recipe_payload(db, product)
+    """
+    Upload a picture for a menu product.
+    Saves to /static/images/products and returns the static image URL.
+    """
+    ext = os.path.splitext(file.filename)[1].lower() if file.filename else ".jpg"
+    if ext not in [".jpg", ".jpeg", ".png", ".webp", ".gif"]:
+        raise HTTPException(status_code=400, detail="Only image files (.jpg, .jpeg, .png, .webp, .gif) are allowed.")
+
+    unique_name = f"prod_{uuid.uuid4().hex[:12]}{ext}"
+
+    # Target static directories to persist uploaded menu pictures
+    # Resolves to c:\pos\fastapi\static\images\products and c:\pos\static\images\products
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    fastapi_static = os.path.join(os.path.dirname(os.path.dirname(current_dir)), "static", "images", "products")
+    root_static = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(current_dir))), "static", "images", "products")
+
+    dirs_to_save = [fastapi_static, root_static]
+    primary_file = None
+
+    for target_dir in dirs_to_save:
+        try:
+            os.makedirs(target_dir, exist_ok=True)
+            dest_path = os.path.join(target_dir, unique_name)
+            if primary_file is None:
+                with open(dest_path, "wb") as buffer:
+                    shutil.copyfileobj(file.file, buffer)
+                primary_file = dest_path
+            else:
+                try:
+                    shutil.copyfile(primary_file, dest_path)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    return {"image_url": f"/static/images/products/{unique_name}"}
 
 
-@router.put("/products/{product_id}/recipe", response_model=List[schemas.RecipeLineResponse])
-def set_recipe(
-    product_id: int,
-    body: schemas.RecipeSet,
-    tenant_id: Optional[int] = Query(None, description="SUPER_ADMIN only: branch"),
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_permission("recipes.write")),
-):
-    scope_tenant = resolve_tenant_id(db, current_user, tenant_id)
-    product = db.query(models.Product).filter(
-        models.Product.id == product_id, models.Product.tenant_id == scope_tenant
-    ).first()
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found.")
-
-    item_ids = [line.inventory_item_id for line in body.lines]
-    if len(item_ids) != len(set(item_ids)):
-        raise HTTPException(status_code=422, detail="Each inventory item may appear only once in a recipe.")
-    if item_ids:
-        found = {
-            i.id for i in db.query(models.InventoryItem).filter(
-                models.InventoryItem.tenant_id == scope_tenant,
-                models.InventoryItem.id.in_(item_ids),
-                models.InventoryItem.is_active.is_(True),
-            )
-        }
-        missing = [i for i in item_ids if i not in found]
-        if missing:
-            raise HTTPException(status_code=404, detail=f"Inventory item(s) not found in this branch: {missing}")
-
-    db.query(models.ProductRecipe).filter(models.ProductRecipe.product_id == product.id).delete(synchronize_session=False)
-    for line in body.lines:
-        db.add(models.ProductRecipe(product_id=product.id, inventory_item_id=line.inventory_item_id, quantity=line.quantity))
-    audit.record(db, current_user, "Recipe Updated", tenant_id=scope_tenant,
-                 details=f"{product.name}: {len(body.lines)} ingredient line(s)")
-    db.commit()
-    return _recipe_payload(db, product)

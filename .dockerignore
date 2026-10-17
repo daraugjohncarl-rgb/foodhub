@@ -15,13 +15,3 @@ env
 .idea
 .vscode
 *.log
-
-# Never ship database dumps, backups or local secrets in the image
-backups/
-*.dump
-inbox_pos.sql
-.env.*
-!**/.env.example
-.pytest_cache
-.venv
-fastapi/.venv

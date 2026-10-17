@@ -1,315 +1,308 @@
 """
 Transactions & POS Router
 =========================
-POS checkout, payment processing, and transaction retrieval.
-
-A sale is created in ONE database transaction: the sale row, its items, payments, recipe-based stock deductions,
-the link to a customer QR order, and the audit entry are committed together or not at all (C7). Prices, tax and
-totals are computed here; the client only sends product ids, quantities and how it paid.
+Handles POS transaction checkout, payment processing, and transaction retrieval.
 """
-from collections import OrderedDict
-from decimal import Decimal, ROUND_HALF_UP
-from typing import Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy.exc import IntegrityError
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
+from typing import List, Optional
+from decimal import Decimal
+import uuid
 
 from app.db import get_db
 import app.models as models
 import app.schemas as schemas
-from app.core import audit, config
-from app.core.dependencies import require_permission, resolve_tenant_id
-from app.core.permissions import has_permission
-from app.core.timeutils import isoformat_utc
-from app.services import stock
+from app.core.dependencies import get_current_user
 
 router = APIRouter(prefix="/transactions", tags=["POS — Transactions"])
 
-CENT = Decimal("0.01")
-TAX_RATE = Decimal(config.TAX_RATE)
-
-
-def money(value) -> Optional[str]:
-    """Exact decimal string ('125.50') for JSON; never a float."""
-    if value is None:
-        return None
-    return str(Decimal(value).quantize(CENT, rounding=ROUND_HALF_UP))
-
-
-def serialize_transaction(tx: models.Transaction) -> dict:
-    return {
-        "id": tx.id,
-        "client_tx_id": tx.client_tx_id,
-        "tenant_id": tx.tenant_id,
-        "shift_id": tx.shift_id,
-        "user_id": tx.user_id,
-        "cashier": tx.user.username if tx.user else "Staff",
-        "total_amount": money(tx.total_amount),
-        "tax_amount": money(tx.tax_amount),
-        "discount_amount": money(tx.discount_amount),
-        "net_amount": money(tx.net_amount),
-        "amount_tendered": money(tx.amount_tendered),
-        "change_amount": money(tx.change_amount),
-        "status": tx.status,
-        "fulfillment_status": tx.fulfillment_status,
-        "order_type": tx.order_type,
-        "table_number": tx.table_number,
-        "customer_order_id": tx.customer_order_id,
-        "created_at": isoformat_utc(tx.created_at),
-        "items": [
-            {
-                "id": it.id,
-                "product_id": it.product_id,
-                "name": it.product.name if it.product else f"Item #{it.product_id}",
-                "quantity": it.quantity,
-                "unit_price": money(it.unit_price),
-                "total_price": money(it.total_price),
-            }
-            for it in tx.items
-        ],
-        "payments": [
-            {"id": p.id, "payment_method": p.payment_method, "amount": money(p.amount), "status": p.status}
-            for p in tx.payments
-        ],
-    }
-
-
-def _load_transaction(db: Session, tx_id: int) -> models.Transaction:
-    return (
-        db.query(models.Transaction)
-        .options(
-            joinedload(models.Transaction.items).joinedload(models.TransactionItem.product),
-            joinedload(models.Transaction.payments),
-            joinedload(models.Transaction.user),
-        )
-        .filter(models.Transaction.id == tx_id)
-        .first()
-    )
-
-
 @router.get("", summary="List transactions for the user's tenant")
 def list_transactions(
-    response: Response,
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
-    tenant_id: Optional[int] = Query(None, description="SUPER_ADMIN only: branch to view"),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_permission("sales.read_own")),
+    current_user: models.User = Depends(get_current_user),
 ):
-    """
-    Managers and admins see every sale of their branch; cashiers see only their own sales.
-    The total number of matching sales is returned in the X-Total-Count header.
-    """
-    scope_tenant = resolve_tenant_id(db, current_user, tenant_id)
-    q = db.query(models.Transaction).filter(models.Transaction.tenant_id == scope_tenant)
-    if not has_permission(current_user.role, "sales.read_all"):
-        q = q.filter(models.Transaction.user_id == current_user.id)
-
-    response.headers["X-Total-Count"] = str(q.count())
-    ids = [row.id for row in q.with_entities(models.Transaction.id)
-           .order_by(models.Transaction.created_at.desc(), models.Transaction.id.desc())
-           .offset(offset).limit(limit)]
-    if not ids:
-        return []
-    rows = (
-        db.query(models.Transaction)
-        .options(
-            joinedload(models.Transaction.items).joinedload(models.TransactionItem.product),
-            joinedload(models.Transaction.payments),
-            joinedload(models.Transaction.user),
-        )
-        .filter(models.Transaction.id.in_(ids))
-        .all()
+    q = db.query(models.Transaction).options(
+        joinedload(models.Transaction.items).joinedload(models.TransactionItem.product),
+        joinedload(models.Transaction.payments),
+        joinedload(models.Transaction.user)
     )
-    by_id = {tx.id: tx for tx in rows}
-    return [serialize_transaction(by_id[i]) for i in ids]
-
-
-def _same_sale(existing: models.Transaction, lines: "OrderedDict[int, int]") -> bool:
-    existing_lines = sorted((it.product_id, it.quantity) for it in existing.items)
-    return existing_lines == sorted(lines.items())
-
-
-def _replay(db: Session, existing: models.Transaction, lines, response: Response) -> dict:
-    if not _same_sale(existing, lines):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="client_tx_id was already used for a different sale.",
-        )
-    response.status_code = status.HTTP_200_OK
-    payload = serialize_transaction(_load_transaction(db, existing.id))
-    payload["message"] = "Transaction already recorded (idempotent retry)."
-    payload["replayed"] = True
-    return payload
+    if current_user.tenant_id:
+        q = q.filter(models.Transaction.tenant_id == current_user.tenant_id)
+    
+    transactions = q.order_by(models.Transaction.created_at.desc()).offset(offset).limit(limit).all()
+    
+    result = []
+    for tx in transactions:
+        result.append({
+            "id": tx.id,
+            "client_tx_id": tx.client_tx_id,
+            "tenant_id": tx.tenant_id,
+            "shift_id": tx.shift_id,
+            "user_id": tx.user_id,
+            "cashier": tx.user.username if tx.user else "Staff",
+            "total_amount": float(tx.total_amount),
+            "tax_amount": float(tx.tax_amount),
+            "discount_amount": float(tx.discount_amount),
+            "net_amount": float(tx.net_amount),
+            "status": tx.status,
+            "created_at": tx.created_at.isoformat() if tx.created_at else None,
+            "items": [
+                {
+                    "id": it.id,
+                    "product_id": it.product_id,
+                    "name": it.product.name if it.product else f"Item #{it.product_id}",
+                    "quantity": it.quantity,
+                    "unit_price": float(it.unit_price),
+                    "total_price": float(it.total_price)
+                }
+                for it in tx.items
+            ],
+            "payments": [
+                {
+                    "id": p.id,
+                    "payment_method": p.payment_method,
+                    "amount": float(p.amount),
+                    "status": p.status
+                }
+                for p in tx.payments
+            ]
+        })
+    return result
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, summary="Create a new POS transaction")
 def create_transaction(
-    body: schemas.SaleCreate,
-    response: Response,
+    body: dict,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_permission("sales.create")),
+    current_user: models.User = Depends(get_current_user),
 ):
-    tenant_id = resolve_tenant_id(db, current_user, None)
+    tenant_id = current_user.tenant_id
+    if not tenant_id:
+        # Fallback to first available tenant or 1
+        first_tenant = db.query(models.Tenant).first()
+        tenant_id = first_tenant.id if first_tenant else 1
 
-    # Merge duplicate product lines (the same product scanned twice is one line).
-    lines: "OrderedDict[int, int]" = OrderedDict()
-    for item in body.items:
-        lines[item.product_id] = lines.get(item.product_id, 0) + item.quantity
-    if any(qty > config.POS_MAX_LINE_QUANTITY for qty in lines.values()):
-        raise HTTPException(status_code=422, detail=f"Quantity per product is limited to {config.POS_MAX_LINE_QUANTITY}.")
+    # Ensure an active shift exists for user or tenant
+    active_shift = db.query(models.Shift).filter(
+        models.Shift.tenant_id == tenant_id,
+        models.Shift.user_id == current_user.id,
+        models.Shift.status == "open"
+    ).first()
 
-    # Idempotent offline retries (C8): same tenant + client_tx_id returns the original sale.
-    if body.client_tx_id:
-        existing = db.query(models.Transaction).filter(
-            models.Transaction.tenant_id == tenant_id,
-            models.Transaction.client_tx_id == body.client_tx_id,
+    if not active_shift:
+        active_shift = models.Shift(
+            tenant_id=tenant_id,
+            user_id=current_user.id,
+            start_cash=Decimal("0.0"),
+            status="open"
+        )
+        db.add(active_shift)
+        db.commit()
+        db.refresh(active_shift)
+
+    items_data = body.get("items", [])
+    if not items_data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Transaction must contain at least 1 item.")
+
+    calculated_total = Decimal("0.0")
+    validated_items = []
+
+    for item in items_data:
+        prod_id = item.get("product_id")
+        qty = int(item.get("quantity", 1))
+
+        product = db.query(models.Product).filter(
+            models.Product.id == prod_id,
+            models.Product.tenant_id == tenant_id
         ).first()
-        if existing:
-            return _replay(db, existing, lines, response)
 
-    if body.discount_amount > 0 and not has_permission(current_user.role, "sales.discount"):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Discounts require a manager or admin.")
-
-    # An explicitly opened shift is required (M3).
-    shift = (
-        db.query(models.Shift)
-        .filter(
-            models.Shift.tenant_id == tenant_id,
-            models.Shift.user_id == current_user.id,
-            models.Shift.status == "open",
-        )
-        .order_by(models.Shift.id.desc())
-        .first()
-    )
-    if shift is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="No open shift. Start your shift (with your opening cash) before ringing up sales.",
-            headers={"X-Shift-Required": "1"},
-        )
-
-    products = {
-        p.id: p
-        for p in db.query(models.Product).filter(
-            models.Product.tenant_id == tenant_id, models.Product.id.in_(list(lines))
-        )
-    }
-    subtotal = Decimal("0")
-    tx_items = []
-    for product_id, quantity in lines.items():
-        product = products.get(product_id)
-        if product is None:
-            raise HTTPException(status_code=404, detail=f"Product ID {product_id} not found in this branch.")
+        if not product:
+            raise HTTPException(status_code=404, detail=f"Product ID {prod_id} not found or belongs to another tenant.")
         if not product.is_active:
-            raise HTTPException(status_code=400, detail=f"Product '{product.name}' is currently unavailable.")
-        unit_price = Decimal(product.price)
-        line_total = (unit_price * quantity).quantize(CENT)
-        subtotal += line_total
-        tx_items.append(models.TransactionItem(
-            product_id=product_id, quantity=quantity, unit_price=unit_price, total_price=line_total,
-        ))
+            raise HTTPException(status_code=400, detail=f"Product '{product.name}' is currently inactive or unavailable.")
 
-    discount = Decimal(body.discount_amount).quantize(CENT)
-    if discount > subtotal:
-        raise HTTPException(status_code=422, detail="Discount cannot exceed the order subtotal.")
-    tax = ((subtotal - discount) * TAX_RATE).quantize(CENT, rounding=ROUND_HALF_UP)
-    net = subtotal - discount + tax
+        unit_price = product.price
+        total_price = unit_price * qty
+        calculated_total += total_price
 
-    # Payment policy: the amount due must be fully covered; only cash may exceed it (the excess is change).
-    if body.payments:
-        cash = sum((p.amount for p in body.payments if p.payment_method == "CASH"), Decimal("0"))
-        non_cash = sum((p.amount for p in body.payments if p.payment_method != "CASH"), Decimal("0"))
-        tendered = cash + non_cash
-        if non_cash > net:
-            raise HTTPException(status_code=422, detail="Card/e-wallet payments cannot exceed the amount due.")
-        if tendered < net:
-            raise HTTPException(status_code=422, detail=f"Payment of {money(tendered)} is less than the amount due {money(net)}.")
-        change = tendered - net
-        payment_rows = []
-        remaining_cash_due = net - non_cash
-        for p in body.payments:
-            applied = p.amount if p.payment_method != "CASH" else min(p.amount, max(remaining_cash_due, Decimal("0")))
-            if p.payment_method == "CASH":
-                remaining_cash_due -= applied
-            if applied > 0:
-                payment_rows.append(models.Payment(payment_method=p.payment_method, amount=applied, status="completed"))
-    else:
-        tendered = body.amount_tendered if body.amount_tendered is not None else net
-        if body.payment_method == "CASH":
-            if tendered < net:
-                raise HTTPException(status_code=422, detail=f"Amount tendered {money(tendered)} is less than the amount due {money(net)}.")
-        elif tendered != net:
-            raise HTTPException(status_code=422, detail="Card/e-wallet payments must equal the amount due.")
-        change = tendered - net
-        payment_rows = [models.Payment(payment_method=body.payment_method, amount=net, status="completed")] if net > 0 else []
-
-    # Customer QR order being rung up (M9): must belong to this branch and still be open.
-    customer_order = None
-    if body.customer_order_id:
-        customer_order = (
-            db.query(models.CustomerOrder)
-            .filter(models.CustomerOrder.id == body.customer_order_id, models.CustomerOrder.tenant_id == tenant_id)
-            .with_for_update()
-            .first()
+        validated_items.append(
+            models.TransactionItem(
+                product_id=prod_id,
+                quantity=qty,
+                unit_price=unit_price,
+                total_price=total_price
+            )
         )
-        if customer_order is None:
-            raise HTTPException(status_code=404, detail="Customer order not found.")
-        if customer_order.status not in (models.CustomerOrderStatus.PENDING.value, models.CustomerOrderStatus.ACCEPTED.value):
-            raise HTTPException(status_code=409, detail=f"Customer order is already {customer_order.status}.")
+
+    tax_amount = Decimal(str(body.get("tax_amount", 0)))
+    discount_amount = Decimal(str(body.get("discount_amount", 0)))
+    net_amount = calculated_total + tax_amount - discount_amount
+    if net_amount < 0:
+        net_amount = Decimal("0.0")
+
+    client_tx_id = body.get("client_tx_id") or str(uuid.uuid4())
 
     tx = models.Transaction(
         tenant_id=tenant_id,
-        shift_id=shift.id,
+        shift_id=active_shift.id,
         user_id=current_user.id,
-        client_tx_id=body.client_tx_id,
-        total_amount=subtotal,
-        tax_amount=tax,
-        discount_amount=discount,
-        net_amount=net,
-        amount_tendered=tendered,
-        change_amount=change,
-        status=models.TransactionStatus.COMPLETED.value,
-        fulfillment_status=models.FulfillmentStatus.PENDING.value,
-        order_type=body.order_type or (customer_order.order_type if customer_order else None),
-        table_number=body.table_number or (customer_order.table_number if customer_order else None),
-        customer_order_id=customer_order.id if customer_order else None,
+        client_tx_id=client_tx_id,
+        total_amount=calculated_total,
+        tax_amount=tax_amount,
+        discount_amount=discount_amount,
+        net_amount=net_amount,
+        status=body.get("status") or "completed"
     )
-    tx.items = tx_items
-    tx.payments = payment_rows
     db.add(tx)
+    db.commit()
+    db.refresh(tx)
 
+    # Insert transaction items
+    for tx_item in validated_items:
+        tx_item.transaction_id = tx.id
+        db.add(tx_item)
+
+    # Insert payments
+    payments_data = body.get("payments", [])
+    if not payments_data:
+        # Default to single cash payment for the net amount
+        method = body.get("payment_method", "Cash")
+        payments_data = [{"payment_method": method, "amount": net_amount}]
+
+    for p in payments_data:
+        pm = models.Payment(
+            transaction_id=tx.id,
+            payment_method=p.get("payment_method", "Cash"),
+            amount=Decimal(str(p.get("amount", net_amount))),
+            status="completed" if tx.status == "completed" else "pending"
+        )
+        db.add(pm)
+
+    # Audit log
     try:
-        db.flush()  # assigns tx.id; a concurrent duplicate client_tx_id fails here
-        # Recipe-based ingredient deduction (M4). Products without a recipe deduct nothing.
-        needs = stock.recipe_requirements(db, dict(lines))
-        if needs:
-            locked = stock.lock_items(db, tenant_id, needs.keys())
-            for item_id in sorted(needs):
-                stock.apply_movement(
-                    db, locked[item_id], -needs[item_id], models.StockMovementType.SALE, user=current_user,
-                    reason=f"Sale #{tx.id}", reference_type="transaction", reference_id=tx.id,
-                )
-        if customer_order is not None:
-            customer_order.status = models.CustomerOrderStatus.COMPLETED.value
-        audit.record(db, current_user, "POS Sale", tenant_id=tenant_id,
-                     details=f"Transaction #{tx.id} processed for PHP {money(net)}")
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        if body.client_tx_id:
-            existing = db.query(models.Transaction).filter(
-                models.Transaction.tenant_id == tenant_id,
-                models.Transaction.client_tx_id == body.client_tx_id,
-            ).first()
-            if existing:
-                return _replay(db, existing, lines, response)
-        raise
-    except HTTPException:
-        db.rollback()
-        raise
+        log = models.ActivityLog(
+            tenant_id=tenant_id,
+            user_id=current_user.id,
+            action="POS Sale",
+            performed_by=current_user.username,
+            role=current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role),
+            details=f"Transaction #{tx.id} processed for ₱{float(net_amount):,.2f}"
+        )
+        db.add(log)
+    except Exception:
+        pass
 
-    payload = serialize_transaction(_load_transaction(db, tx.id))
-    payload["message"] = "Transaction created successfully."
-    return payload
+    db.commit()
+    db.refresh(tx)
+
+    # Real-time WebSocket event broadcast
+    try:
+        from app.core.websocket import notify_realtime_event
+        notify_realtime_event(tenant_id, "ORDER_CREATED", {
+            "order_id": tx.id,
+            "client_tx_id": tx.client_tx_id,
+            "net_amount": float(tx.net_amount),
+            "status": tx.status,
+            "cashier": current_user.username
+        })
+        notify_realtime_event(tenant_id, "DRAWER_UPDATED", {"reason": "pos_sale", "order_id": tx.id})
+        notify_realtime_event(tenant_id, "FINANCIAL_UPDATED", {"reason": "pos_sale", "order_id": tx.id})
+    except Exception:
+        pass
+
+    return {
+        "id": tx.id,
+        "client_tx_id": tx.client_tx_id,
+        "net_amount": float(tx.net_amount),
+        "status": tx.status,
+        "created_at": tx.created_at.isoformat() if tx.created_at else None,
+        "message": "Transaction created successfully."
+    }
+
+
+@router.put("/{tx_id}/status", summary="Update transaction status (e.g. reject/cancel or complete)")
+def update_transaction_status(
+    tx_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Allows cashier and management to change order status.
+    If the customer cancels the order, the cashier can reject the order,
+    marking transaction as 'rejected' / 'cancelled' and voiding associated payments.
+    """
+    q = db.query(models.Transaction).filter(models.Transaction.id == tx_id)
+    if current_user.tenant_id:
+        q = q.filter(models.Transaction.tenant_id == current_user.tenant_id)
+    
+    tx = q.first()
+    if not tx:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found.")
+
+    # IMMUTABILITY RULE: Once an order is rejected (or cancelled), its status is final and cannot be changed!
+    if tx.status in ["rejected", "cancelled"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Order #{tx.id} has already been {tx.status.upper()}. Once an order is rejected, its status is locked and cannot be changed."
+        )
+
+    raw_status = body.get("status", "").strip().lower()
+    reason = body.get("reason", "").strip() or "Customer cancelled order"
+
+    allowed = ["pending", "preparing", "ready", "completed", "cancelled", "rejected"]
+    if raw_status not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status '{raw_status}'. Allowed values: {', '.join(allowed)}"
+        )
+
+    old_status = tx.status
+    tx.status = raw_status
+
+    # Void or update payments
+    if raw_status in ["cancelled", "rejected"]:
+        for p in tx.payments:
+            p.status = "cancelled"
+    elif raw_status == "completed":
+        for p in tx.payments:
+            p.status = "completed"
+
+    # Audit log
+    try:
+        log = models.ActivityLog(
+            tenant_id=tx.tenant_id,
+            user_id=current_user.id,
+            action="Order Cancelled/Rejected" if raw_status in ["cancelled", "rejected"] else "Order Status Update",
+            performed_by=current_user.username,
+            role=current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role),
+            details=f"Order #{tx.id} status changed from {old_status.upper()} to {raw_status.upper()}. Reason: {reason}"
+        )
+        db.add(log)
+    except Exception:
+        pass
+
+    db.commit()
+    db.refresh(tx)
+
+    # Real-time WebSocket event broadcast
+    try:
+        from app.core.websocket import notify_realtime_event
+        notify_realtime_event(tx.tenant_id, "ORDER_UPDATED", {
+            "order_id": tx.id,
+            "status": tx.status,
+            "old_status": old_status
+        })
+        notify_realtime_event(tx.tenant_id, "DRAWER_UPDATED", {"reason": "order_status_change", "order_id": tx.id})
+        notify_realtime_event(tx.tenant_id, "FINANCIAL_UPDATED", {"reason": "order_status_change", "order_id": tx.id})
+    except Exception:
+        pass
+
+    return {
+        "id": tx.id,
+        "status": tx.status,
+        "message": f"Order #{tx.id} marked as {tx.status.upper()} successfully."
+    }
+

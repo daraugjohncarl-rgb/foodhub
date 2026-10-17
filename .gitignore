@@ -30,7 +30,4 @@ Thumbs.db
 *.tmp
 *.temp
 *.dump
-
-# Local database backups
-/backups/
-inbox_pos.sql
+*.sql

@@ -12,7 +12,15 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     if (!user) return;
 
-    
+    // 2. Sidebar & Mobile Menu Handlers
+    const sidebar = document.getElementById("sidebar");
+    const sidebarToggle = document.getElementById("sidebarToggle");
+    const mobileMenuBtn = document.getElementById("mobileMenuBtn");
+    const sidebarOverlay = document.getElementById("sidebarOverlay");
+    // 2. Sidebar init via centralized controller
+    if (typeof Utils !== "undefined" && Utils.initSidebar) {
+        Utils.initSidebar();
+    }
 
     // 3. Live Clock & Date Header
     function updateClock() {
@@ -58,7 +66,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         return (parts[0][0] + parts[1][0]).toUpperCase();
     }
 
-    const displayName = user.username || localStorage.getItem("username") || "Branch Admin";
+    const displayName = (user && (user.name || user.username)) || (typeof Auth !== "undefined" && Auth.getUser() ? (Auth.getUser().name || Auth.getUser().username) : null) || localStorage.getItem("full_name") || localStorage.getItem("username") || "Branch Admin";
     const initials = getInitials(displayName);
 
     const sidebarName = document.getElementById("sidebarName");
@@ -81,6 +89,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         });
     }
 
-    // Initial render
-    renderView("dashboard");
+    // Initial render: restore current feature from URL hash or session, fallback to dashboard
+    const initialView = (window.location.hash ? window.location.hash.replace("#", "") : "") || sessionStorage.getItem("active_feature") || "dashboard";
+    renderView(initialView);
 });

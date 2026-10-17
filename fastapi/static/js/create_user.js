@@ -121,7 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 document.getElementById('cu_email')?.classList.add('invalid');
                 hasError = true;
             }
-            if (!password || password.length < 10) {
+            if (!password || password.length < 6) {
                 document.getElementById('err_password')?.classList.add('show');
                 document.getElementById('cu_password')?.classList.add('invalid');
                 hasError = true;

@@ -117,12 +117,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     return `
                         <tr>
-                            <td style="font-weight:500;">${esc(formattedDate)}</td>
-                            <td style="color:var(--text-muted); font-variant-numeric:tabular-nums;">${esc(formattedTime)}</td>
-                            <td><span class="action-badge ${esc(badgeClass)}">${esc(log.action)}</span></td>
-                            <td style="font-weight:600;">${esc(log.performed_by || 'System')}</td>
-                            <td>${esc(log.target_user || '—')}</td>
-                            <td><span class="badge badge-${esc((log.role || 'admin').toLowerCase())}">${esc(log.role || '—')}</span></td>
+                            <td style="font-weight:500;">${formattedDate}</td>
+                            <td style="color:var(--text-muted); font-variant-numeric:tabular-nums;">${formattedTime}</td>
+                            <td><span class="action-badge ${badgeClass}">${log.action}</span></td>
+                            <td style="font-weight:600;">${log.performed_by || 'System'}</td>
+                            <td>${log.target_user || '—'}</td>
+                            <td><span class="badge badge-${(log.role || 'admin').toLowerCase()}">${log.role || '—'}</span></td>
                         </tr>
                     `;
                 }).join('');
@@ -142,22 +142,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // Clear Logs
     if (clearLogsBtn) {
         clearLogsBtn.addEventListener('click', async () => {
-            // Audit history is kept: only entries older than the retention period (min. 90 days) can be purged.
-            const days = prompt('Delete audit entries older than how many days? (minimum 90)', '365');
-            if (days === null) return;
-            const olderThan = parseInt(days, 10);
-            if (!Number.isFinite(olderThan) || olderThan < 90) {
-                showToast('Audit entries must be kept for at least 90 days.', 'error');
-                return;
-            }
+            if (!confirm('Are you sure you want to clear all activity logs?')) return;
             try {
-                const res = await Auth.fetch(`/api/v1/activity-logs?older_than_days=${olderThan}`, { method: 'DELETE' });
-                const body = await res.json().catch(() => ({}));
+                const res = await Auth.fetch('/api/v1/activity-logs', { method: 'DELETE' });
                 if (res.ok) {
-                    showToast(body.message || 'Old audit entries purged.');
+                    showToast('Activity logs cleared.');
                     loadLogs();
-                } else {
-                    showToast(typeof body.detail === 'string' ? body.detail : 'Purge failed.', 'error');
                 }
             } catch (err) {
                 showToast(err.message, 'error');

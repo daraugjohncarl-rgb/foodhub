@@ -6,35 +6,39 @@
 const ROLE_NAV_CONFIG = {
   admin: [
     { id: "dashboard", label: "Dashboard", icon: "fas fa-chart-line" },
+    { id: "cash_drawer", label: "Cash Drawer", icon: "fas fa-vault" },
     { id: "users", label: "User Management", icon: "fas fa-users-cog" },
     { id: "inventory", label: "Inventory", icon: "fas fa-boxes" },
     { id: "products", label: "Products & Menu", icon: "fas fa-utensils" },
     { id: "tables", label: "Table QRs", icon: "fas fa-qrcode" },
     { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },
-    { id: "purchases", label: "Purchases", icon: "fas fa-shopping-cart" },
+    { id: "profit_loss", label: "Profit Loss and Income", icon: "fas fa-scale-balanced" },
     { id: "reports", label: "Reports & Analytics", icon: "fas fa-chart-bar" },
     { id: "logs", label: "Audit Logs", icon: "fas fa-history" },
     { id: "settings", label: "Settings", icon: "fas fa-cog" }
   ],
   manager: [
     { id: "dashboard", label: "Dashboard", icon: "fas fa-chart-line" },
+    { id: "cash_drawer", label: "Cash Drawer", icon: "fas fa-vault" },
     { id: "users", label: "User Management", icon: "fas fa-users-cog" },
     { id: "inventory", label: "Inventory", icon: "fas fa-boxes" },
     { id: "products", label: "Products & Menu", icon: "fas fa-utensils" },
     { id: "tables", label: "Table QRs", icon: "fas fa-qrcode" },
     { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },
-    { id: "purchases", label: "Purchases", icon: "fas fa-shopping-cart" },
+    { id: "profit_loss", label: "Profit Loss and Income", icon: "fas fa-scale-balanced" },
     { id: "reports", label: "Reports & Analytics", icon: "fas fa-chart-bar" },
     { id: "logs", label: "Audit Logs", icon: "fas fa-history" }
   ],
   inventory: [
     { id: "inventory", label: "Stock Overview", icon: "fas fa-boxes" },
     { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },
-    { id: "purchases", label: "Purchase Orders", icon: "fas fa-shopping-cart" },
+    { id: "profit_loss", label: "Profit Loss and Income", icon: "fas fa-scale-balanced" },
     { id: "wastage", label: "Wastage Track", icon: "fas fa-trash-alt" }
   ],
   cashier: [
     { id: "pos", label: "Point of Sale (POS)", icon: "fas fa-cash-register" },
+    { id: "drinks", label: "Drinks Orders", icon: "fas fa-glass-water", badgeId: "cashier-drinks-badge" },
+    { id: "customer_orders", label: "Customer Orders", icon: "fas fa-mobile-alt", badgeId: "cashier-orders-badge" },
     { id: "transactions", label: "Today's Orders", icon: "fas fa-receipt" }
   ],
   kitchen: [
@@ -54,13 +58,16 @@ function buildSidebarMenu(role, onNavigate) {
 
   if (navEl) {
     navEl.innerHTML = `
-      <div class="nav-section-title">${esc(normalizedRole === 'cashier' ? 'POS Counter' : 'Operations Menu')}</div>
+      <div class="nav-section-title">${normalizedRole === 'cashier' ? 'POS Counter' : 'Operations Menu'}</div>
       <ul class="nav-menu" id="sidebar-menu"></ul>
     `;
     menuEl = document.getElementById("sidebar-menu");
   } else if (menuEl) {
     menuEl.innerHTML = "";
   }
+
+  const currentSaved = (window.location.hash ? window.location.hash.replace("#", "") : "") || sessionStorage.getItem("active_feature") || "";
+  const hasSavedItem = items.some(it => it.id === currentSaved);
 
   items.forEach((item, index) => {
     const li = document.createElement("li");
@@ -69,9 +76,15 @@ function buildSidebarMenu(role, onNavigate) {
 
     const a = document.createElement("a");
     a.href = `#${item.id}`;
-    a.className = "nav-link" + (index === 0 ? " active" : "");
+    const isActive = hasSavedItem ? (item.id === currentSaved) : (index === 0);
+    a.className = "nav-link" + (isActive ? " active" : "");
     a.setAttribute("data-title", item.label);
-    a.innerHTML = `<i class="${esc(item.icon)}"></i><span>${esc(item.label)}</span>`;
+    a.innerHTML = `<i class="${item.icon}"></i><span>${item.label}</span>${item.badgeId ? `<span id="${item.badgeId}" style="margin-left:auto; background:#ef4444; color:#fff; font-size:10px; font-weight:700; padding:2px 7px; border-radius:10px; display:none;">0</span>` : ''}`;
+
+    if (isActive) {
+      const pageTitle = document.getElementById("current-page-title");
+      if (pageTitle) pageTitle.innerText = item.label;
+    }
     
     a.onclick = (e) => {
       e.preventDefault();
@@ -80,6 +93,11 @@ function buildSidebarMenu(role, onNavigate) {
       
       const pageTitle = document.getElementById("current-page-title");
       if (pageTitle) pageTitle.innerText = item.label;
+
+      if (window.innerWidth <= 768) {
+        document.getElementById("sidebar")?.classList.remove("open");
+        document.getElementById("sidebarOverlay")?.classList.remove("open");
+      }
 
       if (typeof onNavigate === "function") {
         onNavigate(item.id, item.label);

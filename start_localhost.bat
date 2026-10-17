@@ -5,7 +5,9 @@ echo  Starting Inbox POS on Localhost (http://127.0.0.1:8000)
 echo ========================================================
 
 set PYTHON_CMD=python
-if exist "fastapi\venv\Scripts\python.exe" (
+if exist ".venv\Scripts\python.exe" (
+    set PYTHON_CMD=.venv\Scripts\python.exe
+) else if exist "fastapi\venv\Scripts\python.exe" (
     set PYTHON_CMD=fastapi\venv\Scripts\python.exe
 )
 
