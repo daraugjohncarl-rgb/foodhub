@@ -66,7 +66,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         return (parts[0][0] + parts[1][0]).toUpperCase();
     }
 
-    const displayName = user.username || localStorage.getItem("username") || "Branch Admin";
+    const displayName = (user && (user.name || user.username)) || (typeof Auth !== "undefined" && Auth.getUser() ? (Auth.getUser().name || Auth.getUser().username) : null) || localStorage.getItem("full_name") || localStorage.getItem("username") || "Branch Admin";
     const initials = getInitials(displayName);
 
     const sidebarName = document.getElementById("sidebarName");

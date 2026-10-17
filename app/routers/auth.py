@@ -82,7 +82,9 @@ def login(
         "token_type": "bearer",
         "role": user.role,
         "tenant_id": user.tenant_id,
-        "username": user.username
+        "username": user.username,
+        "first_name": user.first_name,
+        "last_name": user.last_name
     }
 
 from app.schemas import UserResponse, UserUpdate, PasswordChangeRequest, CustomerRegisterRequest

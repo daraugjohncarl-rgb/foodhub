@@ -81,7 +81,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                     Storage.setUser(user);
                 }
 
-                const displayName = user.username || 'Super Admin';
+                const nameParts = [user.first_name, user.last_name].filter(p => p && p.trim());
+                const fullName = nameParts.length > 0 ? nameParts.join(" ") : (user.name || user.username || 'Super Admin');
+                const displayName = fullName;
                 const initials = getInitials(displayName);
 
                 const sidebarName = document.getElementById('sidebarName');

@@ -12,12 +12,18 @@ const Auth = {
     const raw = localStorage.getItem("RESTOTRACK_USER") || sessionStorage.getItem("RESTOTRACK_USER");
     if (raw) {
       try {
-        return JSON.parse(raw);
+        const u = JSON.parse(raw);
+        if (u.first_name || u.last_name) {
+          const full = [u.first_name, u.last_name].filter(p => p && p.trim()).join(" ");
+          if (full) u.name = full;
+        }
+        return u;
       } catch (e) {}
     }
     const username = localStorage.getItem("username") || "User";
+    const fullName = localStorage.getItem("full_name") || username;
     const role = (localStorage.getItem("role") || "").toLowerCase();
-    return { username, name: username, role };
+    return { username, name: fullName, role };
   },
 
   getRole() {
@@ -90,15 +96,23 @@ const Auth = {
         return { success: false, message: msg };
       }
 
+      const nameParts = [data.first_name, data.last_name].filter(p => p && p.trim());
+      const fullName = nameParts.length > 0 ? nameParts.join(" ") : data.username;
+
       const storage = rememberMe ? localStorage : sessionStorage;
       storage.setItem("access_token", data.access_token);
       storage.setItem("username", data.username);
       storage.setItem("role", data.role);
+      storage.setItem("first_name", data.first_name || "");
+      storage.setItem("last_name", data.last_name || "");
+      storage.setItem("full_name", fullName);
       storage.setItem("tenant_id", data.tenant_id !== null ? data.tenant_id : "GLOBAL");
 
       const userProfile = {
         username: data.username,
-        name: data.username,
+        name: fullName,
+        first_name: data.first_name,
+        last_name: data.last_name,
         role: (data.role || "").toLowerCase(),
         tenant_id: data.tenant_id
       };
@@ -234,10 +248,31 @@ function requireRole(allowedRoles = []) {
   const nameEl = document.getElementById("nav-user-name");
   const roleEl = document.getElementById("nav-user-role");
   const avatarEl = document.getElementById("nav-user-avatar");
+  const sidebarName = document.getElementById("sidebarName");
 
-  if (nameEl) nameEl.innerText = user.name || user.username;
+  const displayName = user.name || user.username || "User";
+  if (nameEl) nameEl.innerText = displayName;
+  if (sidebarName) sidebarName.innerText = displayName;
   if (roleEl) roleEl.innerText = currentRole;
-  if (avatarEl) avatarEl.innerText = (user.name || user.username || "U").charAt(0).toUpperCase();
+  if (avatarEl) avatarEl.innerText = displayName.charAt(0).toUpperCase();
+
+  // Asynchronously fetch profile from /api/v1/auth/me to guarantee first and last name are loaded
+  if (Auth.isAuthenticated()) {
+    Auth.fetch("/api/v1/auth/me").then(res => res.json()).then(data => {
+      if (data) {
+        const parts = [data.first_name, data.last_name].filter(p => p && p.trim());
+        const resolvedName = parts.length > 0 ? parts.join(" ") : (data.username || displayName);
+        user.name = resolvedName;
+        user.first_name = data.first_name;
+        user.last_name = data.last_name;
+        localStorage.setItem("RESTOTRACK_USER", JSON.stringify(user));
+        localStorage.setItem("full_name", resolvedName);
+        if (nameEl) nameEl.innerText = resolvedName;
+        const sbEl = document.getElementById("sidebarName");
+        if (sbEl) sbEl.innerText = resolvedName;
+      }
+    }).catch(() => {});
+  }
 
   return user;
 }

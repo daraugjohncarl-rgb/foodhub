@@ -10,14 +10,23 @@ const Storage = {
         localStorage.setItem('access_token', token);
     },
     getUser() {
+        const fullName = localStorage.getItem('full_name') || sessionStorage.getItem('full_name');
+        const username = localStorage.getItem('username') || sessionStorage.getItem('username') || 'Super Admin';
         return {
-            username: localStorage.getItem('username') || sessionStorage.getItem('username') || 'Super Admin',
+            username: fullName || username,
+            rawUsername: username,
             role: localStorage.getItem('role') || sessionStorage.getItem('role') || 'SUPER_ADMIN',
             tenantId: localStorage.getItem('tenant_id') || sessionStorage.getItem('tenant_id') || 'GLOBAL'
         };
     },
     setUser(user) {
         if (user.username) localStorage.setItem('username', user.username);
+        if (user.first_name || user.last_name) {
+            const parts = [user.first_name, user.last_name].filter(p => p && p.trim());
+            if (parts.length > 0) {
+                localStorage.setItem('full_name', parts.join(' '));
+            }
+        }
         if (user.role) localStorage.setItem('role', user.role);
         if (user.tenant_id !== undefined) {
             localStorage.setItem('tenant_id', user.tenant_id !== null ? user.tenant_id : 'GLOBAL');
