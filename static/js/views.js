@@ -4988,16 +4988,13 @@ function renderCashDrawerTrackerUI(container, data) {
     <div class="toolbar fade-up" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
       <div>
         <h2 style="font-size:20px; font-weight:800; color:var(--text-main); margin:0; display:flex; align-items:center; gap:8px;">
-          <i class="fas fa-vault" style="color:#c9a227;"></i> Cash Drawer & Shift Tracking
+          <i class="fas fa-vault" style="color:#c9a227;"></i> Cash Drawer
         </h2>
         <p style="font-size:12px; color:var(--text-muted); margin:4px 0 0 0;">
           Live cash drawer balance, cashier floats, sales collections, and safe drops
         </p>
       </div>
       <div style="display:flex; gap:10px; align-items:center;">
-        <button class="btn btn-primary" onclick="openAddCashMovementModal(null, 'manager_income')" style="display:inline-flex; align-items:center; gap:8px; font-weight:700; border-radius:10px;">
-          <i class="fas fa-hand-holding-dollar"></i> Transfer to Manager Profit Income
-        </button>
         <button class="btn btn-outline btn-sm" onclick="renderCashDrawerTracker(null, true)" title="Refresh Drawer Balances" style="border-radius:10px;">
           <i class="fas fa-sync-alt"></i> Live Refresh
         </button>
@@ -5042,7 +5039,8 @@ function renderCashDrawerTrackerUI(container, data) {
               <th>Started At</th>
               <th style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:13px;"><i class="fas fa-pen-to-square" style="margin-right:4px;"></i> Edit Cashier Drawer</th>
               <th style="background:rgba(16,185,129,0.12); color:#10b981; font-size:13px;">Cashier Overall Income</th>
-              <th>Cash Sales</th>
+              <th style="font-size:12px;"><i class="fas fa-money-bill-wave" style="color:#10b981; margin-right:4px;"></i> Overall Cash</th>
+              <th style="font-size:12px;"><i class="fas fa-mobile-screen-button" style="color:#007dfe; margin-right:4px;"></i> GCash</th>
               <th style="text-align:right;">Actions</th>
             </tr>
           </thead>
@@ -5057,7 +5055,7 @@ function renderCashDrawerTrackerUI(container, data) {
 
 function renderDrawerTableRows(shifts) {
   if (!shifts || !shifts.length) {
-    return '<tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-muted);"><i class="fas fa-info-circle"></i> No cashier shifts recorded yet.</td></tr>';
+    return '<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--text-muted);"><i class="fas fa-info-circle"></i> No cashier shifts recorded yet.</td></tr>';
   }
   return shifts.map(s => {
     const isOpen = s.status === 'open';
@@ -5109,7 +5107,14 @@ function renderDrawerTableRows(shifts) {
             ${(s.cashed_out || s.paid_out) ? `<span style="color:#10b981; font-weight:700;">Cashed Out: ${Utils.formatCurrency(s.cashed_out || s.paid_out)}</span> &bull; ` : ''}Orders: ${Utils.formatCurrency(s.total_sales || (s.cash_sales + s.non_cash_sales))} + Drawer: ${Utils.formatCurrency(s.expected_cash || 0)}
           </div>
         </td>
-        <td><span style="color:#10b981; font-weight:700; font-size:13px;">+${Utils.formatCurrency(s.cash_sales)}</span></td>
+        <td>
+          <strong style="color:#10b981; font-weight:800; font-size:13.5px;">+${Utils.formatCurrency((Number(s.expected_cash) || 0) + (Number(s.cash_sales) || 0))}</strong>
+          <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">Sales: ${Utils.formatCurrency(s.cash_sales || 0)} + Drawer: ${Utils.formatCurrency(s.expected_cash || 0)}</div>
+        </td>
+        <td>
+          <strong style="color:#007dfe; font-weight:800; font-size:13.5px;">+${Utils.formatCurrency(s.non_cash_sales || 0)}</strong>
+          <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">GCash / Online</div>
+        </td>
         <td style="text-align:right;">
           <div style="display:inline-flex; gap:6px;">
             ${isOpen ? `
