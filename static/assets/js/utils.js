@@ -76,6 +76,16 @@ const Utils = {
     return "₱" + num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   },
 
+  formatId(prefix, id, digits = 4) {
+    if (!id && id !== 0) return '—';
+    if (typeof id === 'string' && id.includes('-') && !/^[0-9a-f]{8}-/i.test(id)) {
+      return id;
+    }
+    const num = parseInt(id, 10);
+    if (isNaN(num)) return `${prefix}-${id}`;
+    return `${prefix}-${String(num).padStart(digits, '0')}`;
+  },
+
   exportCSV(filename, rows) {
     if (!rows || !rows.length) {
       this.showToast("No data to export", "danger");
@@ -107,8 +117,11 @@ generateReceiptHTML(order) {
 
     const dateStr = order.date ? new Date(order.date).toLocaleString() : new Date().toLocaleString();
     const cashierName = order.cashier || "Cashier";
-    const receiptNo = order.receiptNumber || "N/A";
-    const subtotal = Number(order.total_amount || order.net_amount || 0); // Assuming no discount/tax currently handled
+    let receiptNo = order.receiptNumber || "N/A";
+    if (order.id && (!receiptNo || receiptNo === "N/A" || receiptNo.length > 20)) {
+      receiptNo = Utils.formatId('TXN', order.id);
+    }
+    const subtotal = Number(order.total_amount || order.net_amount || 0);
     const discount = Number(order.discount_amount || 0);
     const total = subtotal - discount; // Adjust if subtotal already implies net
 

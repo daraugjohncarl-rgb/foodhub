@@ -113,6 +113,23 @@ def submit_customer_order(body: dict, db: Session = Depends(get_db)):
             db.add(new_item)
         
         db.commit()
+
+        # Real-time WebSocket event broadcast
+        try:
+            from app.core.websocket import notify_realtime_event
+            notify_realtime_event(tenant_id, "CUSTOMER_ORDER_CREATED", {
+                "order_id": new_order.id,
+                "order_number": new_order.order_number,
+                "customer_name": new_order.customer_name,
+                "table_number": new_order.table_number,
+                "total_amount": float(new_order.total_amount)
+            })
+            notify_realtime_event(tenant_id, "ORDER_CREATED", {
+                "order_id": new_order.id,
+                "order_number": new_order.order_number
+            })
+        except Exception:
+            pass
     except Exception as e:
         db.rollback()
         import sys
@@ -176,6 +193,17 @@ def update_customer_order_status(order_id: int, body: dict, db: Session = Depend
 
     order.status = new_status
     db.commit()
+
+    # Real-time WebSocket event broadcast
+    try:
+        from app.core.websocket import notify_realtime_event
+        notify_realtime_event(order.tenant_id or 1, "ORDER_UPDATED", {
+            "order_id": order.id,
+            "order_number": order.order_number,
+            "status": new_status
+        })
+    except Exception:
+        pass
 
     return {"message": f"Order marked as {new_status}"}
 

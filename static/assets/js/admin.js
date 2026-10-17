@@ -12,7 +12,38 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     if (!user) return;
 
-    
+    // 2. Sidebar & Mobile Menu Handlers
+    const sidebar = document.getElementById("sidebar");
+    const sidebarToggle = document.getElementById("sidebarToggle");
+    const mobileMenuBtn = document.getElementById("mobileMenuBtn");
+    const sidebarOverlay = document.getElementById("sidebarOverlay");
+    const mainContent = document.getElementById("mainContent");
+
+    function toggleSidebar() {
+        if (!sidebar) return;
+        if (window.innerWidth <= 768) {
+            sidebar.classList.toggle("open");
+            if (sidebarOverlay) sidebarOverlay.classList.toggle("open");
+        } else if (window.innerWidth <= 1180) {
+            sidebar.classList.toggle("expanded");
+            document.body.classList.toggle("sidebar-expanded");
+            if (mainContent) mainContent.classList.toggle("sidebar-expanded");
+        } else {
+            sidebar.classList.toggle("collapsed");
+            document.body.classList.toggle("sidebar-collapsed");
+            if (mainContent) mainContent.classList.toggle("sidebar-collapsed");
+        }
+    }
+
+    if (sidebarToggle) sidebarToggle.addEventListener("click", toggleSidebar);
+    if (mobileMenuBtn) mobileMenuBtn.addEventListener("click", toggleSidebar);
+
+    if (sidebarOverlay) {
+        sidebarOverlay.addEventListener("click", () => {
+            if (sidebar) sidebar.classList.remove("open");
+            sidebarOverlay.classList.remove("open");
+        });
+    }
 
     // 3. Live Clock & Date Header
     function updateClock() {

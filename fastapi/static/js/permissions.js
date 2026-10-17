@@ -6,33 +6,33 @@
 const ROLE_NAV_CONFIG = {
   admin: [
     { id: "dashboard", label: "Dashboard", icon: "fas fa-chart-line" },
-    { id: "cash_drawer", label: "Cash in Drawer", icon: "fas fa-vault" },
+    { id: "cash_drawer", label: "Cash Drawer", icon: "fas fa-vault" },
     { id: "users", label: "User Management", icon: "fas fa-users-cog" },
     { id: "inventory", label: "Inventory", icon: "fas fa-boxes" },
     { id: "products", label: "Products & Menu", icon: "fas fa-utensils" },
     { id: "tables", label: "Table QRs", icon: "fas fa-qrcode" },
     { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },
-    { id: "profit_loss", label: "Profit Loss & Cashout Income", icon: "fas fa-scale-balanced" },
+    { id: "profit_loss", label: "Profit Loss and Income", icon: "fas fa-scale-balanced" },
     { id: "reports", label: "Reports & Analytics", icon: "fas fa-chart-bar" },
     { id: "logs", label: "Audit Logs", icon: "fas fa-history" },
     { id: "settings", label: "Settings", icon: "fas fa-cog" }
   ],
   manager: [
     { id: "dashboard", label: "Dashboard", icon: "fas fa-chart-line" },
-    { id: "cash_drawer", label: "Cash in Drawer", icon: "fas fa-vault" },
+    { id: "cash_drawer", label: "Cash Drawer", icon: "fas fa-vault" },
     { id: "users", label: "User Management", icon: "fas fa-users-cog" },
     { id: "inventory", label: "Inventory", icon: "fas fa-boxes" },
     { id: "products", label: "Products & Menu", icon: "fas fa-utensils" },
     { id: "tables", label: "Table QRs", icon: "fas fa-qrcode" },
     { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },
-    { id: "profit_loss", label: "Profit Loss & Cashout Income", icon: "fas fa-scale-balanced" },
+    { id: "profit_loss", label: "Profit Loss and Income", icon: "fas fa-scale-balanced" },
     { id: "reports", label: "Reports & Analytics", icon: "fas fa-chart-bar" },
     { id: "logs", label: "Audit Logs", icon: "fas fa-history" }
   ],
   inventory: [
     { id: "inventory", label: "Stock Overview", icon: "fas fa-boxes" },
     { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },
-    { id: "profit_loss", label: "Profit Loss & Cashout Income", icon: "fas fa-scale-balanced" },
+    { id: "profit_loss", label: "Profit Loss and Income", icon: "fas fa-scale-balanced" },
     { id: "wastage", label: "Wastage Track", icon: "fas fa-trash-alt" }
   ],
   cashier: [
@@ -84,6 +84,11 @@ function buildSidebarMenu(role, onNavigate) {
       
       const pageTitle = document.getElementById("current-page-title");
       if (pageTitle) pageTitle.innerText = item.label;
+
+      if (window.innerWidth <= 768) {
+        document.getElementById("sidebar")?.classList.remove("open");
+        document.getElementById("sidebarOverlay")?.classList.remove("open");
+      }
 
       if (typeof onNavigate === "function") {
         onNavigate(item.id, item.label);

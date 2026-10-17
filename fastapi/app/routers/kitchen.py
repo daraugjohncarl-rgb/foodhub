@@ -182,6 +182,21 @@ def update_order_status(
 
     db.commit()
 
+    # Real-time WebSocket event broadcast
+    try:
+        from app.core.websocket import notify_realtime_event
+        notify_realtime_event(tx.tenant_id or 1, "KITCHEN_UPDATED", {
+            "order_id": order_id,
+            "status": new_status,
+            "station": station
+        })
+        notify_realtime_event(tx.tenant_id or 1, "ORDER_UPDATED", {
+            "order_id": tx.id,
+            "status": tx.status
+        })
+    except Exception:
+        pass
+
     return {
         "id": order_id,
         "status": new_status,

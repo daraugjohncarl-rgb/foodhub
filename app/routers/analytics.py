@@ -183,7 +183,7 @@ def get_profit_loss(
     if (cash_sales + non_cash_sales) > total_orders_revenue:
         total_orders_revenue = cash_sales + non_cash_sales
 
-    # 2. Cashout Income (Money secured from cashier drawer into safe)
+    # 2. Cashout Income & Admin Transfers Accounting
     all_cashouts = db.query(
         models.ShiftCashMovement
     ).filter(
@@ -191,16 +191,27 @@ def get_profit_loss(
         models.ShiftCashMovement.type == "PAID_OUT"
     ).order_by(models.ShiftCashMovement.id.desc()).all()
 
-    total_cashout_income = sum(Decimal(str(m.amount)) for m in all_cashouts)
+    # Cashier cashouts into manager safe (reason does NOT contain 'admin')
+    cashier_cashouts = [m for m in all_cashouts if 'admin' not in (m.reason or '').lower()]
+    total_cashout_income = sum(Decimal(str(m.amount)) for m in cashier_cashouts)
     today_cashout_income = sum(
-        Decimal(str(m.amount)) for m in all_cashouts 
+        Decimal(str(m.amount)) for m in cashier_cashouts 
         if m.created_at and m.created_at.date() == today
     )
 
-    # Active cash in drawers remaining
-    open_shifts = db.query(models.Shift).filter(
+    # Transfers from manager to admin safe (reason contains 'admin')
+    admin_transfers = [m for m in all_cashouts if 'admin' in (m.reason or '').lower()]
+    total_transferred_to_admin = sum(Decimal(str(m.amount)) for m in admin_transfers)
+    today_transferred_to_admin = sum(
+        Decimal(str(m.amount)) for m in admin_transfers 
+        if m.created_at and m.created_at.date() == today
+    )
+
+    # Active cash in drawers remaining (Cashier role open shifts)
+    open_shifts = db.query(models.Shift).join(models.User).filter(
         models.Shift.tenant_id == tenant_id,
-        models.Shift.status == "open"
+        models.Shift.status == "open",
+        models.User.role == models.UserRole.CASHIER
     ).all()
 
     active_drawer_cash = Decimal("0.0")
@@ -210,6 +221,7 @@ def get_profit_loss(
         ).join(models.Transaction).filter(
             models.Transaction.shift_id == s.id,
             models.Payment.status == "completed",
+            ~models.Transaction.status.in_(["cancelled", "rejected"]),
             func.lower(models.Payment.payment_method).like("%cash%")
         ).scalar() or Decimal("0.0")
         p_i = db.query(
@@ -245,20 +257,34 @@ def get_profit_loss(
     if cost_of_goods_sold == 0 and total_orders_revenue > 0:
         cost_of_goods_sold = total_orders_revenue * Decimal("0.40")
 
-    # 4. Profit & Loss Calculations
-    gross_profit = total_orders_revenue - cost_of_goods_sold
+    user_role_str = str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role).upper()
+    is_admin = user_role_str in ["ADMIN", "SUPER_ADMIN"]
+
+    # 4. Profit & Loss Calculations (Net Profit Loss based on total valuation of inventory of product)
+    gross_profit = total_orders_revenue - total_inventory_valuation
     profit_margin = float(round((gross_profit / total_orders_revenue * 100), 2)) if total_orders_revenue > 0 else 0.0
     net_profit = gross_profit
-    net_cash_income = total_cashout_income + Decimal(str(non_cash_sales))
+
+    # Manager: safe cash decreases when transferred to Admin
+    manager_safe_cash = max(Decimal("0.0"), total_cashout_income - total_transferred_to_admin)
+    manager_net_cash_income = manager_safe_cash + Decimal(str(non_cash_sales))
+
+    # Admin: receives transfer income from Manager (increases with each transfer)
+    admin_transfer_income = total_transferred_to_admin
+    admin_net_cash_income = admin_transfer_income + Decimal(str(non_cash_sales))
+
+    # Role-aware net realized cash
+    net_cash_income = admin_net_cash_income if is_admin else manager_net_cash_income
 
     cashout_history = [{
         "id": m.id,
         "shift_id": m.shift_id,
         "cashier": m.user.username if m.user else "Cashier",
         "amount": float(m.amount),
-        "reason": m.reason or "Manager Cashout",
+        "reason": m.reason or ("Transfer Income from Manager" if is_admin else "Transfer to Manager Profit Income"),
+        "is_admin_transfer": 'admin' in (m.reason or '').lower(),
         "created_at": m.created_at.isoformat() if m.created_at else None
-    } for m in all_cashouts[:20]]
+    } for m in (admin_transfers if is_admin else all_cashouts)[:20]]
 
     return {
         "revenue": {
@@ -277,6 +303,10 @@ def get_profit_loss(
         "cashout": {
             "total_cashout_income": float(total_cashout_income),
             "today_cashout_income": float(today_cashout_income),
+            "manager_safe_cash": float(manager_safe_cash),
+            "total_transferred_to_admin": float(total_transferred_to_admin),
+            "today_transferred_to_admin": float(today_transferred_to_admin),
+            "admin_transfer_income": float(admin_transfer_income),
             "active_drawer_cash": float(active_drawer_cash),
             "history": cashout_history
         },
@@ -285,6 +315,8 @@ def get_profit_loss(
             "net_profit": float(net_profit),
             "profit_margin_percent": profit_margin,
             "net_cash_income": float(net_cash_income),
+            "admin_net_cash_income": float(admin_net_cash_income),
+            "manager_net_cash_income": float(manager_net_cash_income),
             "is_profitable": float(net_profit) >= 0
         }
     }

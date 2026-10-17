@@ -37,6 +37,8 @@ def list_transactions(
     for tx in transactions:
         result.append({
             "id": tx.id,
+            "order_code": f"TXN-{tx.id:04d}",
+            "receipt_no": f"TXN-{tx.id:04d}",
             "client_tx_id": tx.client_tx_id,
             "tenant_id": tx.tenant_id,
             "shift_id": tx.shift_id,
@@ -197,8 +199,25 @@ def create_transaction(
     db.commit()
     db.refresh(tx)
 
+    # Real-time WebSocket event broadcast
+    try:
+        from app.core.websocket import notify_realtime_event
+        notify_realtime_event(tenant_id, "ORDER_CREATED", {
+            "order_id": tx.id,
+            "client_tx_id": tx.client_tx_id,
+            "net_amount": float(tx.net_amount),
+            "status": tx.status,
+            "cashier": current_user.username
+        })
+        notify_realtime_event(tenant_id, "DRAWER_UPDATED", {"reason": "pos_sale", "order_id": tx.id})
+        notify_realtime_event(tenant_id, "FINANCIAL_UPDATED", {"reason": "pos_sale", "order_id": tx.id})
+    except Exception:
+        pass
+
     return {
         "id": tx.id,
+        "order_code": f"TXN-{tx.id:04d}",
+        "receipt_no": f"TXN-{tx.id:04d}",
         "client_tx_id": tx.client_tx_id,
         "net_amount": float(tx.net_amount),
         "status": tx.status,
@@ -271,6 +290,19 @@ def update_transaction_status(
 
     db.commit()
     db.refresh(tx)
+
+    # Real-time WebSocket event broadcast
+    try:
+        from app.core.websocket import notify_realtime_event
+        notify_realtime_event(tx.tenant_id, "ORDER_UPDATED", {
+            "order_id": tx.id,
+            "status": tx.status,
+            "old_status": old_status
+        })
+        notify_realtime_event(tx.tenant_id, "DRAWER_UPDATED", {"reason": "order_status_change", "order_id": tx.id})
+        notify_realtime_event(tx.tenant_id, "FINANCIAL_UPDATED", {"reason": "order_status_change", "order_id": tx.id})
+    except Exception:
+        pass
 
     return {
         "id": tx.id,

@@ -76,6 +76,16 @@ const Utils = {
     return "₱" + num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   },
 
+  formatId(prefix, id, digits = 4) {
+    if (!id && id !== 0) return '—';
+    if (typeof id === 'string' && id.includes('-') && !/^[0-9a-f]{8}-/i.test(id)) {
+      return id;
+    }
+    const num = parseInt(id, 10);
+    if (isNaN(num)) return `${prefix}-${id}`;
+    return `${prefix}-${String(num).padStart(digits, '0')}`;
+  },
+
   exportCSV(filename, rows) {
     if (!rows || !rows.length) {
       this.showToast("No data to export", "danger");
@@ -94,47 +104,111 @@ const Utils = {
     this.showToast("CSV exported successfully", "success");
   },
 
-  printReceipt(order) {
-    let receiptEl = document.getElementById("printable-receipt");
-    if (!receiptEl) {
-      receiptEl = document.createElement("div");
-      receiptEl.id = "printable-receipt";
-      receiptEl.className = "hidden";
-      document.body.appendChild(receiptEl);
-    }
-
+generateReceiptHTML(order) {
     const itemsHtml = (order.items || []).map(it => `
-      <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-        <span>${it.quantity || 1}x ${it.name}</span>
-        <span>₱${(Number(it.unit_price || it.price) * (it.quantity || 1)).toFixed(2)}</span>
+      <div class="receipt-item">
+        <span style="flex:1; padding-right:10px; word-break: break-word;">
+            ${it.name}<br>
+            <small>${it.quantity || 1} x ₱${Number(it.unit_price || it.price).toFixed(2)}</small>
+        </span>
+        <span style="white-space:nowrap;">₱${(Number(it.unit_price || it.price) * (it.quantity || 1)).toFixed(2)}</span>
       </div>
     `).join("");
 
-    receiptEl.innerHTML = `
-      <div style="text-align:center; margin-bottom:12px;">
-        <h2 style="font-size:1.2rem; margin:0;">Blessie FoodHub</h2>
-        <p style="font-size:0.8rem; margin:2px 0;">Official Sales Receipt</p>
-        <p style="font-size:0.75rem; color:#666;">Date: ${new Date().toLocaleString()}</p>
-        <hr style="border:none; border-top:1px dashed #000; margin:8px 0;">
-      </div>
-      <div style="font-size:0.85rem;">
-        ${itemsHtml}
-      </div>
-      <hr style="border:none; border-top:1px dashed #000; margin:8px 0;">
-      <div style="display:flex; justify-content:space-between; font-weight:bold; font-size:0.95rem;">
-        <span>TOTAL:</span>
-        <span>₱${Number(order.total_amount || order.net_amount || 0).toFixed(2)}</span>
-      </div>
-      <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-top:4px;">
-        <span>Payment (${order.payment_method || 'Cash'}):</span>
-        <span>₱${Number(order.amount_paid || order.total_amount || 0).toFixed(2)}</span>
-      </div>
-      <div style="text-align:center; margin-top:16px; font-size:0.75rem;">
-        <p>Thank you for dining with us!</p>
+    const dateStr = order.date ? new Date(order.date).toLocaleString() : new Date().toLocaleString();
+    const cashierName = order.cashier || "Cashier";
+    let receiptNo = order.receiptNumber || "N/A";
+    if (order.id && (!receiptNo || receiptNo === "N/A" || receiptNo.length > 20)) {
+      receiptNo = Utils.formatId('TXN', order.id);
+    }
+    const subtotal = Number(order.total_amount || order.net_amount || 0);
+    const discount = Number(order.discount_amount || 0);
+    const total = subtotal - discount; // Adjust if subtotal already implies net
+
+    return `
+      <div class="receipt-preview">
+          <div class="receipt-header">
+            <h3>BLESSIE FOOD HUB</h3>
+            <p style="margin:2px 0;">INBOX</p>
+            <p style="margin:2px 0;">Bago City, Negros Occidental</p>
+          </div>
+          <div class="receipt-divider"></div>
+          <p style="margin:2px 0;">Receipt No: ${receiptNo}</p>
+          <p style="margin:2px 0;">Date: ${dateStr}</p>
+          <p style="margin:2px 0;">Cashier: ${cashierName}</p>
+          <div class="receipt-divider"></div>
+          <div style="font-size:0.85rem;">
+            ${itemsHtml}
+          </div>
+          <div class="receipt-divider"></div>
+          <div class="receipt-totals">
+            <span>Subtotal:</span>
+            <span>₱${subtotal.toFixed(2)}</span>
+          </div>
+          <div class="receipt-totals">
+            <span>Discount:</span>
+            <span>₱${discount.toFixed(2)}</span>
+          </div>
+          <div class="receipt-totals bold">
+            <span>TOTAL:</span>
+            <span>₱${total.toFixed(2)}</span>
+          </div>
+          <br>
+          <div class="receipt-totals">
+            <span>Payment (${order.payment_method || 'Cash'}):</span>
+            <span></span>
+          </div>
+          <div class="receipt-totals">
+            <span>Amount Received:</span>
+            <span>₱${Number(order.amount_paid || order.total_amount || 0).toFixed(2)}</span>
+          </div>
+          <div class="receipt-totals">
+            <span>Change:</span>
+            <span>₱${Math.max(0, Number(order.amount_paid || order.total_amount || 0) - total).toFixed(2)}</span>
+          </div>
+          <div class="receipt-divider"></div>
+          <div class="receipt-header" style="margin-top:16px;">
+            <p>THANK YOU!</p>
+            <p>PLEASE COME AGAIN</p>
+          </div>
       </div>
     `;
+  },
 
+  printReceipt(order) {
+    let receiptEl = document.getElementById("printReceipt");
+    if (!receiptEl) {
+      receiptEl = document.createElement("div");
+      receiptEl.id = "printReceipt";
+      document.body.appendChild(receiptEl);
+    }
+    
+    // Store original order on window for print button
+    window.currentReceiptOrder = order;
+
+    receiptEl.innerHTML = this.generateReceiptHTML(order);
     window.print();
+  },
+
+  showReceiptModal(order) {
+    const html = this.generateReceiptHTML(order);
+    
+    // Store for print button
+    window.currentReceiptOrder = order;
+
+    const cancelBtn = order.id ? `
+      <button class="btn btn-outline" onclick="Utils.closeModal(); if (typeof promptRejectOrder === 'function') promptRejectOrder(${order.id});" style="border-color:#ef4444; color:#ef4444; font-size:12px; font-weight:700;" title="Cancel & Reject Order">
+        <i class="fas fa-ban"></i> Cancel / Reject Order
+      </button>
+    ` : '';
+
+    const footer = `
+      ${cancelBtn}
+      <button class="btn btn-outline" onclick="Utils.closeModal()">Close</button>
+      <button class="btn btn-primary" onclick="Utils.printReceipt(window.currentReceiptOrder)"><i class="fas fa-print"></i> Print Receipt</button>
+    `;
+
+    this.openModal("✓ Transaction Complete", html, footer);
   },
 
   initTheme() {
@@ -150,8 +224,80 @@ const Utils = {
         localStorage.setItem("RESTOTRACK_THEME", next);
       };
     }
+  },
+
+  initSidebar() {
+    const sidebar = document.getElementById("sidebar");
+    const sidebarToggle = document.getElementById("sidebarToggle");
+    const mobileMenuBtn = document.getElementById("mobileMenuBtn");
+    const sidebarOverlay = document.getElementById("sidebarOverlay");
+    const mainContent = document.querySelector(".main-content");
+
+    if (!sidebar) return;
+
+    // Apply saved state on load (desktop only)
+    const isMobile = window.innerWidth <= 768;
+    const savedCollapsed = localStorage.getItem('sidebar_collapsed') === 'true';
+    
+    if (!isMobile && savedCollapsed) {
+      sidebar.classList.add('collapsed');
+      if (mainContent) mainContent.classList.add('sidebar-collapsed');
+      if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-bars"></i>';
+    } else if (!isMobile) {
+      if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-times"></i>';
+    }
+
+    if (sidebarToggle) {
+      sidebarToggle.addEventListener("click", () => {
+        if (window.innerWidth <= 768) {
+          // Mobile: Toggle off-canvas
+          sidebar.classList.remove('open');
+          if (sidebarOverlay) sidebarOverlay.classList.remove('open');
+        } else {
+          // Desktop: Collapse/Expand
+          const isCollapsed = sidebar.classList.toggle('collapsed');
+          if (mainContent) mainContent.classList.toggle('sidebar-collapsed');
+          
+          if (isCollapsed) {
+            sidebarToggle.innerHTML = '<i class="fas fa-bars"></i>';
+          } else {
+            sidebarToggle.innerHTML = '<i class="fas fa-times"></i>';
+          }
+          
+          localStorage.setItem('sidebar_collapsed', isCollapsed);
+        }
+      });
+    }
+
+    if (mobileMenuBtn && sidebarOverlay) {
+      mobileMenuBtn.addEventListener("click", () => {
+        sidebar.classList.add("open");
+        sidebarOverlay.classList.add("open");
+      });
+
+      sidebarOverlay.addEventListener("click", () => {
+        sidebar.classList.remove("open");
+        sidebarOverlay.classList.remove("open");
+      });
+    }
+
+    // Optional: Window resize handling to prevent stuck states
+    window.addEventListener("resize", () => {
+      if (window.innerWidth > 768) {
+        sidebar.classList.remove("open");
+        if (sidebarOverlay) sidebarOverlay.classList.remove("open");
+      }
+    });
   }
 };
+
+window.Utils = Utils;
+
+if (document.readyState === 'loading') {
+  document.addEventListener("DOMContentLoaded", () => window.Utils.initSidebar());
+} else {
+  window.Utils.initSidebar();
+}
 
 window.Utils = Utils;
 window.showToast = (msg, type) => Utils.showToast(msg, type);

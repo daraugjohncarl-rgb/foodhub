@@ -241,6 +241,10 @@ app.include_router(shifts_router, prefix="/api/v1")
 from app.routers.tables import router as tables_router
 app.include_router(tables_router, prefix="/api/v1")
 
+from app.routers.realtime import router as realtime_router
+app.include_router(realtime_router, prefix="/api/v1")
+app.include_router(realtime_router)
+
 # Mount static files directories to serve frontend assets using absolute paths
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 if os.path.exists(os.path.join(STATIC_DIR, "assets")):

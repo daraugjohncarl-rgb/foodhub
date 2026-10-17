@@ -96,13 +96,32 @@ def get_drawer_summary(
     from sqlalchemy import func
     tenant_id = _get_user_tenant_id(db, current_user)
 
-    # Fetch shifts for this tenant (open shifts first, ordered by id descending)
-    shifts = db.query(models.Shift).filter(
-        models.Shift.tenant_id == tenant_id
+    # Fetch shifts for this tenant (Cashier role accounts only, open shifts first)
+    shifts = db.query(models.Shift).join(models.User).filter(
+        models.Shift.tenant_id == tenant_id,
+        models.User.role == models.UserRole.CASHIER
     ).order_by(
         (models.Shift.status == "open").desc(),
         models.Shift.id.desc()
     ).limit(30).all()
+
+    has_open_shift = any(s.status == "open" for s in shifts)
+    if not has_open_shift:
+        cashier_user = db.query(models.User).filter(
+            models.User.tenant_id == tenant_id,
+            models.User.role == models.UserRole.CASHIER
+        ).first()
+        if cashier_user:
+            new_shift = models.Shift(
+                tenant_id=tenant_id,
+                user_id=cashier_user.id,
+                start_cash=Decimal("0.0"),
+                status="open"
+            )
+            db.add(new_shift)
+            db.commit()
+            db.refresh(new_shift)
+            shifts = [new_shift] + list(shifts)
 
     drawer_list = []
     total_cash_in_active_drawers = Decimal("0.0")
@@ -173,6 +192,7 @@ def get_drawer_summary(
             "cashier_id": s.user_id,
             "cashier_username": s.user.username if s.user else "unknown",
             "cashier_name": cashier_name,
+            "role": str(s.user.role.value if hasattr(s.user.role, 'value') else s.user.role).lower() if s.user else "cashier",
             "status": s.status,
             "start_time": s.start_time.isoformat() if s.start_time else None,
             "end_time": s.end_time.isoformat() if s.end_time else None,
@@ -182,7 +202,9 @@ def get_drawer_summary(
             "total_sales": float(shift_total_sales),
             "paid_in": float(paid_in_val),
             "paid_out": float(paid_out_val),
+            "cashed_out": float(paid_out_val),
             "expected_cash": float(expected_cash),
+            "cashier_overall_income": float(shift_total_sales + Decimal(str(s.start_cash or 0)) + Decimal(str(paid_in_val)) if (shift_total_sales + Decimal(str(s.start_cash or 0)) + Decimal(str(paid_in_val))) > Decimal("0.0") else (shift_total_sales + expected_cash + Decimal(str(paid_out_val)))),
             "end_cash": float(s.end_cash) if s.end_cash is not None else None,
             "variance": float(s.end_cash - expected_cash) if s.end_cash is not None else None,
             "movements": movements
@@ -228,12 +250,15 @@ def get_drawer_summary(
         models.Transaction.status == "completed"
     ).scalar() or Decimal("0.0")
 
+    overall_income_with_drawer = Decimal(str(all_time_income)) + Decimal(str(total_cash_in_active_drawers))
+
     return {
         "total_cash_in_drawers": float(total_cash_in_active_drawers),
         "active_drawers_count": active_drawers_count,
         "today_total_cash_sales": float(today_cash_val),
         "today_total_orders_amount": float(today_orders_val),
-        "overall_income": float(all_time_income),
+        "overall_income": float(overall_income_with_drawer),
+        "orders_overall_income": float(all_time_income),
         "shifts": drawer_list
     }
 
@@ -275,6 +300,7 @@ def add_cash_movement(
     return movement
 
 @router.post("/cashout")
+@router.post("/withdraw")
 def cashout_shift(
     body: dict,
     db: Session = Depends(get_db),
@@ -297,9 +323,10 @@ def cashout_shift(
 
     reason = body.get("reason", "Manager Cashout")
 
-    query = db.query(models.Shift).filter(
+    query = db.query(models.Shift).join(models.User).filter(
         models.Shift.tenant_id == tenant_id,
-        models.Shift.status == "open"
+        models.Shift.status == "open",
+        models.User.role == models.UserRole.CASHIER
     )
     if shift_id:
         query = query.filter(models.Shift.id == shift_id)
@@ -308,7 +335,27 @@ def cashout_shift(
 
     shift = query.order_by(models.Shift.id.desc()).first()
     if not shift:
-        raise HTTPException(status_code=404, detail="No active open cashier shift found to cashout.")
+        if shift_id:
+            shift = db.query(models.Shift).filter(
+                models.Shift.id == shift_id,
+                models.Shift.tenant_id == tenant_id
+            ).first()
+
+        if not shift:
+            cashier_user = db.query(models.User).filter(
+                models.User.tenant_id == tenant_id,
+                models.User.role == models.UserRole.CASHIER
+            ).first()
+            user_id = cashier_user.id if cashier_user else current_user.id
+            shift = models.Shift(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                start_cash=Decimal("0.0"),
+                status="open"
+            )
+            db.add(shift)
+            db.commit()
+            db.refresh(shift)
 
     from sqlalchemy import func
     cash_sales = db.query(
@@ -336,8 +383,20 @@ def cashout_shift(
 
     current_expected = Decimal(str(shift.start_cash or 0)) + Decimal(str(cash_sales)) + Decimal(str(paid_in)) - Decimal(str(paid_out))
 
+    non_cash_sales = db.query(
+        func.coalesce(func.sum(models.Payment.amount), 0)
+    ).join(models.Transaction).filter(
+        models.Transaction.shift_id == shift.id,
+        models.Payment.status == "completed",
+        ~models.Transaction.status.in_(["cancelled", "rejected"]),
+        ~func.lower(models.Payment.payment_method).like("%cash%")
+    ).scalar() or Decimal("0.0")
+
+    shift_total_sales = cash_sales + non_cash_sales
+    cashier_overall_income = shift_total_sales + Decimal(str(shift.start_cash or 0)) + Decimal(str(paid_in))
+
     if amount <= Decimal("0.0"):
-        amount = current_expected
+        amount = cashier_overall_income if cashier_overall_income > Decimal("0.0") else current_expected
 
     # 1. Log Cash Movement (PAID_OUT / Cashout)
     movement = models.ShiftCashMovement(
@@ -367,6 +426,15 @@ def cashout_shift(
     db.commit()
     db.refresh(new_shift)
 
+    from app.core.websocket import notify_realtime_event
+    notify_realtime_event(tenant_id, "DRAWER_UPDATED", {"shift_id": new_shift.id, "balance": 0.0})
+    notify_realtime_event(tenant_id, "CASHOUT_COMPLETED" if "admin" not in (reason or "").lower() else "TRANSFER_TO_ADMIN", {
+        "shift_id": shift.id,
+        "amount": float(amount),
+        "reason": reason
+    })
+    notify_realtime_event(tenant_id, "FINANCIAL_UPDATED", {})
+
     return {
         "message": f"Successfully cashed out ₱{float(amount):.2f}. Cashier drawer reset to ₱0.00 with new active Shift #{new_shift.id}.",
         "cashed_out_shift_id": shift.id,
@@ -374,3 +442,105 @@ def cashout_shift(
         "new_shift_id": new_shift.id,
         "new_drawer_balance": 0.0
     }
+
+@router.put("/{shift_id}/drawer-cash")
+@router.post("/{shift_id}/drawer-cash")
+def edit_shift_drawer_cash(
+    shift_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Directly edit/adjust cashier drawer balance for a shift.
+    Computes delta and records appropriate cash movement so expected cash matches the requested amount.
+    """
+    tenant_id = _get_user_tenant_id(db, current_user)
+    
+    shift = db.query(models.Shift).filter(
+        models.Shift.id == shift_id,
+        models.Shift.tenant_id == tenant_id
+    ).first()
+    
+    if not shift:
+        raise HTTPException(status_code=404, detail="Shift record not found.")
+
+    if shift.status != "open":
+        raise HTTPException(
+            status_code=400,
+            detail="Only active open cashier shifts can have their drawer cash edited. Closed shifts are locked."
+        )
+
+    try:
+        new_amount = Decimal(str(body.get("amount", 0)))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid amount provided.")
+
+    reason = body.get("reason") or "Cashier drawer edited by manager"
+
+    from sqlalchemy import func
+    cash_sales = db.query(
+        func.coalesce(func.sum(models.Payment.amount), 0)
+    ).join(models.Transaction).filter(
+        models.Transaction.shift_id == shift.id,
+        models.Payment.status == "completed",
+        ~models.Transaction.status.in_(["cancelled", "rejected"]),
+        func.lower(models.Payment.payment_method).like("%cash%")
+    ).scalar() or Decimal("0.0")
+
+    paid_in = db.query(
+        func.coalesce(func.sum(models.ShiftCashMovement.amount), 0)
+    ).filter(
+        models.ShiftCashMovement.shift_id == shift.id,
+        models.ShiftCashMovement.type == "PAID_IN"
+    ).scalar() or Decimal("0.0")
+
+    paid_out = db.query(
+        func.coalesce(func.sum(models.ShiftCashMovement.amount), 0)
+    ).filter(
+        models.ShiftCashMovement.shift_id == shift.id,
+        models.ShiftCashMovement.type == "PAID_OUT"
+    ).scalar() or Decimal("0.0")
+
+    current_expected = Decimal(str(shift.start_cash or 0)) + Decimal(str(cash_sales)) + Decimal(str(paid_in)) - Decimal(str(paid_out))
+    delta = new_amount - current_expected
+
+    if delta > Decimal("0.0"):
+        movement = models.ShiftCashMovement(
+            tenant_id=tenant_id,
+            shift_id=shift.id,
+            user_id=current_user.id,
+            type="PAID_IN",
+            amount=delta,
+            reason=f"{reason} (Adjusted from ₱{float(current_expected):.2f} to ₱{float(new_amount):.2f})"
+        )
+        db.add(movement)
+    elif delta < Decimal("0.0"):
+        movement = models.ShiftCashMovement(
+            tenant_id=tenant_id,
+            shift_id=shift.id,
+            user_id=current_user.id,
+            type="PAID_OUT",
+            amount=abs(delta),
+            reason=f"{reason} (Adjusted from ₱{float(current_expected):.2f} to ₱{float(new_amount):.2f})"
+        )
+        db.add(movement)
+
+    if shift.end_cash is not None:
+        shift.end_cash = new_amount
+
+    db.commit()
+
+    from app.core.websocket import notify_realtime_event
+    notify_realtime_event(tenant_id, "DRAWER_UPDATED", {"shift_id": shift.id, "new_amount": float(new_amount)})
+    notify_realtime_event(tenant_id, "FINANCIAL_UPDATED", {})
+
+    return {
+        "success": True,
+        "message": f"Successfully updated cashier drawer balance to ₱{float(new_amount):.2f}",
+        "shift_id": shift.id,
+        "previous_drawer_cash": float(current_expected),
+        "new_drawer_cash": float(new_amount),
+        "adjustment": float(delta)
+    }
+

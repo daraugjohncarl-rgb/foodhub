@@ -151,7 +151,7 @@ async function renderDashboard(c) {
       <div class="stat-card" style="cursor:pointer;" onclick="renderView('cash_drawer')" title="Click to view Cash Drawer details">
         <div class="stat-icon purple" style="background:rgba(123,31,162,0.12); color:#7b1fa2;"><i class="fas fa-vault"></i></div>
         <div class="stat-info">
-          <h3>Cash in Drawer</h3>
+          <h3>Cash Drawer</h3>
           <div class="stat-count" style="color:#7b1fa2;">${Utils.formatCurrency(liveDrawerCash)}</div>
           <div class="stat-trend" style="color:var(--success, #10b981);"><i class="fas fa-cash-register"></i> ${drawerSummary.active_drawers_count || 0} active drawer(s)</div>
         </div>
@@ -195,42 +195,6 @@ async function renderDashboard(c) {
           <div class="stat-count" style="color:#f97316;">${stats.low_stock_count || 0}</div>
           <div class="stat-trend" style="color:#f97316;"><i class="fas fa-exclamation-triangle"></i> Needs reorder</div>
         </div>
-      </div>
-    </div>
-
-    <!-- Live Cashier Drawers Tracking Section for Manager and Admin -->
-    <div class="section-card">
-      <div class="section-head">
-        <div>
-          <h2><i class="fas fa-cash-register" style="color:#c9a227; margin-right:8px;"></i> Cashier Cash Drawer Live Tracking</h2>
-          <span style="font-size:12px; color:var(--text-muted);">Real-time monitoring of cash float, cash sales, drops, and expected drawer totals</span>
-        </div>
-        <div style="display:flex; gap:10px; align-items:center;">
-          <button class="btn btn-primary btn-sm" onclick="openAddCashMovementModal()" style="display:inline-flex; align-items:center; gap:6px;">
-            <i class="fas fa-money-bill-transfer"></i> Record Cash Drop / In
-          </button>
-          <a href="#cash_drawer" onclick="renderView('cash_drawer')" class="view-all-link">Full Cash Drawer Hub <i class="fas fa-arrow-right"></i></a>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Cashier Staff</th>
-              <th>Shift Status</th>
-              <th>Started At</th>
-              <th>Starting Float</th>
-              <th>Cash Sales</th>
-              <th>Cash In (+)</th>
-              <th>Cash Drops (-)</th>
-              <th style="background:rgba(201,162,39,0.08);">Expected in Drawer</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${renderDrawerTableRows(drawerSummary.shifts.slice(0, 5))}
-          </tbody>
-        </table>
       </div>
     </div>
 
@@ -377,7 +341,6 @@ async function renderInventory(c) {
         <table>
           <thead>
             <tr>
-              <th>ID</th>
               <th>Item Name</th>
               <th>Department / Category</th>
               <th>Current Stock</th>
@@ -398,7 +361,7 @@ async function renderInventory(c) {
 
 function renderInventoryRows(items) {
   if (!items || !items.length) {
-    return `<tr><td colspan="8" style="text-align:center; padding:40px; color:var(--text-muted);"><i class="fas fa-boxes" style="font-size:24px; margin-bottom:8px; display:block; opacity:0.5;"></i>No inventory items match the criteria.<br><button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="openImportMasterlistModal()"><i class="fas fa-file-import"></i> Import Official Master List</button></td></tr>`;
+    return `<tr><td colspan="7" style="text-align:center; padding:40px; color:var(--text-muted);"><i class="fas fa-boxes" style="font-size:24px; margin-bottom:8px; display:block; opacity:0.5;"></i>No inventory items match the criteria.<br><button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="openImportMasterlistModal()"><i class="fas fa-file-import"></i> Import Official Master List</button></td></tr>`;
   }
   return items.map(i => {
     const isOut = Number(i.quantity) <= 0;
@@ -411,8 +374,10 @@ function renderInventoryRows(items) {
 
     return `
       <tr>
-        <td style="color:var(--text-muted); font-size:12px;">#${i.id}</td>
-        <td><strong style="color:var(--text-main); font-size:13px;">${i.name}</strong></td>
+        <td>
+          <strong style="color:var(--text-main); font-size:13px;">${i.name}</strong>
+          ${i.sku ? `<span style="font-size:10px; font-family:monospace; background:rgba(0,0,0,0.06); padding:2px 5px; border-radius:4px; margin-left:6px; color:var(--text-muted); font-weight:600;">${i.sku}</span>` : ''}
+        </td>
         <td><span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:11px; font-weight:600;">${catName}</span></td>
         <td>
           <div style="display:inline-flex; align-items:center; gap:6px;">
@@ -979,7 +944,6 @@ async function renderProducts(c) {
         <table>
           <thead>
             <tr>
-              <th style="width:60px;">ID</th>
               <th style="width:70px; text-align:center;">Photo</th>
               <th style="width:130px;">Product Code</th>
               <th>Product Name</th>
@@ -1000,7 +964,7 @@ async function renderProducts(c) {
 
 function renderProductRows(products) {
   if (!products || !products.length) {
-    return `<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--text-muted);">No products registered yet.</td></tr>`;
+    return `<tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-muted);">No products registered yet.</td></tr>`;
   }
   return products.map(p => {
     const catName = getProductCategoryName(p);
@@ -1016,7 +980,6 @@ function renderProductRows(products) {
 
     return `
     <tr>
-      <td style="color:var(--text-muted); font-weight:600;">#${p.id}</td>
       <td style="text-align:center;">${photoHtml}</td>
       <td>
         <span style="background:rgba(201,162,39,0.12); color:#c9a227; font-weight:700; font-family:monospace; padding:3px 8px; border-radius:6px; font-size:12px; letter-spacing:0.5px;">${p.sku || '—'}</span>
@@ -1418,12 +1381,36 @@ async function renderPOS(c) {
 
   c.innerHTML = `
     <style>
-      @media (max-width: 1200px) {
-        .pos-container { grid-template-columns: minmax(0, 1fr) 300px !important; }
+      .pos-container {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) clamp(240px, 24vw, 310px) !important;
+        gap: clamp(8px, 1.2vw, 14px) !important;
+        align-items: stretch !important;
       }
-      @media (max-width: 1024px) {
+      .pos-top-controls {
+        position: -webkit-sticky !important;
+        position: sticky !important;
+        top: 64px !important;
+        z-index: 35 !important;
+        background: var(--bg-body, #f8f6f1) !important;
+        padding-top: 2px !important;
+        padding-bottom: 6px !important;
+      }
+      .pos-cart {
+        position: -webkit-sticky !important;
+        position: sticky !important;
+        top: 72px !important;
+        height: calc(100vh - 84px) !important;
+        max-height: calc(100vh - 84px) !important;
+        align-self: start !important;
+        z-index: 50 !important;
+      }
+      @media (max-width: 1200px) {
+        .pos-container { grid-template-columns: minmax(0, 1fr) clamp(240px, 26vw, 300px) !important; }
+      }
+      @media (max-width: 768px) {
         .pos-container { grid-template-columns: 1fr !important; }
-        .pos-cart { position: static !important; width: 100% !important; height: auto !important; max-height: none !important; margin-top: 16px !important; }
+        .pos-cart { position: static !important; width: 100% !important; height: auto !important; max-height: none !important; margin-top: 14px !important; }
         .pos-cart .cart-items { max-height: 380px !important; overflow-y: auto !important; }
       }
       @media (max-width: 640px) {
@@ -1436,17 +1423,17 @@ async function renderPOS(c) {
         #pos-voice-live-strip > div:last-child { width: 100% !important; justify-content: space-between !important; }
       }
       @media (max-width: 480px) {
-        .stats-grid.pos-stats-grid { grid-template-columns: repeat(3, 1fr) !important; gap: 6px !important; }
-        .pos-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 8px !important; }
+        .stats-grid.pos-stats-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 100px), 1fr)) !important; gap: 6px !important; }
+        .pos-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 110px), 1fr)) !important; gap: 8px !important; }
       }
       @media (max-width: 360px) {
         .stats-grid.pos-stats-grid { grid-template-columns: 1fr !important; }
         .pos-grid { grid-template-columns: 1fr !important; }
       }
       .cat-pill {
-        white-space: nowrap; border-radius: 20px; padding: 6px 18px; 
+        white-space: nowrap; border-radius: 16px; padding: 5px 14px; 
         background: #ffffff; color: var(--text-main); border: 1px solid rgba(205,190,150,0.4); 
-        cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s ease;
+        cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.2s ease;
       }
       .cat-pill:hover {
         border-color: #c9a227; color: #c9a227; box-shadow: 0 4px 10px rgba(201,162,39,0.1);
@@ -1459,81 +1446,84 @@ async function renderPOS(c) {
       <!-- LEFT WORKSPACE -->
       <div class="pos-workspace">
         
-        <!-- SEARCH ROW -->
-        <div class="pos-search-row" style="display:flex; gap:10px; width:100%; margin-bottom: 8px;">
-          <div class="search-wrap" style="position:relative; flex:1;">
-            <i class="fas fa-search" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--text-muted); font-size:13px;"></i>
-            <input type="text" id="pos-search" class="input-field" placeholder="Search menu products..." style="padding-left:36px; width:100%; font-size:13px; height:38px; border-radius:10px; background:#ffffff;" oninput="filterPOSGrid()">
-          </div>
-          <button id="pos-voice-order-btn" onclick="toggleVoiceOrderDirect()" style="height:38px; padding:0 14px; background:#18181b; color:#fff; border:1px solid #3f3f46; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:8px; white-space:nowrap; transition:all 0.2s;" onmouseover="if(!window.isVoiceListening){this.style.background='#27272a'; this.style.borderColor='#c9a227';}" onmouseout="if(!window.isVoiceListening){this.style.background='#18181b'; this.style.borderColor='#3f3f46';}" title="Click to start/stop Voice Recording (English, Tagalog, Hiligaynon)">
-            <i class="fas fa-microphone" id="pos-voice-btn-mic" style="color:#ef4444; font-size:13px;"></i>
-            <span id="pos-voice-btn-text">VOICE ORDER</span>
-          </button>
-          <button id="pos-online-orders-btn" onclick="openOnlineOrdersModal()" style="height:38px; padding:0 10px; background:#f4f4f5; color:#18181b; border:1px solid rgba(205,190,150,0.4); border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:5px; white-space:nowrap;" title="Pending Customer Online Orders">
-            <i class="fas fa-bell"></i>
-            <span id="pos-online-orders-badge" style="background:#ef4444; color:#fff; padding:1px 5px; border-radius:10px; font-size:10px; font-weight:bold; display:none;">0</span>
-          </button>
-          <button id="pos-drinks-orders-btn" onclick="renderView('drinks')" style="height:38px; padding:0 12px; background:#eff6ff; color:#2563eb; border:1px solid rgba(37,99,235,0.3); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:6px; white-space:nowrap;" title="Cashier Drinks Orders">
-            <i class="fas fa-glass-water" style="color:#2563eb;"></i>
-            <span>Drinks Orders</span>
-            <span id="pos-drinks-badge" style="background:#2563eb; color:#fff; padding:1px 6px; border-radius:10px; font-size:10px; font-weight:bold; display:none;">0</span>
-          </button>
-        </div>
-
-        <!-- INLINE LIVE VOICE RECORDING STATUS STRIP -->
-        <div id="pos-voice-live-strip" class="pos-voice-live-strip" style="display:none; margin-bottom:8px; padding:8px 12px; background:linear-gradient(90deg, #fef2f2, #fff7ed); border:1px solid #f87171; border-radius:10px; align-items:center; justify-content:space-between; animation:fadeIn 0.2s ease;">
-          <div style="display:flex; align-items:center; gap:8px; font-size:12px; color:#991b1b; font-weight:600; min-width:0; overflow:hidden;">
-            <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#ef4444; animation:voicePulse 1s infinite; flex-shrink:0;"></span>
-            <span style="flex-shrink:0;">🔴 Recording Voice Order:</span>
-            <span id="pos-voice-transcript-text" style="color:#18181b; font-style:italic; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Speak order (e.g. "isa ka c1 solo", "c1 solo 1", "1 1pc chickenjoy solo")...</span>
-          </div>
-          <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
-            <span style="font-size:10px; color:#b91c1c; background:rgba(239,68,68,0.1); padding:2px 6px; border-radius:4px; font-weight:700;">EN • TAGALOG • HILIGAYNON</span>
-            <button type="button" onclick="stopVoiceRecordingDirect()" style="border:none; background:transparent; color:#991b1b; font-size:14px; font-weight:bold; cursor:pointer; padding:0 4px;" title="Stop Voice Recording">✕</button>
-          </div>
-        </div>
-
-        <!-- KPI SUMMARY ROW (Single-row slim strip) -->
-        <div class="stats-grid pos-stats-grid" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:8px;">
-          <div class="stat-card" style="padding:8px 12px; display:flex; align-items:center; gap:10px; background:#ffffff; border-radius:10px; border:1px solid rgba(205,190,150,0.3);">
-            <div style="width:32px; height:32px; border-radius:8px; background:rgba(201,162,39,0.1); color:#c9a227; display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0;"><i class="fas fa-box"></i></div>
-            <div style="min-width:0;">
-              <div style="font-size:9px; color:var(--text-muted); font-weight:600; text-transform:uppercase; line-height:1.1;">Total Items</div>
-              <div style="font-size:16px; font-weight:800; color:var(--text-main); line-height:1.1;">${products.length}</div>
+        <!-- POS STICKY TOP CONTROLS (SEARCH, KPIS, CATEGORIES) -->
+        <div class="pos-top-controls" style="position:-webkit-sticky; position:sticky; top:64px; z-index:35; background:var(--bg-body, #f8f6f1); padding-top:2px; padding-bottom:6px;">
+          <!-- SEARCH ROW -->
+          <div class="pos-search-row" style="display:flex; gap:8px; width:100%; margin-bottom: 8px; flex-wrap:wrap; align-items:center;">
+            <div class="search-wrap" style="position:relative; flex:1 1 180px; min-width:140px;">
+              <i class="fas fa-search" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--text-muted); font-size:13px;"></i>
+              <input type="text" id="pos-search" class="input-field" placeholder="Search menu products..." style="padding-left:36px; width:100%; font-size:13px; height:38px; border-radius:10px; background:#ffffff;" oninput="filterPOSGrid()">
             </div>
+            <button id="pos-voice-order-btn" onclick="toggleVoiceOrderDirect()" style="height:38px; padding:0 12px; background:#18181b; color:#fff; border:1px solid #3f3f46; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:6px; white-space:nowrap; transition:all 0.2s;" onmouseover="if(!window.isVoiceListening){this.style.background='#27272a'; this.style.borderColor='#c9a227';}" onmouseout="if(!window.isVoiceListening){this.style.background='#18181b'; this.style.borderColor='#3f3f46';}" title="Click to start/stop Voice Recording (English, Tagalog, Hiligaynon)">
+              <i class="fas fa-microphone" id="pos-voice-btn-mic" style="color:#ef4444; font-size:13px;"></i>
+              <span id="pos-voice-btn-text">VOICE ORDER</span>
+            </button>
+            <button id="pos-online-orders-btn" onclick="openOnlineOrdersModal()" style="height:38px; padding:0 10px; background:#f4f4f5; color:#18181b; border:1px solid rgba(205,190,150,0.4); border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:5px; white-space:nowrap;" title="Pending Customer Online Orders">
+              <i class="fas fa-bell"></i>
+              <span id="pos-online-orders-badge" style="background:#ef4444; color:#fff; padding:1px 5px; border-radius:10px; font-size:10px; font-weight:bold; display:none;">0</span>
+            </button>
+            <button id="pos-drinks-orders-btn" onclick="renderView('drinks')" style="height:38px; padding:0 12px; background:#eff6ff; color:#2563eb; border:1px solid rgba(37,99,235,0.3); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:6px; white-space:nowrap;" title="Cashier Drinks Orders">
+              <i class="fas fa-glass-water" style="color:#2563eb;"></i>
+              <span>Drinks Orders</span>
+              <span id="pos-drinks-badge" style="background:#2563eb; color:#fff; padding:1px 6px; border-radius:10px; font-size:10px; font-weight:bold; display:none;">0</span>
+            </button>
           </div>
-          <div class="stat-card" style="padding:8px 12px; display:flex; align-items:center; gap:10px; background:#ffffff; border-radius:10px; border:1px solid rgba(205,190,150,0.3);">
-            <div style="width:32px; height:32px; border-radius:8px; background:rgba(16,185,129,0.1); color:#10b981; display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0;"><i class="fas fa-tags"></i></div>
-            <div style="min-width:0;">
-              <div style="font-size:9px; color:var(--text-muted); font-weight:600; text-transform:uppercase; line-height:1.1;">Categories</div>
-              <div style="font-size:16px; font-weight:800; color:var(--text-main); line-height:1.1;">${categories.length}</div>
+
+          <!-- INLINE LIVE VOICE RECORDING STATUS STRIP -->
+          <div id="pos-voice-live-strip" class="pos-voice-live-strip" style="display:none; margin-bottom:8px; padding:8px 12px; background:linear-gradient(90deg, #fef2f2, #fff7ed); border:1px solid #f87171; border-radius:10px; align-items:center; justify-content:space-between; animation:fadeIn 0.2s ease;">
+            <div style="display:flex; align-items:center; gap:8px; font-size:12px; color:#991b1b; font-weight:600; min-width:0; overflow:hidden;">
+              <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#ef4444; animation:voicePulse 1s infinite; flex-shrink:0;"></span>
+              <span style="flex-shrink:0;">🔴 Recording Voice Order:</span>
+              <span id="pos-voice-transcript-text" style="color:#18181b; font-style:italic; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Speak order (e.g. "isa ka c1 solo", "c1 solo 1", "1 1pc chickenjoy solo")...</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+              <span style="font-size:10px; color:#b91c1c; background:rgba(239,68,68,0.1); padding:2px 6px; border-radius:4px; font-weight:700;">EN • TAGALOG • HILIGAYNON</span>
+              <button type="button" onclick="stopVoiceRecordingDirect()" style="border:none; background:transparent; color:#991b1b; font-size:14px; font-weight:bold; cursor:pointer; padding:0 4px;" title="Stop Voice Recording">✕</button>
             </div>
           </div>
 
-          <div class="stat-card" style="padding:8px 12px; display:flex; align-items:center; gap:10px; background:#ffffff; border-radius:10px; border:1px solid rgba(205,190,150,0.3);">
-            <div style="width:32px; height:32px; border-radius:8px; background:rgba(201,162,39,0.12); color:#c9a227; display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0;"><i class="fas fa-vault"></i></div>
-            <div style="min-width:0;">
-              <div style="font-size:9px; color:var(--text-muted); font-weight:600; text-transform:uppercase; line-height:1.1;">Cash in Drawer</div>
-              <div id="pos-cash-in-drawer-display" style="font-size:15px; font-weight:800; color:#c9a227; line-height:1.1;">${Utils.formatCurrency(posDrawerCash)}</div>
-              <div id="pos-complete-orders-display" style="font-size:9px; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Orders: ${Utils.formatCurrency(posOrdersTotal)}</div>
+          <!-- KPI SUMMARY ROW (Single-row slim strip) -->
+          <div class="stats-grid pos-stats-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 120px), 1fr)); gap:8px; margin-bottom:8px;">
+            <div class="stat-card" style="padding:8px 12px; display:flex; align-items:center; gap:10px; background:#ffffff; border-radius:10px; border:1px solid rgba(205,190,150,0.3);">
+              <div style="width:32px; height:32px; border-radius:8px; background:rgba(201,162,39,0.1); color:#c9a227; display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0;"><i class="fas fa-box"></i></div>
+              <div style="min-width:0;">
+                <div style="font-size:9px; color:var(--text-muted); font-weight:600; text-transform:uppercase; line-height:1.1;">Total Items</div>
+                <div style="font-size:16px; font-weight:800; color:var(--text-main); line-height:1.1;">${products.length}</div>
+              </div>
+            </div>
+            <div class="stat-card" style="padding:8px 12px; display:flex; align-items:center; gap:10px; background:#ffffff; border-radius:10px; border:1px solid rgba(205,190,150,0.3);">
+              <div style="width:32px; height:32px; border-radius:8px; background:rgba(16,185,129,0.1); color:#10b981; display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0;"><i class="fas fa-tags"></i></div>
+              <div style="min-width:0;">
+                <div style="font-size:9px; color:var(--text-muted); font-weight:600; text-transform:uppercase; line-height:1.1;">Categories</div>
+                <div style="font-size:16px; font-weight:800; color:var(--text-main); line-height:1.1;">${categories.length}</div>
+              </div>
+            </div>
+
+            <div class="stat-card" style="padding:8px 12px; display:flex; align-items:center; gap:10px; background:#ffffff; border-radius:10px; border:1px solid rgba(205,190,150,0.3);">
+              <div style="width:32px; height:32px; border-radius:8px; background:rgba(201,162,39,0.12); color:#c9a227; display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0;"><i class="fas fa-vault"></i></div>
+              <div style="min-width:0;">
+                <div style="font-size:9px; color:var(--text-muted); font-weight:600; text-transform:uppercase; line-height:1.1;">Cash in Drawer</div>
+                <div id="pos-cash-in-drawer-display" style="font-size:15px; font-weight:800; color:#c9a227; line-height:1.1;">${Utils.formatCurrency(posDrawerCash)}</div>
+                <div id="pos-complete-orders-display" style="font-size:9px; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Orders: ${Utils.formatCurrency(posOrdersTotal)}</div>
+              </div>
             </div>
           </div>
-        </div>
 
-        <!-- CATEGORIES HORIZONTAL SCROLL -->
-        <div class="pos-categories" id="pos-cat-bar" style="display:flex; gap:6px; overflow-x:auto; padding-bottom:6px; margin-bottom:8px;">
-          <button class="cat-pill active-cat" onclick="selectPOSCategory('all', this)" style="padding:5px 12px; font-size:11px; border-radius:8px;">All Items</button>
-          ${categories.map(cat => `<button class="cat-pill" onclick="selectPOSCategory(${cat.id}, this)" style="padding:5px 12px; font-size:11px; border-radius:8px;">${cat.name}</button>`).join('')}
+          <!-- CATEGORIES HORIZONTAL SCROLL -->
+          <div class="pos-categories" id="pos-cat-bar" style="display:flex; gap:6px; overflow-x:auto; padding-bottom:6px; margin-bottom:8px;">
+            <button class="cat-pill active-cat" onclick="selectPOSCategory('all', this)" style="padding:5px 12px; font-size:11px; border-radius:8px;">All Items</button>
+            ${categories.map(cat => `<button class="cat-pill" onclick="selectPOSCategory(${cat.id}, this)" style="padding:5px 12px; font-size:11px; border-radius:8px;">${cat.name}</button>`).join('')}
+          </div>
         </div>
 
         <!-- PRODUCT GRID (Small auto-fit / auto-resize) -->
-        <div class="pos-grid" id="pos-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 125px), 1fr)); gap:10px;">
+        <div class="pos-grid" id="pos-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, clamp(110px, 11vw, 140px)), 1fr)); gap:clamp(6px, 1vw, 10px);">
           ${renderPOSProductCards(products)}
         </div>
       </div>
 
       <!-- RIGHT CART (STICKY, COMPACT & SLEEK) -->
-      <div class="pos-cart" style="display:flex; flex-direction:column; background:#ffffff; border:1px solid rgba(205,190,150,0.3); border-radius:14px; height:calc(100vh - 100px); position:sticky; top:80px; box-shadow:0 4px 15px rgba(0,0,0,0.03); overflow:hidden;">
+      <div class="pos-cart" style="display:flex; flex-direction:column; background:#ffffff; border:1px solid rgba(205,190,150,0.3); border-radius:14px; height:calc(100vh - 84px); max-height:calc(100vh - 84px); position:-webkit-sticky; position:sticky; top:72px; align-self:start; box-shadow:0 4px 15px rgba(0,0,0,0.03); overflow:hidden; z-index:50;">
         
         <div style="padding:10px 14px; border-bottom:1px solid rgba(205,190,150,0.2); display:flex; justify-content:space-between; align-items:center; background:#faf8f3;">
           <h2 style="font-size:13px; font-weight:800; color:var(--text-main); margin:0;">Current Cart</h2>
@@ -2613,7 +2603,7 @@ async function submitCheckout() {
     const currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
     const orderForReceipt = {
       id: tx.id,
-      receiptNumber: tx.client_tx_id || tx.id || "N/A",
+      receiptNumber: (typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('TXN', tx.id) : `TXN-${String(tx.id).padStart(4, '0')}`,
       date: tx.created_at || new Date().toISOString(),
       cashier: currentUser ? (currentUser.name || currentUser.username) : "Cashier",
       items: posCart.map(i => ({
@@ -2659,23 +2649,23 @@ async function renderKitchen(c) {
 
   c.innerHTML = `
     <style>
-      .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 14px; margin-bottom: 24px; }
+      .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr)); gap: 10px; margin-bottom: 16px; }
       @media (max-width: 600px) {
-        .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+        .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
       }
       @media (max-width: 400px) {
         .stats-grid { grid-template-columns: 1fr; }
       }
-      .stat-card { padding: 20px 18px; display: flex; align-items: center; gap: 14px; background: var(--card-bg, #ffffff); border-radius: var(--radius-card, 16px); border: 1px solid rgba(205, 190, 150, 0.35); box-shadow: 0 4px 15px rgba(0,0,0,0.03); transition: transform 0.3s ease, box-shadow 0.3s ease; }
-      .stat-card:hover { transform: translateY(-3px); box-shadow: 0 15px 35px rgba(180,140,50,0.12); }
-      .stat-icon { width: 50px; height: 50px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+      .stat-card { padding: 10px 14px; display: flex; align-items: center; gap: 10px; background: var(--card-bg, #ffffff); border-radius: var(--radius-card, 12px); border: 1px solid rgba(205, 190, 150, 0.35); box-shadow: 0 2px 8px rgba(0,0,0,0.03); transition: transform 0.2s ease, box-shadow 0.2s ease; min-height: 58px; }
+      .stat-card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(180,140,50,0.1); }
+      .stat-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 15px; flex-shrink: 0; }
       .stat-icon.gold   { background: rgba(201,162,39,0.12); color: #c9a227; }
       .stat-icon.green  { background: rgba(16,185,129,0.12); color: #10b981; }
       .stat-icon.orange { background: rgba(249,115,22,0.12); color: #f97316; }
       .stat-icon.blue   { background: rgba(59,130,246,0.12); color: #3b82f6; }
-      .stat-info h3 { font-size: 11px; color: var(--text-muted, #71717a); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; margin-top: 0; }
-      .stat-count { font-size: 24px; font-weight: 800; color: var(--text-main, #18181b); line-height: 1.1; }
-      .stat-trend { font-size: 11px; margin-top: 4px; font-weight: 500; }
+      .stat-info h3 { font-size: 11px; color: var(--text-muted, #71717a); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; margin-top: 0; }
+      .stat-count { font-size: 18px; font-weight: 800; color: var(--text-main, #18181b); line-height: 1.1; }
+      .stat-trend { font-size: 10px; margin-top: 2px; font-weight: 500; }
     </style>
 
     <!-- Top Header Toolbar -->
@@ -2748,7 +2738,7 @@ async function renderKitchen(c) {
           <!-- Ticket Header -->
           <div style="background:${isCompleted ? '#f0fdf4' : '#faf8f3'}; padding:16px 20px; border-bottom:1px solid rgba(205,190,150,0.2); display:flex; justify-content:space-between; align-items:center;">
             <div>
-              <strong style="font-size:16px; font-weight:800; color:var(--text-main);">${ord.id || '#ORD-XXXX'}</strong>
+              <strong style="font-size:16px; font-weight:800; color:var(--text-main);">${(typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('ORD', ord.raw_id || ord.id) : (ord.id || 'ORD-0000')}</strong>
               <div style="font-size:11px; color:var(--text-muted); margin-top:2px;"><i class="far fa-clock"></i> ${ord.time || 'Just now'} • ${ord.table || 'Takeout'}</div>
             </div>
             <span class="badge" style="font-size:11px; font-weight:700; ${badgeStyle}">
@@ -2833,7 +2823,7 @@ async function renderKitchenLogs(c) {
           <!-- Ticket Header -->
           <div style="background:#f0fdf4; padding:16px 20px; border-bottom:1px solid rgba(205,190,150,0.2); display:flex; justify-content:space-between; align-items:center;">
             <div>
-              <strong style="font-size:16px; font-weight:800; color:var(--text-main);">${ord.id || '#ORD-XXXX'}</strong>
+              <strong style="font-size:16px; font-weight:800; color:var(--text-main);">${(typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('ORD', ord.raw_id || ord.id) : (ord.id || 'ORD-0000')}</strong>
               <div style="font-size:11px; color:var(--text-muted); margin-top:2px;"><i class="far fa-clock"></i> ${ord.time || 'Just now'} • ${ord.table || 'Takeout'}</div>
             </div>
             <span class="badge" style="font-size:11px; font-weight:700; background:rgba(16,185,129,0.12); color:#10b981;">
@@ -2922,23 +2912,23 @@ async function renderDrinksStation(c) {
 
   c.innerHTML = `
     <style>
-      .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 14px; margin-bottom: 24px; }
+      .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr)); gap: 10px; margin-bottom: 16px; }
       @media (max-width: 600px) {
-        .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+        .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
       }
       @media (max-width: 400px) {
         .stats-grid { grid-template-columns: 1fr; }
       }
-      .stat-card { padding: 20px 18px; display: flex; align-items: center; gap: 14px; background: var(--card-bg, #ffffff); border-radius: var(--radius-card, 16px); border: 1px solid rgba(205, 190, 150, 0.35); box-shadow: 0 4px 15px rgba(0,0,0,0.03); transition: transform 0.3s ease, box-shadow 0.3s ease; }
-      .stat-card:hover { transform: translateY(-3px); box-shadow: 0 15px 35px rgba(180,140,50,0.12); }
-      .stat-icon { width: 50px; height: 50px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+      .stat-card { padding: 10px 14px; display: flex; align-items: center; gap: 10px; background: var(--card-bg, #ffffff); border-radius: var(--radius-card, 12px); border: 1px solid rgba(205, 190, 150, 0.35); box-shadow: 0 2px 8px rgba(0,0,0,0.03); transition: transform 0.2s ease, box-shadow 0.2s ease; min-height: 58px; }
+      .stat-card:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(180,140,50,0.1); }
+      .stat-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 15px; flex-shrink: 0; }
       .stat-icon.gold   { background: rgba(201,162,39,0.12); color: #c9a227; }
       .stat-icon.green  { background: rgba(16,185,129,0.12); color: #10b981; }
       .stat-icon.orange { background: rgba(249,115,22,0.12); color: #f97316; }
       .stat-icon.blue   { background: rgba(59,130,246,0.12); color: #3b82f6; }
-      .stat-info h3 { font-size: 11px; color: var(--text-muted, #71717a); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; margin-top: 0; }
-      .stat-count { font-size: 24px; font-weight: 800; color: var(--text-main, #18181b); line-height: 1.1; }
-      .stat-trend { font-size: 11px; margin-top: 4px; font-weight: 500; }
+      .stat-info h3 { font-size: 11px; color: var(--text-muted, #71717a); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; margin-top: 0; }
+      .stat-count { font-size: 18px; font-weight: 800; color: var(--text-main, #18181b); line-height: 1.1; }
+      .stat-trend { font-size: 10px; margin-top: 2px; font-weight: 500; }
     </style>
 
     <!-- Top Header Toolbar -->
@@ -3027,7 +3017,7 @@ async function renderDrinksStation(c) {
               <div style="background:${isCompleted ? '#f0fdf4' : '#eff6ff'}; padding:16px 20px; border-bottom:1px solid rgba(59,130,246,0.15); display:flex; justify-content:space-between; align-items:center;">
                 <div>
                   <div style="display:flex; align-items:center; gap:8px;">
-                    <strong style="font-size:16px; font-weight:800; color:var(--text-main);">${ord.id || '#ORD-XXXX'}</strong>
+                    <strong style="font-size:16px; font-weight:800; color:var(--text-main);">${(typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('ORD', ord.raw_id || ord.id) : (ord.id || 'ORD-0000')}</strong>
                     <span style="font-size:11px; font-weight:700; background:#2563eb; color:#ffffff; padding:2px 8px; border-radius:12px;">🍹 DRINKS</span>
                   </div>
                   <div style="font-size:11px; color:var(--text-muted); margin-top:3px;">
@@ -3204,7 +3194,9 @@ async function renderTransactions(c) {
 
               return `
                 <tr>
-                  <td style="color:var(--text-muted); font-weight:700;">#${tx.id}</td>
+                  <td style="color:var(--text-main); font-weight:700; font-family:monospace; font-size:12px;">
+                    <span style="background:rgba(201,162,39,0.12); color:#c9a227; padding:3px 8px; border-radius:6px; letter-spacing:0.5px;">${(typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('TXN', tx.id) : `TXN-${String(tx.id).padStart(4, '0')}`}</span>
+                  </td>
                   <td style="color:var(--text-muted); font-size:13px;">${tx.created_at ? new Date(tx.created_at).toLocaleString() : '—'}</td>
                   <td><strong style="font-size:13px;">${tx.cashier || 'Staff'}</strong></td>
                   <td style="color:var(--text-main); font-size:13px;" title="${itemsSummary || 'No items'}">
@@ -3235,7 +3227,7 @@ window.viewOrderItemsModal = function(txId) {
   Utils.openModal(`
     <div style="padding:4px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-        <h3 style="font-size:16px; font-weight:800; margin:0; color:var(--text-main);">Order #${tx.id} Details</h3>
+        <h3 style="font-size:16px; font-weight:800; margin:0; color:var(--text-main);">Order ${(typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('TXN', tx.id) : `TXN-${String(tx.id).padStart(4, '0')}`} Details</h3>
         <span class="badge" style="font-size:11px; font-weight:700;">${(tx.status || 'completed').toUpperCase()}</span>
       </div>
       <div style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">
@@ -3448,7 +3440,6 @@ async function renderUsers(c) {
         <table>
           <thead>
             <tr>
-              <th>ID</th>
               <th>Staff User</th>
               <th>Email</th>
               <th>Assigned Role</th>
@@ -3459,7 +3450,6 @@ async function renderUsers(c) {
           <tbody>
             ${users.length ? users.map(u => `
               <tr>
-                <td style="color:var(--text-muted);">#${u.id}</td>
                 <td><strong style="color:var(--text-main); font-size:13px;">${u.username}</strong></td>
                 <td style="color:var(--text-muted); font-size:13px;">${u.email || '—'}</td>
                 <td><span class="badge badge-info" style="font-size:11px; font-weight:700; text-transform:uppercase;">${u.role}</span></td>
@@ -3479,7 +3469,7 @@ async function renderUsers(c) {
                   </div>
                 </td>
               </tr>
-            `).join('') : '<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-muted);">No staff registered in this branch.</td></tr>'}
+            `).join('') : '<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-muted);">No staff registered in this branch.</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -3820,7 +3810,6 @@ async function renderSuppliers(c) {
           <table>
             <thead>
               <tr>
-                <th>ID</th>
                 <th>Supplier Name</th>
                 <th>Contact Person</th>
                 <th>Phone Number</th>
@@ -3850,11 +3839,10 @@ async function renderSuppliers(c) {
 
 function renderSupplierRows(suppliers) {
   if (!suppliers || !suppliers.length) {
-    return `<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--text-muted);">No suppliers found.</td></tr>`;
+    return `<tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-muted);">No suppliers found.</td></tr>`;
   }
   return suppliers.map(s => `
     <tr>
-      <td style="color:var(--text-muted);">#${s.id}</td>
       <td><strong style="color:var(--text-main); font-size:13px;">${s.supplier_name}</strong></td>
       <td style="color:var(--text-muted); font-size:13px;">${s.contact_person || '—'}</td>
       <td><span style="font-family:monospace; font-size:12px; color:var(--text-muted);">${s.contact_number || '—'}</span></td>
@@ -3987,20 +3975,24 @@ async function renderProfitLoss(c) {
   const pl = data.profit_loss || {};
   const history = csh.history || [];
 
+  const currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
+  const userRole = (currentUser && currentUser.role ? currentUser.role : '').toLowerCase();
+  const isAdmin = userRole.includes('admin') || window.location.pathname.includes('/admin');
+
   c.innerHTML = `
     <!-- Top Toolbar -->
     <div class="toolbar fade-up" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
       <div>
         <h2 style="font-size:20px; font-weight:800; color:var(--text-main); margin:0; display:flex; align-items:center; gap:8px;">
-          <i class="fas fa-scale-balanced" style="color:#10b981;"></i> Profit Loss & Cashout Income
+          <i class="fas fa-scale-balanced" style="color:#10b981;"></i> Profit Loss and Income
         </h2>
         <p style="font-size:12px; color:var(--text-muted); margin:4px 0 0 0;">
-          Live financial ledger: orders sales revenue, inventory price valuation, cashier drawer cashouts, and operating profit
+          Live financial ledger: orders sales revenue, inventory price valuation, manager cashier transfers, and operating profit
         </p>
       </div>
       <div style="display:flex; gap:10px; align-items:center;">
-        <button class="btn btn-primary" onclick="openAddCashMovementModal()" style="display:inline-flex; align-items:center; gap:8px; font-weight:700; border-radius:10px;">
-          <i class="fas fa-hand-holding-dollar"></i> New Cashout
+        <button class="btn btn-primary" onclick="openAddCashMovementModal(null, 'admin')" style="display:inline-flex; align-items:center; gap:8px; font-weight:700; border-radius:10px;">
+          <i class="fas fa-paper-plane"></i> Transfer to Admin
         </button>
         <button class="btn btn-outline btn-sm" onclick="renderProfitLoss()" title="Refresh Financials" style="border-radius:10px;">
           <i class="fas fa-sync-alt"></i> Live Refresh
@@ -4029,9 +4021,9 @@ async function renderProfitLoss(c) {
       <div class="stat-card">
         <div class="stat-icon emerald" style="background:rgba(16,185,129,0.12); color:#10b981;"><i class="fas fa-vault"></i></div>
         <div class="stat-info">
-          <h3>Total Cashout Income</h3>
-          <div class="stat-count" style="color:#10b981;">${Utils.formatCurrency(csh.total_cashout_income || 0)}</div>
-          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-shield-halved"></i> Deposited into store safe</div>
+          <h3>${isAdmin ? 'Transfer Income from Manager' : 'Cashout Income & Safe Deposits'}</h3>
+          <div class="stat-count" style="color:#10b981;">${Utils.formatCurrency(isAdmin ? (csh.admin_transfer_income !== undefined ? csh.admin_transfer_income : (csh.total_transferred_to_admin || 0)) : (csh.manager_safe_cash !== undefined ? csh.manager_safe_cash : (csh.total_cashout_income || 0)))}</div>
+          <div class="stat-trend" style="color:#10b981;"><i class="fas ${isAdmin ? 'fa-paper-plane' : 'fa-vault'}"></i> ${isAdmin ? 'Transferred to admin safe' : 'Manager safe balance (after transfers to Admin)'}</div>
         </div>
       </div>
       <div class="stat-card">
@@ -4051,7 +4043,7 @@ async function renderProfitLoss(c) {
         <div class="section-head" style="border-bottom:1px solid rgba(205,190,150,0.25); padding-bottom:12px;">
           <div>
             <h2 style="font-size:16px; margin:0;"><i class="fas fa-file-invoice-dollar" style="color:#10b981; margin-right:8px;"></i> Profit & Loss Statement (P&L)</h2>
-            <span style="font-size:12px; color:var(--text-muted);">Real-time revenue versus inventory cost breakdown</span>
+            <span style="font-size:12px; color:var(--text-muted);">Real-time revenue versus total valuation of inventory of product</span>
           </div>
           <span class="badge ${pl.is_profitable ? 'badge-success' : 'badge-danger'}" style="font-size:11px; font-weight:700;">
             ${pl.is_profitable ? 'PROFITABLE' : 'OPERATING LOSS'}
@@ -4071,11 +4063,11 @@ async function renderProfitLoss(c) {
             <span>${Utils.formatCurrency(rev.non_cash_sales || 0)}</span>
           </div>
           <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(205,190,150,0.15);">
-            <span style="font-weight:600; color:var(--text-main); font-size:13px;"><i class="fas fa-minus" style="color:#ef4444; margin-right:6px;"></i> Cost of Goods Sold (Inventory Cost):</span>
-            <strong style="color:#ef4444; font-size:14px;">-${Utils.formatCurrency(inv.cost_of_goods_sold || 0)}</strong>
+            <span style="font-weight:600; color:var(--text-main); font-size:13px;"><i class="fas fa-minus" style="color:#ef4444; margin-right:6px;"></i> Total Valuation of Inventory of Product:</span>
+            <strong style="color:#ef4444; font-size:14px;">-${Utils.formatCurrency(inv.total_inventory_valuation || 0)}</strong>
           </div>
           <div style="display:flex; justify-content:space-between; padding:12px 0; background:rgba(201,162,39,0.06); border-radius:8px; margin-top:12px; padding:12px 14px;">
-            <span style="font-weight:800; font-size:14px; color:var(--text-main);">NET OPERATING PROFIT:</span>
+            <span style="font-weight:800; font-size:14px; color:var(--text-main);">NET OPERATING PROFIT / LOSS:</span>
             <span style="font-weight:800; font-size:18px; color:${pl.is_profitable ? '#10b981' : '#ef4444'};">
               ${Utils.formatCurrency(pl.net_profit || 0)}
             </span>
@@ -4087,23 +4079,29 @@ async function renderProfitLoss(c) {
         </div>
       </div>
 
-      <!-- Cashout & Drawer Liquidity Card -->
+      <!-- Cashout Income & Safe Deposits Card -->
       <div class="section-card" style="margin-bottom:0;">
         <div class="section-head" style="border-bottom:1px solid rgba(205,190,150,0.25); padding-bottom:12px;">
           <div>
-            <h2 style="font-size:16px; margin:0;"><i class="fas fa-vault" style="color:#c9a227; margin-right:8px;"></i> Cashout Income & Safe Deposits</h2>
-            <span style="font-size:12px; color:var(--text-muted);">Funds secured in store safe vs active cashier drawer float</span>
+            <h2 style="font-size:16px; margin:0;"><i class="fas fa-vault" style="color:#c9a227; margin-right:8px;"></i> ${isAdmin ? 'Transfer Income from Manager' : 'Cashout Income & Safe Deposits'}</h2>
+            <span style="font-size:12px; color:var(--text-muted);">${isAdmin ? 'Transfer income received from manager secured in store safe vs active cashier drawer float' : 'Manager overall cashout income from the cashier secured in store safe vs active cashier drawer float'}</span>
           </div>
         </div>
         <div style="padding:16px 0;">
           <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(205,190,150,0.15);">
-            <span style="font-weight:600; color:var(--text-main); font-size:13px;"><i class="fas fa-shield-halved" style="color:#10b981; margin-right:6px;"></i> Total Cashout Income (In Store Safe):</span>
-            <strong style="color:#10b981; font-size:14px;">${Utils.formatCurrency(csh.total_cashout_income || 0)}</strong>
+            <span style="font-weight:600; color:var(--text-main); font-size:13px;"><i class="fas ${isAdmin ? 'fa-paper-plane' : 'fa-vault'}" style="color:#10b981; margin-right:6px;"></i> ${isAdmin ? 'Total Transfer Income from Manager (In Admin Safe):' : 'Total Cashout Income (In Store Safe):'}</span>
+            <strong style="color:#10b981; font-size:14px;">${Utils.formatCurrency(isAdmin ? (csh.admin_transfer_income !== undefined ? csh.admin_transfer_income : (csh.total_transferred_to_admin || 0)) : (csh.manager_safe_cash !== undefined ? csh.manager_safe_cash : (csh.total_cashout_income || 0)))}</strong>
           </div>
           <div style="display:flex; justify-content:space-between; padding:8px 0 8px 20px; font-size:12px; color:var(--text-muted); border-bottom:1px dashed rgba(205,190,150,0.15);">
-            <span>↳ Today's Cashouts:</span>
-            <span>${Utils.formatCurrency(csh.today_cashout_income || 0)}</span>
+            <span>↳ ${isAdmin ? "Today's Transfer Income from Manager:" : "Today's Cashouts:"}</span>
+            <span>${Utils.formatCurrency(isAdmin ? (csh.today_transferred_to_admin || 0) : (csh.today_cashout_income || 0))}</span>
           </div>
+          ${!isAdmin && (csh.total_transferred_to_admin || 0) > 0 ? `
+            <div style="display:flex; justify-content:space-between; padding:8px 0 8px 20px; font-size:12px; color:#ef4444; border-bottom:1px dashed rgba(205,190,150,0.15);">
+              <span>↳ Transferred to Admin:</span>
+              <strong style="color:#ef4444;">-${Utils.formatCurrency(csh.total_transferred_to_admin || 0)}</strong>
+            </div>
+          ` : ''}
           <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(205,190,150,0.15);">
             <span style="font-weight:600; color:var(--text-main); font-size:13px;"><i class="fas fa-cash-register" style="color:#c9a227; margin-right:6px;"></i> Active Cash Balance in Cashier Drawers:</span>
             <strong style="color:#c9a227; font-size:14px;">${Utils.formatCurrency(csh.active_drawer_cash || 0)}</strong>
@@ -4112,15 +4110,15 @@ async function renderProfitLoss(c) {
             <span style="font-weight:600; color:var(--text-main); font-size:13px;"><i class="fas fa-mobile-screen" style="color:#6366f1; margin-right:6px;"></i> Non-Cash Collections (E-Wallets / Bank):</span>
             <strong style="color:#6366f1; font-size:14px;">${Utils.formatCurrency(rev.non_cash_sales || 0)}</strong>
           </div>
-          <div style="display:flex; justify-content:space-between; padding:12px 0; background:rgba(16,185,129,0.06); border-radius:8px; margin-top:12px; padding:12px 14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; background:rgba(16,185,129,0.06); border-radius:8px; margin-top:12px; padding:12px 14px;">
             <span style="font-weight:800; font-size:14px; color:var(--text-main);">NET REALIZED CASH & DIGITAL INCOME:</span>
             <span style="font-weight:800; font-size:18px; color:#10b981;">
-              ${Utils.formatCurrency(pl.net_cash_income || 0)}
+              ${Utils.formatCurrency(isAdmin ? (pl.admin_net_cash_income !== undefined ? pl.admin_net_cash_income : pl.net_cash_income) : (pl.manager_net_cash_income !== undefined ? pl.manager_net_cash_income : pl.net_cash_income))}
             </span>
           </div>
           <div style="margin-top:12px;">
-            <button class="btn btn-primary btn-sm" onclick="openAddCashMovementModal()" style="width:100%; justify-content:center; padding:8px 12px; font-weight:700;">
-              <i class="fas fa-hand-holding-dollar"></i> Perform Drawer Cashout & Reset Cashier to ₱0.00
+            <button class="btn btn-primary btn-sm" onclick="openAddCashMovementModal(null, 'admin')" style="width:100%; justify-content:center; padding:8px 12px; font-weight:700;">
+              <i class="fas fa-paper-plane"></i> Transfer to Admin
             </button>
           </div>
         </div>
@@ -4131,10 +4129,10 @@ async function renderProfitLoss(c) {
     <div class="section-card fade-up delay-3">
       <div class="section-head">
         <div>
-          <h2><i class="fas fa-receipt" style="color:#10b981; margin-right:8px;"></i> Cashout Income & Safe Deposit Ledger</h2>
-          <span style="font-size:12px; color:var(--text-muted);">Historical records of funds cashed out from cashier drawers into the manager safe</span>
+          <h2><i class="fas fa-receipt" style="color:#10b981; margin-right:8px;"></i> ${isAdmin ? 'Transfer Income from Manager Ledger' : 'Cashout Income & Safe Deposit Ledger'}</h2>
+          <span style="font-size:12px; color:var(--text-muted);">${isAdmin ? 'Historical records of transfer income received from manager into the admin safe' : 'Historical records of manager overall cashout income from cashier drawers into the manager safe'}</span>
         </div>
-        <span class="badge badge-info" style="font-size:11px; font-weight:700;">${history.length} Cashout Records</span>
+        <span class="badge badge-info" style="font-size:11px; font-weight:700;">${history.length} ${isAdmin ? 'Transfer' : 'Cashout'} Records</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -4142,7 +4140,7 @@ async function renderProfitLoss(c) {
             <tr>
               <th>Timestamp</th>
               <th>Shift / Cashier</th>
-              <th>Cashed Out Amount</th>
+              <th>${isAdmin ? 'Transfer Income from Manager' : 'Cashed Out Amount'}</th>
               <th>Reason / Destination</th>
               <th>Recorded By</th>
               <th>Status</th>
@@ -4150,15 +4148,15 @@ async function renderProfitLoss(c) {
           </thead>
           <tbody>
             ${history.length === 0 ? `
-              <tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-muted);"><i class="fas fa-info-circle"></i> No cashout movements logged yet. When the manager performs a drawer cashout, it appears here.</td></tr>
+              <tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-muted);"><i class="fas fa-info-circle"></i> No ${isAdmin ? 'transfer records from manager' : 'cashout records'} logged yet.</td></tr>
             ` : history.map(h => `
               <tr>
                 <td style="color:var(--text-muted); font-size:12px;">${h.created_at ? new Date(h.created_at).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'}</td>
                 <td><strong style="color:var(--text-main); font-size:13px;">${h.cashier}</strong> <span style="font-size:11px; color:var(--text-muted);">(Shift #${h.shift_id})</span></td>
                 <td><strong style="color:#10b981; font-size:14px;">+${Utils.formatCurrency(h.amount)}</strong></td>
                 <td style="color:var(--text-main); font-size:13px;">${h.reason}</td>
-                <td style="color:var(--text-muted); font-size:12px;">Safe Deposit</td>
-                <td><span class="badge badge-success" style="font-size:11px; font-weight:700;"><i class="fas fa-check-circle"></i> SECURED</span></td>
+                <td style="color:var(--text-muted); font-size:12px;">${isAdmin ? 'Transferred from Manager' : (h.cashier || 'Cashier')}</td>
+                <td><span class="badge badge-success" style="font-size:11px; font-weight:700;"><i class="fas fa-check-circle"></i> ${isAdmin ? 'RECEIVED' : 'CASHED OUT'}</span></td>
               </tr>
             `).join('')}
           </tbody>
@@ -4235,7 +4233,6 @@ async function renderWastage(c) {
         <table>
           <thead>
             <tr>
-              <th>ID</th>
               <th>Ingredient / Item</th>
               <th>Quantity Lost</th>
               <th>Loss Reason</th>
@@ -4247,7 +4244,6 @@ async function renderWastage(c) {
           <tbody>
             ${cachedWastageLogs.map(w => `
               <tr>
-                <td style="color:var(--text-muted);">#${w.id}</td>
                 <td><strong style="color:var(--text-main); font-size:13px;">${w.item}</strong></td>
                 <td><span style="font-weight:700; color:var(--danger);">${w.qty}</span></td>
                 <td><span class="badge badge-danger" style="font-size:11px; font-weight:700;">${w.reason}</span></td>
@@ -4573,8 +4569,8 @@ async function loadCustomerOrdersTable() {
                 <span style="background:#c9a227; color:#18181b; font-weight:800; font-size:12px; padding:4px 10px; border-radius:16px; letter-spacing:0.5px;">
                   🪑 TABLE ${o.table_number || 'Takeout'}
                 </span>
-                <span style="font-size:11px; font-family:monospace; background:rgba(0,0,0,0.06); padding:2px 6px; border-radius:4px; font-weight:600;">
-                  ${o.order_number}
+                <span style="font-size:11px; font-family:monospace; background:rgba(201,162,39,0.12); color:#c9a227; padding:3px 8px; border-radius:4px; font-weight:800; letter-spacing:0.5px;">
+                  ${(typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('CUST', o.id) : (o.order_number || `CUST-${o.id}`)}
                 </span>
               </div>
               <div style="margin-bottom:8px; font-size:13px;">
@@ -4634,7 +4630,7 @@ async function loadCustomerOrdersTable() {
               <tbody>
                 ${pastOrders.map(h => `
                   <tr>
-                    <td><strong style="font-family:monospace; font-size:12px;">${h.order_number}</strong></td>
+                    <td><strong style="font-family:monospace; font-size:12px; color:#c9a227;">${(typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('CUST', h.id) : h.order_number}</strong></td>
                     <td><span class="badge" style="background:rgba(201,162,39,0.15); color:#c9a227; font-weight:700;">${h.table_number || h.order_type}</span></td>
                     <td><strong>${h.customer_name}</strong></td>
                     <td style="font-size:12px; color:var(--text-muted);">${(h.items || []).map(i => `${i.quantity}x ${i.name}`).join(', ')}</td>
@@ -4975,15 +4971,15 @@ function renderCashDrawerTrackerUI(container, data) {
     <div class="toolbar fade-up" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
       <div>
         <h2 style="font-size:20px; font-weight:800; color:var(--text-main); margin:0; display:flex; align-items:center; gap:8px;">
-          <i class="fas fa-vault" style="color:#c9a227;"></i> Cash in Drawer & Shift Tracking
+          <i class="fas fa-vault" style="color:#c9a227;"></i> Cash Drawer & Shift Tracking
         </h2>
         <p style="font-size:12px; color:var(--text-muted); margin:4px 0 0 0;">
           Live cash drawer balance, cashier floats, sales collections, and safe drops
         </p>
       </div>
       <div style="display:flex; gap:10px; align-items:center;">
-        <button class="btn btn-primary" onclick="openAddCashMovementModal()" style="display:inline-flex; align-items:center; gap:8px; font-weight:700; border-radius:10px;">
-          <i class="fas fa-hand-holding-dollar"></i> Cashout Cashier Drawer
+        <button class="btn btn-primary" onclick="openAddCashMovementModal(null, 'manager_income')" style="display:inline-flex; align-items:center; gap:8px; font-weight:700; border-radius:10px;">
+          <i class="fas fa-hand-holding-dollar"></i> Transfer to Manager Profit Income
         </button>
         <button class="btn btn-outline btn-sm" onclick="renderCashDrawerTracker()" title="Refresh Drawer Balances" style="border-radius:10px;">
           <i class="fas fa-sync-alt"></i> Live Refresh
@@ -5005,8 +5001,8 @@ function renderCashDrawerTrackerUI(container, data) {
         <div class="stat-icon green"><i class="fas fa-chart-line"></i></div>
         <div class="stat-info">
           <h3>Overall Income</h3>
-          <div class="stat-count" style="color:#10b981;">${Utils.formatCurrency(data.overall_income !== undefined ? data.overall_income : (data.today_total_orders_amount || 0))}</div>
-          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-circle-check"></i> Overall completed orders revenue</div>
+          <div class="stat-count" style="color:#10b981;">${Utils.formatCurrency(data.overall_income !== undefined ? data.overall_income : ((data.orders_overall_income || 0) + (data.total_cash_in_drawers || 0)))}</div>
+          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-circle-check"></i> Orders revenue + cashier drawer included</div>
         </div>
       </div>
     </div>
@@ -5027,7 +5023,7 @@ function renderCashDrawerTrackerUI(container, data) {
               <th>Cashier</th>
               <th>Shift Status</th>
               <th>Started At</th>
-              <th style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:13px;">Cashier Drawer</th>
+              <th style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:13px;"><i class="fas fa-pen-to-square" style="margin-right:4px;"></i> Edit Cashier Drawer</th>
               <th style="background:rgba(16,185,129,0.12); color:#10b981; font-size:13px;">Cashier Overall Income</th>
               <th>Cash Sales</th>
               <th style="text-align:right;">Actions</th>
@@ -5063,24 +5059,48 @@ function renderDrawerTableRows(shifts) {
             </div>
             <div>
               <strong style="color:var(--text-main); font-size:13px;">${s.cashier_name}</strong>
-              <div style="font-size:11px; color:var(--text-muted);">@${s.cashier_username} (Shift #${s.id})</div>
+              <div style="font-size:11px; color:var(--text-muted);">@${s.cashier_username} • <span style="font-family:monospace; font-weight:700; color:#c9a227;">${(typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('SHF', s.id) : `SHF-${s.id}`}</span></div>
             </div>
           </div>
         </td>
         <td>${statusBadge}</td>
         <td style="color:var(--text-muted); font-size:12px;">${startDate}</td>
-        <td style="background:rgba(201,162,39,0.08);">
-          <strong style="color:#c9a227; font-size:15px; font-weight:800;">${Utils.formatCurrency(s.expected_cash)}</strong>
+        <td style="background:rgba(201,162,39,0.08); min-width:160px;">
+          ${isOpen ? `
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div style="display:inline-flex; align-items:center; padding:5px 14px; border:1.5px solid #c9a227; border-radius:6px; font-weight:800; color:#c9a227; background:var(--bg-card, #fff); font-size:13px; cursor:default; user-select:none; pointer-events:none;" title="Active Cashier Drawer">
+              ${Utils.formatCurrency(s.expected_cash || 0)}
+            </div>
+            <button type="button" class="btn btn-outline btn-sm" onclick="openEditCashierDrawerModal(${s.id}, '${(s.cashier_name || '').replace(/'/g, "\\'")}', ${s.expected_cash || 0})" 
+              title="Open Modal to Edit Drawer"
+              style="padding:5px 8px; font-size:12px; color:#c9a227; border-color:#c9a227; cursor:pointer; border-radius:6px;">
+              <i class="fas fa-up-right-from-square"></i>
+            </button>
+          </div>
+          ` : `
+          <div style="display:flex; align-items:center; gap:6px;">
+            <strong style="color:var(--text-muted); font-size:14px; font-weight:700;">${Utils.formatCurrency(s.expected_cash)}</strong>
+            <span class="badge badge-secondary" style="font-size:10px; font-weight:600;">CLOSED</span>
+          </div>
+          `}
         </td>
         <td style="background:rgba(16,185,129,0.08);">
-          <strong style="color:#10b981; font-weight:800; font-size:15px;">${Utils.formatCurrency(s.total_sales || (s.cash_sales + s.non_cash_sales))}</strong>
+          <strong style="color:#10b981; font-weight:800; font-size:15px;">
+            ${Utils.formatCurrency(s.cashier_overall_income !== undefined ? s.cashier_overall_income : ((Number(s.total_sales) || 0) + Number(s.expected_cash || 0) + Number(s.cashed_out || s.paid_out || 0)))}
+          </strong>
+          <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">
+            ${(s.cashed_out || s.paid_out) ? `<span style="color:#10b981; font-weight:700;">Cashed Out: ${Utils.formatCurrency(s.cashed_out || s.paid_out)}</span> &bull; ` : ''}Orders: ${Utils.formatCurrency(s.total_sales || (s.cash_sales + s.non_cash_sales))} + Drawer: ${Utils.formatCurrency(s.expected_cash || 0)}
+          </div>
         </td>
         <td><span style="color:#10b981; font-weight:700; font-size:13px;">+${Utils.formatCurrency(s.cash_sales)}</span></td>
         <td style="text-align:right;">
           <div style="display:inline-flex; gap:6px;">
             ${isOpen ? `
-              <button class="btn btn-primary btn-sm" onclick="openAddCashMovementModal(${s.id})" title="Cashout Cashier Drawer and Reset to ₱0.00" style="padding:4px 10px; font-size:11px; font-weight:700;">
-                <i class="fas fa-hand-holding-dollar"></i> Cashout
+              <button class="btn btn-outline btn-sm" onclick="openEditCashierDrawerModal(${s.id}, '${(s.cashier_name || '').replace(/'/g, "\\'")}', ${s.expected_cash || 0})" title="Edit Cashier Drawer" style="padding:4px 8px; font-size:11px; color:#c9a227; border-color:#c9a227; font-weight:700;">
+                <i class="fas fa-pen-to-square"></i> Edit Drawer
+              </button>
+              <button class="btn btn-primary btn-sm" onclick="openAddCashMovementModal(${s.id}, 'manager_income')" title="Transfer Cashier Drawer to Manager Profit Income and Reset to ₱0.00" style="padding:4px 10px; font-size:11px; font-weight:700; white-space:nowrap;">
+                <i class="fas fa-hand-holding-dollar"></i> Transfer to Manager
               </button>
             ` : ''}
             <button class="btn btn-outline btn-sm" onclick="openShiftMovementsModal(${s.id})" title="View Cash Movement History" style="padding:4px 8px; font-size:11px;">
@@ -5125,37 +5145,85 @@ function renderMovementsTableRows(movements) {
   }).join('');
 }
 
-function openAddCashMovementModal(defaultShiftId = null) {
-  const shifts = (cachedDrawerData && cachedDrawerData.shifts) || [];
+async function openAddCashMovementModal(defaultShiftId = null, targetType = null) {
+  // Determine destination: Manager Profit Income (default when in cash drawer) vs Admin
+  const currentLink = document.querySelector("aside.sidebar .nav-link.active");
+  const activeView = currentLink ? currentLink.getAttribute("href")?.replace("#", "") : (window.location.hash?.replace("#", "") || "");
+  const isManagerProfitIncome = targetType === 'manager_income' || (!targetType && activeView !== 'profit_loss' && activeView !== 'purchases');
+
+  // Load fresh Profit Loss data if transferring to Admin
+  if (!isManagerProfitIncome && !cachedProfitLossData) {
+    try {
+      const res = await Auth.fetch("/api/v1/analytics/profit-loss");
+      if (res.ok) cachedProfitLossData = await res.json();
+    } catch (e) {}
+  }
+
+  let shifts = (cachedDrawerData && cachedDrawerData.shifts) || [];
+  if (!shifts.length || !shifts.some(s => s.status === 'open')) {
+    try {
+      const res = await Auth.fetch("/api/v1/shifts/drawer-summary");
+      if (res.ok) {
+        cachedDrawerData = await res.json();
+        shifts = (cachedDrawerData && cachedDrawerData.shifts) || [];
+      }
+    } catch (e) {
+      console.error("Error loading drawer summary:", e);
+    }
+  }
+
   // Strictly filter to cashier accounts only (not admin, manager, superadmin, etc.)
-  const cashierShifts = shifts.filter(s => {
+  let cashierShifts = shifts.filter(s => {
     const role = (s.role || '').toLowerCase();
     const uname = (s.cashier_username || '').toLowerCase();
     return role === 'cashier' || uname === 'cashier' || (!['admin', 'manager', 'superadmin', 'kitchen', 'inventory'].includes(uname) && !['admin', 'manager', 'superadmin', 'kitchen', 'inventory'].includes(role));
   });
-  const openShifts = cashierShifts.filter(s => s.status === 'open');
-
-  if (!openShifts.length) {
-    Utils.showToast("There are currently no active open cashier shifts. A cashier must start a shift to record drawer cashout.", "warning");
-    return;
+  if (!cashierShifts.length && shifts.length) {
+    cashierShifts = shifts;
+  }
+  let openShifts = cashierShifts.filter(s => s.status === 'open');
+  if (!openShifts.length && cashierShifts.length) {
+    openShifts = [cashierShifts[0]];
   }
 
-  const targetShift = (defaultShiftId ? openShifts.find(s => s.id === defaultShiftId) : null) || openShifts[0];
-  const targetShiftId = targetShift ? targetShift.id : (openShifts[0]?.id || "");
-  const expectedCash = targetShift ? (targetShift.expected_cash || 0) : 0;
+  const targetShift = (defaultShiftId ? openShifts.find(s => s.id === defaultShiftId) : null) || openShifts[0] || cashierShifts[0] || null;
+  const targetShiftId = targetShift ? targetShift.id : "";
+  const expectedCash = targetShift ? (targetShift.expected_cash || 0) : (cachedProfitLossData?.cashout?.active_drawer_cash || 0);
+  const cashierOverallIncome = targetShift 
+    ? (targetShift.cashier_overall_income !== undefined ? targetShift.cashier_overall_income : ((targetShift.total_sales || 0) + (targetShift.expected_cash || 0)))
+    : (cachedDrawerData?.overall_income || expectedCash || 0);
+  const availableSafeCash = cachedProfitLossData?.cashout?.manager_safe_cash !== undefined
+    ? cachedProfitLossData.cashout.manager_safe_cash
+    : Math.max(0, (cachedProfitLossData?.cashout?.total_cashout_income || 0) - (cachedProfitLossData?.cashout?.total_transferred_to_admin || 0));
 
-  const shiftOptions = openShifts.map(s => `
+  const defaultCashoutAmount = isManagerProfitIncome
+    ? (cashierOverallIncome > 0 ? cashierOverallIncome : (expectedCash > 0 ? expectedCash : 0))
+    : (availableSafeCash > 0 ? availableSafeCash : 0);
+
+  const modalTitle = isManagerProfitIncome ? "Transfer to Manager Profit Income" : "Transfer to Admin";
+  const labelText = isManagerProfitIncome ? "Transfer Amount to Manager Profit Income (₱)" : "Transfer Amount to Admin (₱)";
+  const btnIcon = isManagerProfitIncome ? "fa-vault" : "fa-paper-plane";
+  const btnText = isManagerProfitIncome ? "Transfer to Manager Profit Income & Reset Cashier to ₱0.00" : "Transfer to Admin (Decreases Realized Cash)";
+  const transferReason = isManagerProfitIncome ? "Transfer to Manager Profit Income" : "Transfer to Admin";
+
+  const shiftOptions = openShifts.length > 0 ? openShifts.map(s => {
+    const sIncome = s.cashier_overall_income !== undefined ? s.cashier_overall_income : ((s.total_sales || 0) + (s.expected_cash || 0));
+    return `
     <option value="${s.id}" ${(defaultShiftId && defaultShiftId === s.id) || s.id === targetShiftId ? 'selected' : ''}>
-      Shift #${s.id} — ${s.cashier_name} (@${s.cashier_username}) [Current Drawer: ${Utils.formatCurrency(s.expected_cash)}]
+      Shift #${s.id} — ${s.cashier_name} (@${s.cashier_username}) [Overall Income: ${Utils.formatCurrency(sIncome)} | Drawer: ${Utils.formatCurrency(s.expected_cash)}]
     </option>
-  `).join('');
+    `;
+  }).join('') : `
+    <option value="">Active Cashier Drawer (Auto-Assigned)</option>
+  `;
 
-  Utils.openModal("Cashout Cashier Drawer", `
+  Utils.openModal(modalTitle, `
     <form id="form-cash-movement" onsubmit="event.preventDefault(); submitAddCashMovement();">
-      ${openShifts.length > 1 && !defaultShiftId ? `
+      <input type="hidden" id="cm-transfer-reason" value="${transferReason}">
+      ${isManagerProfitIncome && openShifts.length > 1 && !defaultShiftId ? `
         <div class="input-group" style="margin-bottom:14px;">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Select Active Cashier Shift <span style="color:var(--danger);">*</span></label>
-          <select id="cm-shift-id" class="input-field" required style="width:100%;" onchange="const s = ((cachedDrawerData && cachedDrawerData.shifts) || []).find(x => x.id == this.value); if (s && document.getElementById('cm-amount')) { document.getElementById('cm-amount').value = (s.expected_cash || 0).toFixed(2); const info = document.getElementById('cm-expected-info'); if (info) info.textContent = Utils.formatCurrency(s.expected_cash); }">
+          <select id="cm-shift-id" class="input-field" required style="width:100%;" onchange="const s = ((cachedDrawerData && cachedDrawerData.shifts) || []).find(x => x.id == this.value); if (s && document.getElementById('cm-amount')) { const inc = s.cashier_overall_income !== undefined ? s.cashier_overall_income : ((s.total_sales || 0) + (s.expected_cash || 0)); const val = inc > 0 ? inc : (s.expected_cash || 0); document.getElementById('cm-amount').value = val.toFixed(2); const info = document.getElementById('cm-expected-info'); if (info) info.textContent = Utils.formatCurrency(val); }">
             ${shiftOptions}
           </select>
         </div>
@@ -5163,24 +5231,33 @@ function openAddCashMovementModal(defaultShiftId = null) {
 
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:13px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:8px; text-align:center;">
-          Cash Amount (₱) <span style="color:var(--danger);">*</span>
+          ${labelText} <span style="color:var(--danger);">*</span>
         </label>
-        <input type="number" step="0.01" min="0" id="cm-amount" class="input-field" required value="${expectedCash.toFixed(2)}" placeholder="0.00" style="width:100%; font-size:26px; font-weight:800; padding:12px; text-align:center; color:#c9a227; border:2px solid #c9a227; border-radius:10px;">
+        <input type="number" step="0.01" min="0.01" id="cm-amount" class="input-field" required value="${defaultCashoutAmount > 0 ? defaultCashoutAmount.toFixed(2) : ''}" placeholder="0.00" style="width:100%; font-size:26px; font-weight:800; padding:12px; text-align:center; color:#10b981; border:2px solid #10b981; border-radius:10px;">
         <div style="text-align:center; font-size:12px; color:var(--text-muted); margin-top:8px;">
-          Current Drawer Cash: <strong id="cm-expected-info" style="color:var(--text-main);">${Utils.formatCurrency(expectedCash)}</strong>
+          ${isManagerProfitIncome ? `
+            Cashier Overall Income: <strong id="cm-expected-info" style="color:#10b981;">${Utils.formatCurrency(cashierOverallIncome)}</strong>
+            &bull; Live Drawer: <strong>${Utils.formatCurrency(expectedCash)}</strong>
+          ` : `
+            Available in Manager Safe: <strong id="cm-expected-info" style="color:#10b981;">${Utils.formatCurrency(availableSafeCash)}</strong>
+            &bull; <span style="color:#ef4444; font-weight:700;"><i class="fas fa-arrow-down"></i> Decreases Manager Realized Income</span>
+          `}
         </div>
       </div>
     </form>
-  `, `<button class="btn btn-primary" onclick="submitAddCashMovement()" style="width:100%; justify-content:center; padding:12px; font-size:14px; font-weight:700; border-radius:10px;"><i class="fas fa-hand-holding-dollar"></i> Cashout & Reset Cashier Drawer to ₱0.00</button>`);
+  `, `<button class="btn btn-primary" onclick="submitAddCashMovement()" style="width:100%; justify-content:center; padding:12px; font-size:14px; font-weight:700; border-radius:10px;"><i class="fas ${btnIcon}"></i> ${btnText}</button>`);
 }
 
 async function submitAddCashMovement() {
-  const shiftId = parseInt(document.getElementById("cm-shift-id")?.value, 10);
+  const shiftIdRaw = document.getElementById("cm-shift-id")?.value;
+  const shiftId = shiftIdRaw ? parseInt(shiftIdRaw, 10) : undefined;
   const amountVal = document.getElementById("cm-amount")?.value;
   const amount = parseFloat(amountVal);
+  const reason = document.getElementById("cm-transfer-reason")?.value || "Transfer to Manager Profit Income";
+  const isManagerIncome = reason.includes("Manager");
 
-  if (isNaN(amount) || amount < 0) {
-    Utils.showToast("Please provide a valid cash amount.", "danger");
+  if (isNaN(amount) || amount <= 0) {
+    Utils.showToast("Please provide a valid transfer amount greater than ₱0.00.", "danger");
     return;
   }
 
@@ -5190,34 +5267,41 @@ async function submitAddCashMovement() {
       body: JSON.stringify({
         shift_id: shiftId || undefined,
         amount: amount,
-        reason: "Manager Cashout"
+        reason: reason
       })
     });
 
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || "Failed to cashout drawer");
+      throw new Error(err.detail || "Failed to process transfer");
     }
 
     const data = await res.json();
-    Utils.showToast(data.message || `✅ Successfully cashed out ₱${amount.toFixed(2)}! Cashier drawer reset to ₱0.00.`, "success");
+    const destName = isManagerIncome ? "Manager Profit Income" : "Admin";
+    Utils.showToast(data.message || `✅ Successfully transferred ₱${amount.toFixed(2)} to ${destName}! ${isManagerIncome ? 'Cashier drawer reset to ₱0.00.' : 'Manager realized cash decreased.'}`, "success");
     Utils.closeModal();
+
+    // Reset drawer and profit-loss caches so views re-fetch live updated balances
+    cachedDrawerData = null;
+    cachedProfitLossData = null;
 
     // Broadcast signal so Cashier POS in other tabs/windows immediately resets drawer to ₱0.00
     try {
       localStorage.setItem("RESTOTRACK_DRAWER_RESET", Date.now().toString());
     } catch (e) {}
 
-    // Re-render current view if on cash_drawer or dashboard
+    // Re-render current view if on cash_drawer, dashboard, or profit_loss
     const currentLink = document.querySelector("aside.sidebar .nav-link.active");
-    const activeView = currentLink ? currentLink.getAttribute("href")?.replace("#", "") : "cash_drawer";
+    const activeView = currentLink ? currentLink.getAttribute("href")?.replace("#", "") : (window.location.hash?.replace("#", "") || "");
     if (activeView === "dashboard") {
       renderDashboard();
+    } else if (activeView === "profit_loss" || activeView === "purchases") {
+      renderProfitLoss();
     } else {
       renderCashDrawerTracker();
     }
   } catch (err) {
-    console.error("Cashout error:", err);
+    console.error("Transfer error:", err);
     Utils.showToast(err.message, "danger");
   }
 }
@@ -5270,5 +5354,445 @@ function openShiftMovementsModal(shiftId) {
 
   Utils.openModal(`Shift #${s.id} Cash Movements Audit Log`, bodyHtml);
 }
+
+function openEditCashierDrawerModal(shiftId, cashierName, currentCash) {
+  const shifts = (cachedDrawerData && cachedDrawerData.shifts) || [];
+  const shiftObj = shifts.find(s => s.id === shiftId);
+  if (shiftObj && shiftObj.status !== 'open') {
+    Utils.showToast("Only active open shifts can be edited. Closed shifts are locked.", "warning");
+    return;
+  }
+
+  const bodyHtml = `
+    <form id="edit-cashier-drawer-form" onsubmit="submitEditCashierDrawer(event, ${shiftId})" style="display:flex; flex-direction:column; gap:16px;">
+      <div style="background:rgba(201,162,39,0.1); border:1px solid rgba(201,162,39,0.3); border-radius:10px; padding:14px;">
+        <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">Cashier Shift Details</div>
+        <div style="font-size:14px; font-weight:700; color:var(--text-main);">Shift #${shiftId} &bull; ${cashierName || 'Cashier'}</div>
+        <div style="font-size:13px; color:#c9a227; font-weight:700; margin-top:4px;">
+          Current Drawer Balance: <strong>${Utils.formatCurrency(currentCash || 0)}</strong>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="modal-edit-drawer-amount" style="font-weight:700; font-size:13px; color:var(--text-main); margin-bottom:6px; display:block;">
+          New Cash Amount in Drawer (₱) <span style="color:#ef4444;">*</span>
+        </label>
+        <div style="position:relative; display:flex; align-items:center;">
+          <span style="position:absolute; left:12px; font-size:15px; font-weight:800; color:#c9a227;">₱</span>
+          <input type="number" step="0.01" id="modal-edit-drawer-amount" required 
+            value="${parseFloat(currentCash || 0).toFixed(2)}"
+            style="width:100%; padding:10px 12px 10px 30px; font-size:16px; font-weight:800; color:#c9a227; border:2px solid #c9a227; border-radius:8px; background:var(--bg-card, #fff);" 
+          />
+        </div>
+        <small style="color:var(--text-muted); font-size:11px; margin-top:4px; display:block;">
+          Enter the actual cash counted in the cashier drawer. The system will record the drawer adjustment automatically.
+        </small>
+      </div>
+
+      <div class="form-group">
+        <label for="modal-edit-drawer-reason" style="font-weight:600; font-size:12px; color:var(--text-muted); margin-bottom:4px; display:block;">
+          Reason / Note (Optional)
+        </label>
+        <input type="text" id="modal-edit-drawer-reason" placeholder="e.g. Physical cash count correction"
+          style="width:100%; padding:8px 10px; font-size:13px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-card, #fff); color:var(--text-main);"
+        />
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:8px;">
+        <button type="button" class="btn btn-outline" onclick="Utils.closeModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary" style="background:#c9a227; border-color:#c9a227; color:#fff; font-weight:700;">
+          <i class="fas fa-check"></i> Save Cashier Drawer
+        </button>
+      </div>
+    </form>
+  `;
+
+  Utils.openModal(`Edit Cashier Drawer — Shift #${shiftId}`, bodyHtml);
+  setTimeout(() => {
+    const input = document.getElementById("modal-edit-drawer-amount");
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  }, 100);
+}
+
+async function saveCashierDrawerCash(shiftId, directVal = null) {
+  const shifts = (cachedDrawerData && cachedDrawerData.shifts) || [];
+  const shiftObj = shifts.find(s => s.id === shiftId);
+  if (shiftObj && shiftObj.status !== 'open') {
+    Utils.showToast("Only active open shifts can be edited. Closed shifts are locked.", "warning");
+    return;
+  }
+
+  let val = directVal;
+  if (val === null || val === undefined) {
+    const el = document.getElementById(`drawer-amount-input-${shiftId}`);
+    if (el) val = el.value;
+  }
+  const amount = parseFloat(val);
+  if (isNaN(amount)) {
+    Utils.showToast("Please enter a valid numeric drawer amount.", "warning");
+    return;
+  }
+
+  try {
+    const res = await Auth.fetch(`/api/v1/shifts/${shiftId}/drawer-cash`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        amount: amount,
+        reason: "Cashier drawer edited in management tracker"
+      })
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.detail || "Failed to update cashier drawer.");
+    }
+
+    const data = await res.json();
+    Utils.showToast(data.message || `✅ Cashier drawer updated to ${Utils.formatCurrency(amount)}`, "success");
+
+    try {
+      localStorage.setItem("RESTOTRACK_DRAWER_RESET", Date.now().toString());
+    } catch (e) {}
+
+    renderCashDrawerTracker();
+  } catch (err) {
+    console.error("Save cashier drawer error:", err);
+    Utils.showToast(err.message, "danger");
+  }
+}
+
+async function submitEditCashierDrawer(event, shiftId) {
+  if (event) event.preventDefault();
+  const inputEl = document.getElementById("modal-edit-drawer-amount");
+  const reasonEl = document.getElementById("modal-edit-drawer-reason");
+  const amount = parseFloat(inputEl ? inputEl.value : 0);
+  const reason = reasonEl ? reasonEl.value : "";
+
+  if (isNaN(amount)) {
+    Utils.showToast("Please enter a valid numeric drawer amount.", "warning");
+    return;
+  }
+
+  try {
+    const res = await Auth.fetch(`/api/v1/shifts/${shiftId}/drawer-cash`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        amount: amount,
+        reason: reason || "Cashier drawer edited via modal"
+      })
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.detail || "Failed to update cashier drawer.");
+    }
+
+    const data = await res.json();
+    Utils.showToast(data.message || `✅ Cashier drawer updated to ${Utils.formatCurrency(amount)}`, "success");
+    Utils.closeModal();
+
+    try {
+      localStorage.setItem("RESTOTRACK_DRAWER_RESET", Date.now().toString());
+    } catch (e) {}
+
+    renderCashDrawerTracker();
+  } catch (err) {
+    console.error("Submit edit cashier drawer error:", err);
+    Utils.showToast(err.message, "danger");
+  }
+}
+
+// Expose handlers globally on window
+window.openEditCashierDrawerModal = openEditCashierDrawerModal;
+window.saveCashierDrawerCash = saveCashierDrawerCash;
+window.submitEditCashierDrawer = submitEditCashierDrawer;
+window.openAddCashMovementModal = openAddCashMovementModal;
+window.submitAddCashMovement = submitAddCashMovement;
+
+// =========================================================================
+// Blessie FoodHub Real-Time Synchronization Engine (WebSocket + Fallbacks)
+// =========================================================================
+(function initBlessieRealtime() {
+  if (window._blessieRealtimeInitialized) return;
+  window._blessieRealtimeInitialized = true;
+
+  let socket = null;
+  let reconnectTimer = null;
+  let pingTimer = null;
+  let reconnectAttempts = 0;
+  const MAX_RECONNECT_DELAY = 10000;
+
+  function playOrderNotificationChime() {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(1318.51, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(987.77, ctx.currentTime + 0.35);
+      gain.gain.setValueAtTime(0.25, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.5);
+    } catch (e) {}
+  }
+
+  function getActiveViewName() {
+    const activeLink = document.querySelector("aside.sidebar .nav-link.active, .sidebar a.active");
+    if (activeLink) {
+      const href = activeLink.getAttribute("href") || "";
+      const cleaned = href.replace(/^#\/?/, "").trim();
+      if (cleaned) return cleaned;
+    }
+    return (window.location.hash || "").replace(/^#\/?/, "").trim() || "dashboard";
+  }
+
+  function handleRealtimeEvent(event, data) {
+    console.log(`[RealTime] ⚡ Live event received: ${event}`, data);
+
+    try {
+      localStorage.setItem("RESTOTRACK_EVENT", JSON.stringify({ event, data, timestamp: Date.now() }));
+    } catch (e) {}
+
+    const activeView = getActiveViewName();
+
+    switch (event) {
+      case "DRAWER_UPDATED":
+      case "CASHOUT_COMPLETED":
+      case "TRANSFER_TO_ADMIN":
+        cachedDrawerData = null;
+        cachedProfitLossData = null;
+
+        try {
+          localStorage.setItem("RESTOTRACK_DRAWER_RESET", Date.now().toString());
+        } catch (e) {}
+
+        if (activeView === "cash_drawer") {
+          if (typeof renderCashDrawerTracker === "function") renderCashDrawerTracker();
+        } else if (activeView === "profit_loss" || activeView === "purchases") {
+          if (typeof renderProfitLoss === "function") renderProfitLoss();
+        } else if (activeView === "dashboard") {
+          if (typeof renderDashboard === "function") renderDashboard();
+        } else if (activeView === "pos") {
+          if (typeof Auth !== 'undefined') {
+            Auth.fetch("/api/v1/shifts/drawer-summary").then(r => r.ok ? r.json() : null).then(dData => {
+              if (!dData) return;
+              const cUser = Auth.getUser();
+              const myS = (dData.shifts || []).find(s => s.status === 'open' && (cUser ? s.cashier_id === cUser.id : true))
+                       || (dData.shifts || []).find(s => s.status === 'open');
+              const dCashEl = document.getElementById("pos-cash-in-drawer-display");
+              const dOrdEl = document.getElementById("pos-complete-orders-display");
+              if (dCashEl) dCashEl.textContent = Utils.formatCurrency(myS ? myS.expected_cash : 0);
+              if (dOrdEl) dOrdEl.textContent = "Orders: " + Utils.formatCurrency(myS ? myS.total_sales : 0);
+            }).catch(() => {});
+          }
+        }
+        break;
+
+      case "ORDER_CREATED":
+      case "CUSTOMER_ORDER_CREATED":
+        playOrderNotificationChime();
+        if (data && (data.customer_name || data.order_number)) {
+          if (typeof Utils !== 'undefined' && Utils.showToast) {
+            Utils.showToast(`🔔 New Order Received: ${data.order_number || ''} (${data.customer_name || 'Customer'})`, "info");
+          }
+        }
+        if (activeView === "kitchen" && typeof renderKitchen === "function") {
+          renderKitchen();
+        } else if ((activeView === "drinks" || activeView === "drinks_station") && typeof renderDrinksStation === "function") {
+          renderDrinksStation();
+        } else if (activeView === "customer_orders" && typeof renderCustomerOrdersView === "function") {
+          renderCustomerOrdersView();
+        } else if (activeView === "transactions" && typeof renderTransactions === "function") {
+          renderTransactions();
+        } else if (activeView === "dashboard" && typeof renderDashboard === "function") {
+          renderDashboard();
+        } else if (activeView === "pos") {
+          if (typeof checkPendingCustomerOrders === 'function') {
+            checkPendingCustomerOrders();
+          }
+        }
+        break;
+
+      case "ORDER_UPDATED":
+      case "KITCHEN_UPDATED":
+        if (activeView === "kitchen" && typeof renderKitchen === "function") {
+          renderKitchen();
+        } else if ((activeView === "drinks" || activeView === "drinks_station") && typeof renderDrinksStation === "function") {
+          renderDrinksStation();
+        } else if (activeView === "customer_orders" && typeof renderCustomerOrdersView === "function") {
+          renderCustomerOrdersView();
+        } else if (activeView === "transactions" && typeof renderTransactions === "function") {
+          renderTransactions();
+        } else if (activeView === "dashboard" && typeof renderDashboard === "function") {
+          renderDashboard();
+        }
+        break;
+
+      case "INVENTORY_UPDATED":
+        cachedInventory = [];
+        if (activeView === "inventory" && typeof renderInventory === "function") {
+          renderInventory();
+        } else if (activeView === "dashboard" && typeof renderDashboard === "function") {
+          renderDashboard();
+        }
+        break;
+
+      case "FINANCIAL_UPDATED":
+        cachedProfitLossData = null;
+        cachedDrawerData = null;
+        if (activeView === "profit_loss" || activeView === "purchases") {
+          if (typeof renderProfitLoss === "function") renderProfitLoss();
+        } else if (activeView === "dashboard" && typeof renderDashboard === "function") {
+          renderDashboard();
+        } else if (activeView === "cash_drawer" && typeof renderCashDrawerTracker === "function") {
+          renderCashDrawerTracker();
+        }
+        break;
+    }
+  }
+
+  function connectWebSocket() {
+    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+
+    try {
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const host = window.location.host;
+      if (!host) return;
+
+      let tenantId = 1;
+      try {
+        const u = typeof Auth !== 'undefined' ? Auth.getUser() : null;
+        if (u && u.tenant_id) tenantId = u.tenant_id;
+      } catch (e) {}
+
+      const wsUrl = `${protocol}//${host}/api/v1/ws/${tenantId}`;
+      socket = new WebSocket(wsUrl);
+
+      socket.onopen = () => {
+        console.log(`[RealTime] 🟢 Connected to WebSocket at ${wsUrl}`);
+        reconnectAttempts = 0;
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
+
+        if (pingTimer) clearInterval(pingTimer);
+        pingTimer = setInterval(() => {
+          if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send("ping");
+          }
+        }, 25000);
+      };
+
+      socket.onmessage = (event) => {
+        if (event.data === "pong") return;
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload && payload.event) {
+            handleRealtimeEvent(payload.event, payload.data);
+          }
+        } catch (err) {
+          console.warn("[RealTime] Error parsing payload:", err);
+        }
+      };
+
+      socket.onclose = () => {
+        if (pingTimer) {
+          clearInterval(pingTimer);
+          pingTimer = null;
+        }
+        scheduleReconnect();
+      };
+
+      socket.onerror = (err) => {
+        try { socket.close(); } catch (e) {}
+      };
+    } catch (err) {
+      scheduleReconnect();
+    }
+  }
+
+  function scheduleReconnect() {
+    if (reconnectTimer) return;
+    reconnectAttempts++;
+    const delay = Math.min(1000 * Math.pow(1.5, reconnectAttempts), MAX_RECONNECT_DELAY);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connectWebSocket();
+    }, delay);
+  }
+
+  // Cross-tab synchronization listener via storage event
+  window.addEventListener("storage", (e) => {
+    if (e.key === "RESTOTRACK_EVENT" && e.newValue) {
+      try {
+        const parsed = JSON.parse(e.newValue);
+        if (parsed && parsed.event) {
+          const activeView = getActiveViewName();
+          switch (parsed.event) {
+            case "DRAWER_UPDATED":
+            case "CASHOUT_COMPLETED":
+            case "TRANSFER_TO_ADMIN":
+              cachedDrawerData = null;
+              cachedProfitLossData = null;
+              if (activeView === "cash_drawer") renderCashDrawerTracker();
+              else if (activeView === "profit_loss" || activeView === "purchases") renderProfitLoss();
+              else if (activeView === "dashboard") renderDashboard();
+              break;
+            case "ORDER_CREATED":
+            case "CUSTOMER_ORDER_CREATED":
+              if (activeView === "kitchen") renderKitchen();
+              else if (activeView === "drinks" || activeView === "drinks_station") renderDrinksStation();
+              else if (activeView === "customer_orders") renderCustomerOrdersView();
+              else if (activeView === "dashboard") renderDashboard();
+              break;
+            case "ORDER_UPDATED":
+            case "KITCHEN_UPDATED":
+              if (activeView === "kitchen") renderKitchen();
+              else if (activeView === "drinks" || activeView === "drinks_station") renderDrinksStation();
+              else if (activeView === "customer_orders") renderCustomerOrdersView();
+              break;
+            case "INVENTORY_UPDATED":
+              cachedInventory = [];
+              if (activeView === "inventory") renderInventory();
+              break;
+            case "FINANCIAL_UPDATED":
+              cachedProfitLossData = null;
+              if (activeView === "profit_loss") renderProfitLoss();
+              break;
+          }
+        }
+      } catch (err) {}
+    }
+  });
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", connectWebSocket);
+  } else {
+    connectWebSocket();
+  }
+
+  window.BlessieRealtime = {
+    connect: connectWebSocket,
+    sendEvent: (event, data) => handleRealtimeEvent(event, data),
+    getSocket: () => socket
+  };
+})();
+
 
 

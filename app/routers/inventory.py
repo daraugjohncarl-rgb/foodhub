@@ -363,6 +363,16 @@ def create_inventory_item(
     try:
         db.commit()
         db.refresh(item)
+        try:
+            from app.core.websocket import notify_realtime_event
+            notify_realtime_event(tenant_id, "INVENTORY_UPDATED", {
+                "action": "created",
+                "item_id": item.id,
+                "name": item.name,
+                "quantity": float(item.quantity)
+            })
+        except Exception:
+            pass
     except IntegrityError:
         db.rollback()
         raise HTTPException(
@@ -552,8 +562,19 @@ def delete_inventory_item(
         pass
 
     item_name = item.name
+    deleted_id = item.id
     db.delete(item)
     db.commit()
+
+    try:
+        from app.core.websocket import notify_realtime_event
+        notify_realtime_event(tenant_id, "INVENTORY_UPDATED", {
+            "action": "deleted",
+            "item_id": deleted_id,
+            "name": item_name
+        })
+    except Exception:
+        pass
 
     return {"success": True, "message": f"Inventory item '{item_name}' deleted successfully."}
 
@@ -682,4 +703,17 @@ def adjust_stock(
     db.add(log)
     db.commit()
     db.refresh(item)
+
+    try:
+        from app.core.websocket import notify_realtime_event
+        notify_realtime_event(tenant_id, "INVENTORY_UPDATED", {
+            "action": "adjusted",
+            "item_id": item.id,
+            "name": item.name,
+            "quantity": float(item.quantity),
+            "delta": float(body.quantity_delta)
+        })
+    except Exception:
+        pass
+
     return item
