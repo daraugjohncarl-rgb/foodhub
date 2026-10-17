@@ -5123,14 +5123,6 @@ function renderDrawerTableRows(shifts) {
         </td>
         <td style="text-align:right;">
           <div style="display:inline-flex; gap:6px;">
-            ${isOpen ? `
-              <button class="btn btn-outline btn-sm" onclick="openEditCashierDrawerModal(${s.id}, '${(s.cashier_name || '').replace(/'/g, "\\'")}', ${s.expected_cash || 0})" title="Edit Cashier Drawer" style="padding:4px 8px; font-size:11px; color:#c9a227; border-color:#c9a227; font-weight:700;">
-                <i class="fas fa-pen-to-square"></i> Edit Drawer
-              </button>
-              <button class="btn btn-primary btn-sm" onclick="openAddCashMovementModal(${s.id}, 'manager_income')" title="Transfer Cashier Drawer to Manager Profit Income and Reset to ₱0.00" style="padding:4px 10px; font-size:11px; font-weight:700; white-space:nowrap;">
-                <i class="fas fa-hand-holding-dollar"></i> Transfer to Manager
-              </button>
-            ` : ''}
             <button class="btn btn-outline btn-sm" onclick="openShiftMovementsModal(${s.id})" title="View Cash Movement History" style="padding:4px 8px; font-size:11px;">
               <i class="fas fa-list-check"></i> Audit
             </button>
