@@ -22,8 +22,13 @@ if hasattr(sys.stdout, "reconfigure"):
 # Configure sys.path so 'app.*' imports work from the root workspace
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 FASTAPI_DIR = os.path.join(ROOT_DIR, "fastapi")
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 if FASTAPI_DIR not in sys.path:
     sys.path.insert(0, FASTAPI_DIR)
+
+# Expose ASGI application instance so 'uvicorn run:app' resolves on Render/production
+from app.main import app
 
 def main():
     parser = argparse.ArgumentParser(description="Inbox POS Localhost Development Launcher")
