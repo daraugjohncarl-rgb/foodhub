@@ -1,0 +1,121 @@
+import sys
+import os
+from dotenv import load_dotenv
+load_dotenv('.env')
+from sqlalchemy import create_engine, text
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.schema import CreateTable
+from app.db import Base
+import app.models as models
+
+sys.stdout.reconfigure(encoding='utf-8')
+engine = create_engine(os.getenv('DATABASE_URL'))
+
+TABLE_ORDER = [
+    'tenants',
+    'categories',
+    'suppliers',
+    'users',
+    'restaurant_tables',
+    'inventory_items',
+    'products',
+    'product_recipes',
+    'purchase_orders',
+    'purchase_order_items',
+    'shifts',
+    'shift_cash_movements',
+    'transactions',
+    'transaction_items',
+    'payments',
+    'customer_orders',
+    'customer_order_items',
+    'incident_reports',
+    'activity_logs',
+    'stock_movements'
+]
+
+sql_statements = []
+sql_statements.append('-- =========================================================')
+sql_statements.append('-- Supabase (PostgreSQL) Complete Schema & Data Dump')
+sql_statements.append('-- Project: Blessie FoodHub / RestoTrack POS')
+sql_statements.append('-- Safe to run & rerun directly in Supabase SQL Editor')
+sql_statements.append('-- =========================================================\n')
+
+sql_statements.append('-- 1. Enable Required Extensions')
+sql_statements.append('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";\n')
+
+sql_statements.append('-- 2. Create Custom ENUM Types (Idempotent)')
+enums_def = [
+    ('userrole', ["'SUPER_ADMIN'", "'ADMIN'", "'MANAGER'", "'CASHIER'", "'INVENTORY'", "'KITCHEN'", "'CUSTOMER'"]),
+    ('reportcategory', ["'BUG'", "'HARDWARE'", "'INVENTORY_DISCREPANCY'", "'PAYMENT_ISSUE'", "'OTHER'"]),
+    ('reportpriority', ["'LOW'", "'MEDIUM'", "'HIGH'", "'CRITICAL'"]),
+    ('reportstatus', ["'OPEN'", "'IN_PROGRESS'", "'RESOLVED'", "'REJECTED'"]),
+    ('purchaseorderstatus', ["'Draft'", "'Pending'", "'Ordered'", "'Partially Received'", "'Received'", "'Cancelled'"])
+]
+
+for type_name, values in enums_def:
+    vals_str = ', '.join(values)
+    sql_statements.append(f"""DO $$ BEGIN
+    CREATE TYPE {type_name} AS ENUM ({vals_str});
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;\n""")
+
+sql_statements.append('-- 3. Drop existing tables if re-running (Clean slate in reverse dependency order)')
+for table_name in reversed(TABLE_ORDER):
+    sql_statements.append(f'DROP TABLE IF EXISTS "{table_name}" CASCADE;')
+sql_statements.append('')
+
+# Add DDL in sorted table order
+sql_statements.append('-- 4. Create Tables (PostgreSQL DDL)')
+for table in Base.metadata.sorted_tables:
+    ddl = str(CreateTable(table).compile(dialect=postgresql.dialect())).strip()
+    sql_statements.append(f'{ddl};\n')
+
+# Add Data inserts
+sql_statements.append('-- 5. Insert Existing Records')
+sql_statements.append('SET session_replication_role = "replica";\n')
+
+with engine.connect() as conn:
+    for table_name in TABLE_ORDER:
+        table = Base.metadata.tables.get(table_name)
+        if table is None:
+            continue
+        rows = conn.execute(text(f'SELECT * FROM `{table_name}`')).fetchall()
+        if not rows:
+            continue
+        
+        sql_statements.append(f'-- Records for: {table_name} ({len(rows)} rows)')
+        cols = [c.name for c in table.columns]
+        col_names_str = ', '.join([f'"{c}"' for c in cols])
+        
+        for r in rows:
+            r_dict = dict(r._mapping)
+            vals = []
+            for c in cols:
+                v = r_dict.get(c)
+                if v is None:
+                    vals.append('NULL')
+                elif isinstance(v, bool):
+                    vals.append('TRUE' if v else 'FALSE')
+                elif isinstance(v, (int, float)):
+                    vals.append(str(v))
+                else:
+                    escaped = str(v).replace("'", "''")
+                    vals.append(f"'{escaped}'")
+            vals_str = ', '.join(vals)
+            sql_statements.append(f'INSERT INTO "{table_name}" ({col_names_str}) VALUES ({vals_str}) ON CONFLICT DO NOTHING;')
+        sql_statements.append('')
+
+sql_statements.append('SET session_replication_role = "DEFAULT";\n')
+
+# Add sequence updates
+sql_statements.append('-- 6. Synchronize Auto-Increment Sequences')
+for table_name in TABLE_ORDER:
+    sql_statements.append(f"""SELECT setval(pg_get_serial_sequence('"{table_name}"', 'id'), coalesce(max(id), 1)) FROM "{table_name}";""")
+
+out_path = 'c:/pos/supabase_setup.sql'
+with open(out_path, 'w', encoding='utf-8') as f:
+    f.write('\n'.join(sql_statements))
+
+print(f'Successfully generated {out_path} ({len(sql_statements)} lines)!')
