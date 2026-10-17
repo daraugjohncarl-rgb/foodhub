@@ -5101,14 +5101,13 @@ function renderDrawerTableRows(shifts) {
 
     return `
       <tr>
-        <td>
-          <div style="display:flex; align-items:center; gap:8px;">
-            <div class="avatar-fallback" style="width:32px; height:32px; font-size:12px; border-radius:8px; background:rgba(201,162,39,0.15); color:#c9a227; font-weight:800;">
+        <td style="white-space:nowrap; min-width:180px;">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div class="avatar-fallback" style="width:34px; height:34px; font-size:12px; border-radius:8px; background:rgba(201,162,39,0.15); color:#c9a227; font-weight:800; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
               ${(s.cashier_username || 'C').substring(0,2).toUpperCase()}
             </div>
-            <div>
-              <strong style="color:var(--text-main); font-size:13px;">${s.cashier_name}</strong>
-              <div style="font-size:11px; color:var(--text-muted);">@${s.cashier_username} • <span style="font-family:monospace; font-weight:700; color:#c9a227;">${(typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('SHF', s.id) : `SHF-${s.id}`}</span></div>
+            <div style="min-width:0;">
+              <strong style="color:var(--text-main); font-size:13.5px; font-weight:700; text-transform:capitalize; white-space:nowrap; display:block; letter-spacing:0.2px;">${s.cashier_name}</strong>
             </div>
           </div>
         </td>
