@@ -129,7 +129,10 @@ check_and_create_db()
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
-    pool_recycle=300
+    pool_recycle=300,
+    pool_size=15,
+    max_overflow=20,
+    pool_timeout=30
 )
 
 # Create session factory

@@ -214,34 +214,38 @@ def get_profit_loss(
         models.User.role == models.UserRole.CASHIER
     ).all()
 
-    active_drawer_cash = Decimal("0.0")
-    for s in open_shifts:
-        c_s = db.query(
+    open_shift_ids = [s.id for s in open_shifts]
+    active_drawer_cash = sum(Decimal(str(s.start_cash or 0)) for s in open_shifts)
+    if open_shift_ids:
+        total_open_cash_sales = db.query(
             func.coalesce(func.sum(models.Payment.amount), 0)
         ).join(models.Transaction).filter(
-            models.Transaction.shift_id == s.id,
+            models.Transaction.shift_id.in_(open_shift_ids),
             models.Payment.status == "completed",
             ~models.Transaction.status.in_(["cancelled", "rejected"]),
             func.lower(models.Payment.payment_method).like("%cash%")
         ).scalar() or Decimal("0.0")
-        p_i = db.query(
-            func.coalesce(func.sum(models.ShiftCashMovement.amount), 0)
-        ).filter(models.ShiftCashMovement.shift_id == s.id, models.ShiftCashMovement.type == "PAID_IN").scalar() or Decimal("0.0")
-        p_o = db.query(
-            func.coalesce(func.sum(models.ShiftCashMovement.amount), 0)
-        ).filter(models.ShiftCashMovement.shift_id == s.id, models.ShiftCashMovement.type == "PAID_OUT").scalar() or Decimal("0.0")
-        active_drawer_cash += Decimal(str(s.start_cash or 0)) + Decimal(str(c_s)) + Decimal(str(p_i)) - Decimal(str(p_o))
 
-    # 3. Inventory Price / Stock Valuation & Cost of Goods Sold
-    inv_items = db.query(models.InventoryItem).filter(
+        total_open_paid_in = db.query(
+            func.coalesce(func.sum(models.ShiftCashMovement.amount), 0)
+        ).filter(models.ShiftCashMovement.shift_id.in_(open_shift_ids), models.ShiftCashMovement.type == "PAID_IN").scalar() or Decimal("0.0")
+
+        total_open_paid_out = db.query(
+            func.coalesce(func.sum(models.ShiftCashMovement.amount), 0)
+        ).filter(models.ShiftCashMovement.shift_id.in_(open_shift_ids), models.ShiftCashMovement.type == "PAID_OUT").scalar() or Decimal("0.0")
+
+        active_drawer_cash += Decimal(str(total_open_cash_sales)) + Decimal(str(total_open_paid_in)) - Decimal(str(total_open_paid_out))
+
+    # 3. Inventory Price / Stock Valuation & Cost of Goods Sold directly aggregated in DB
+    inv_stats = db.query(
+        func.coalesce(func.sum(models.InventoryItem.quantity * models.InventoryItem.unit_price), 0),
+        func.count(models.InventoryItem.id)
+    ).filter(
         models.InventoryItem.tenant_id == tenant_id
-    ).all()
+    ).first()
 
-    total_inventory_valuation = sum(
-        Decimal(str(item.quantity)) * Decimal(str(item.unit_price or 0.0))
-        for item in inv_items
-    )
-    total_inventory_items_count = len(inv_items)
+    total_inventory_valuation = Decimal(str(inv_stats[0] or 0))
+    total_inventory_items_count = int(inv_stats[1] or 0)
 
     # Cost of Goods Sold (Product Cost * Quantity Sold)
     cogs_val = db.query(

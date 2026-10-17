@@ -93,11 +93,15 @@ def get_drawer_summary(
     Real-time cashier cash-in-drawer tracker and shift breakdown for Manager and Admin.
     Calculates expected cash in drawer (Float + Cash Sales + Paid In - Paid Out) for all cashier shifts.
     """
-    from sqlalchemy import func
+    from sqlalchemy import func, case
+    from sqlalchemy.orm import joinedload, selectinload
     tenant_id = _get_user_tenant_id(db, current_user)
 
-    # Fetch shifts for this tenant (Cashier role accounts only, open shifts first)
-    shifts = db.query(models.Shift).join(models.User).filter(
+    # Fetch shifts for this tenant (Cashier role accounts only, open shifts first) with eager loading
+    shifts = db.query(models.Shift).options(
+        joinedload(models.Shift.user),
+        selectinload(models.Shift.shift_cash_movements).joinedload(models.ShiftCashMovement.user)
+    ).join(models.User).filter(
         models.Shift.tenant_id == tenant_id,
         models.User.role == models.UserRole.CASHIER
     ).order_by(
@@ -129,41 +133,49 @@ def get_drawer_summary(
     today_total_cash_sales = Decimal("0.0")
     today_total_orders_amount = Decimal("0.0")
 
+    # High-performance batch aggregation for all shifts in a single query
+    shift_ids = [s.id for s in shifts]
+    cash_sales_map = {}
+    non_cash_map = {}
+    paid_in_map = {}
+    paid_out_map = {}
+
+    if shift_ids:
+        # 1. Batch cash vs non-cash sales
+        pmt_rows = db.query(
+            models.Transaction.shift_id,
+            func.coalesce(func.sum(case((func.lower(models.Payment.payment_method).like("%cash%"), models.Payment.amount), else_=0)), 0).label("cash_sales"),
+            func.coalesce(func.sum(case((~func.lower(models.Payment.payment_method).like("%cash%"), models.Payment.amount), else_=0)), 0).label("non_cash_sales")
+        ).join(models.Payment, models.Payment.transaction_id == models.Transaction.id).filter(
+            models.Transaction.shift_id.in_(shift_ids),
+            models.Payment.status == "completed",
+            ~models.Transaction.status.in_(["cancelled", "rejected"])
+        ).group_by(models.Transaction.shift_id).all()
+
+        for r in pmt_rows:
+            cash_sales_map[r[0]] = Decimal(str(r[1] or 0))
+            non_cash_map[r[0]] = Decimal(str(r[2] or 0))
+
+        # 2. Batch movements grouped by shift_id and type
+        mov_rows = db.query(
+            models.ShiftCashMovement.shift_id,
+            models.ShiftCashMovement.type,
+            func.coalesce(func.sum(models.ShiftCashMovement.amount), 0)
+        ).filter(
+            models.ShiftCashMovement.shift_id.in_(shift_ids)
+        ).group_by(models.ShiftCashMovement.shift_id, models.ShiftCashMovement.type).all()
+
+        for sid, mtype, msum in mov_rows:
+            if mtype == "PAID_IN":
+                paid_in_map[sid] = Decimal(str(msum or 0))
+            elif mtype == "PAID_OUT":
+                paid_out_map[sid] = Decimal(str(msum or 0))
+
     for s in shifts:
-        # Cash sales for this shift
-        cash_sales_val = db.query(
-            func.coalesce(func.sum(models.Payment.amount), 0)
-        ).join(models.Transaction).filter(
-            models.Transaction.shift_id == s.id,
-            models.Payment.status == "completed",
-            ~models.Transaction.status.in_(["cancelled", "rejected"]),
-            func.lower(models.Payment.payment_method).like("%cash%")
-        ).scalar() or Decimal("0.0")
-
-        # Non-cash sales (GCash, Card, E-wallet)
-        non_cash_val = db.query(
-            func.coalesce(func.sum(models.Payment.amount), 0)
-        ).join(models.Transaction).filter(
-            models.Transaction.shift_id == s.id,
-            models.Payment.status == "completed",
-            ~models.Transaction.status.in_(["cancelled", "rejected"]),
-            ~func.lower(models.Payment.payment_method).like("%cash%")
-        ).scalar() or Decimal("0.0")
-
-        # Cash movements (PAID_IN / PAID_OUT)
-        paid_in_val = db.query(
-            func.coalesce(func.sum(models.ShiftCashMovement.amount), 0)
-        ).filter(
-            models.ShiftCashMovement.shift_id == s.id,
-            models.ShiftCashMovement.type == "PAID_IN"
-        ).scalar() or Decimal("0.0")
-
-        paid_out_val = db.query(
-            func.coalesce(func.sum(models.ShiftCashMovement.amount), 0)
-        ).filter(
-            models.ShiftCashMovement.shift_id == s.id,
-            models.ShiftCashMovement.type == "PAID_OUT"
-        ).scalar() or Decimal("0.0")
+        cash_sales_val = cash_sales_map.get(s.id, Decimal("0.0"))
+        non_cash_val = non_cash_map.get(s.id, Decimal("0.0"))
+        paid_in_val = paid_in_map.get(s.id, Decimal("0.0"))
+        paid_out_val = paid_out_map.get(s.id, Decimal("0.0"))
 
         expected_cash = Decimal(str(s.start_cash or 0)) + Decimal(str(cash_sales_val)) + Decimal(str(paid_in_val)) - Decimal(str(paid_out_val))
         shift_total_sales = Decimal(str(cash_sales_val)) + Decimal(str(non_cash_val))

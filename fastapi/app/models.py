@@ -95,21 +95,21 @@ class ActivityLog(Base):
     __tablename__ = "activity_logs"
 
     id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
-    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     action = Column(String(50), nullable=False)  # 'Login', 'Logout', 'User Created', etc.
     performed_by = Column(String(100), nullable=False)
     target_user = Column(String(100), nullable=True)
     role = Column(String(50), nullable=True)
     details = Column(String(255), nullable=True)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False, index=True)
 
 
 class Category(Base):
     __tablename__ = "categories"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(100), nullable=False)
     description = Column(String(255), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
@@ -128,14 +128,14 @@ class Product(Base):
     __tablename__ = "products"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
-    category_id = Column(Integer, ForeignKey("categories.id", ondelete="SET NULL"), nullable=True)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    category_id = Column(Integer, ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True)
     name = Column(String(100), nullable=False)
     sku = Column(String(50), nullable=False)
     barcode = Column(String(100), index=True, nullable=True)
     price = Column(Numeric(10, 2), nullable=False)
     cost = Column(Numeric(10, 2), nullable=False)
-    is_active = Column(Boolean, default=True, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
     image_url = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -181,8 +181,8 @@ class ProductRecipe(Base):
     __tablename__ = "product_recipes"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
-    inventory_item_id = Column(Integer, ForeignKey("inventory_items.id", ondelete="CASCADE"), nullable=False)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
+    inventory_item_id = Column(Integer, ForeignKey("inventory_items.id", ondelete="CASCADE"), nullable=False, index=True)
     quantity = Column(Numeric(10, 2), nullable=False)
 
     # Relationships
@@ -198,13 +198,13 @@ class Shift(Base):
     __tablename__ = "shifts"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
-    start_time = Column(DateTime, server_default=func.now(), nullable=False)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    start_time = Column(DateTime, server_default=func.now(), nullable=False, index=True)
     end_time = Column(DateTime, nullable=True)
     start_cash = Column(Numeric(10, 2), default=0.0, nullable=False)
     end_cash = Column(Numeric(10, 2), nullable=True)
-    status = Column(String(20), default="open", nullable=False)
+    status = Column(String(20), default="open", nullable=False, index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -219,17 +219,17 @@ class Transaction(Base):
     __tablename__ = "transactions"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
-    shift_id = Column(Integer, ForeignKey("shifts.id", ondelete="RESTRICT"), nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    shift_id = Column(Integer, ForeignKey("shifts.id", ondelete="RESTRICT"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
     client_tx_id = Column(String(36), unique=True, index=True, nullable=True)  # UUID for offline sync
     total_amount = Column(Numeric(10, 2), default=0.0, nullable=False)
     tax_amount = Column(Numeric(10, 2), default=0.0, nullable=False)
     discount_amount = Column(Numeric(10, 2), default=0.0, nullable=False)
     net_amount = Column(Numeric(10, 2), default=0.0, nullable=False)
-    status = Column(String(20), default="completed", nullable=False)
-    fulfillment_status = Column(String(20), default="pending", nullable=False)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    status = Column(String(20), default="completed", nullable=False, index=True)
+    fulfillment_status = Column(String(20), default="pending", nullable=False, index=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False, index=True)
 
     # Relationships
     tenant = relationship("Tenant", back_populates="transactions")
@@ -243,8 +243,8 @@ class TransactionItem(Base):
     __tablename__ = "transaction_items"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    transaction_id = Column(Integer, ForeignKey("transactions.id", ondelete="CASCADE"), nullable=False)
-    product_id = Column(Integer, ForeignKey("products.id", ondelete="RESTRICT"), nullable=False)
+    transaction_id = Column(Integer, ForeignKey("transactions.id", ondelete="CASCADE"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="RESTRICT"), nullable=False, index=True)
     quantity = Column(Integer, default=1, nullable=False)
     unit_price = Column(Numeric(10, 2), nullable=False)
     total_price = Column(Numeric(10, 2), nullable=False)
@@ -258,11 +258,11 @@ class Payment(Base):
     __tablename__ = "payments"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    transaction_id = Column(Integer, ForeignKey("transactions.id", ondelete="CASCADE"), nullable=False)
-    payment_method = Column(String(50), nullable=False)
+    transaction_id = Column(Integer, ForeignKey("transactions.id", ondelete="CASCADE"), nullable=False, index=True)
+    payment_method = Column(String(50), nullable=False, index=True)
     amount = Column(Numeric(10, 2), nullable=False)
-    status = Column(String(20), default="completed", nullable=False)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    status = Column(String(20), default="completed", nullable=False, index=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False, index=True)
 
     # Relationships
     transaction = relationship("Transaction", back_populates="payments")
@@ -272,13 +272,13 @@ class ShiftCashMovement(Base):
     __tablename__ = "shift_cash_movements"
 
     id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
-    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
-    shift_id = Column(Integer, ForeignKey("shifts.id", ondelete="CASCADE"), nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    type = Column(String(20), nullable=False)  # 'PAID_IN' or 'PAID_OUT'
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    shift_id = Column(Integer, ForeignKey("shifts.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    type = Column(String(20), nullable=False, index=True)  # 'PAID_IN' or 'PAID_OUT'
     amount = Column(Numeric(10, 2), nullable=False)
     reason = Column(String(255), nullable=True)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False, index=True)
 
     # Relationships
     tenant = relationship("Tenant", back_populates="shift_cash_movements")
