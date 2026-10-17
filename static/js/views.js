@@ -3149,6 +3149,9 @@ async function renderTransactions(c) {
   c = c || document.getElementById("view-container");
   if (!c) return;
 
+  const currentUser = (typeof Auth !== "undefined" && Auth.getUser) ? Auth.getUser() : null;
+  const isCashier = (currentUser && (currentUser.role || "").toLowerCase() === "cashier") || (window.location.pathname || "").toLowerCase().includes("cashier");
+
   const res = await Auth.fetch("/api/v1/transactions?limit=50");
   const list = res.ok ? await res.json() : [];
 
@@ -3172,6 +3175,7 @@ async function renderTransactions(c) {
         <table>
           <thead>
             <tr>
+              ${!isCashier ? `<th>Order ID</th>` : ''}
               <th>Timestamp</th>
               <th>Cashier</th>
               <th>Items</th>
@@ -3216,6 +3220,11 @@ async function renderTransactions(c) {
 
               return `
                 <tr>
+                  ${!isCashier ? `
+                  <td style="color:var(--text-main); font-weight:700; font-family:monospace; font-size:12px;">
+                    <span style="background:rgba(201,162,39,0.12); color:#c9a227; padding:3px 8px; border-radius:6px; letter-spacing:0.5px;">${(typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('TXN', tx.id) : `TXN-${String(tx.id).padStart(4, '0')}`}</span>
+                  </td>
+                  ` : ''}
                   <td style="color:var(--text-muted); font-size:13px;">${tx.created_at ? new Date(tx.created_at).toLocaleString() : '—'}</td>
                   <td><strong style="font-size:13px;">${tx.cashier || 'Staff'}</strong></td>
                   <td style="color:var(--text-main); font-size:13px;" title="${itemsSummary || 'No items'}">
@@ -3229,7 +3238,7 @@ async function renderTransactions(c) {
                   <td style="text-align:center;">${actionHtml}</td>
                 </tr>
               `;
-            }).join('') : '<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-muted);">No transaction logs recorded yet.</td></tr>'}
+            }).join('') : `<tr><td colspan="${isCashier ? 6 : 7}" style="text-align:center; padding:30px; color:var(--text-muted);">No transaction logs recorded yet.</td></tr>`}
           </tbody>
         </table>
       </div>
