@@ -5,6 +5,7 @@ SQLAlchemy>=2.0.0
 pymysql>=1.1.0
 cryptography>=42.0.0
 psycopg[binary]>=3.1.18
+psycopg2-binary>=2.9.0
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
 python-dotenv>=1.0.0

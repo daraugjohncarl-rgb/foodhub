@@ -1,12 +1,12 @@
+import psycopg2
+from dotenv import load_dotenv
+import os
 
-from fastapi import FastAPI
+# Load environment variables from .env
+load_dotenv()
 
-app = FastAPI(title="My First API")
+# Fetch variables
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-@app.get("/")
-def home():
-    return {"message": "FastAPI is working!"}
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+# Connect to the database
+connection = psycopg2.connect(DATABASE_URL)
