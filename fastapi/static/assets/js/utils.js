@@ -76,6 +76,16 @@ const Utils = {
     return "₱" + num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   },
 
+  formatId(prefix, id, digits = 4) {
+    if (!id && id !== 0) return '—';
+    if (typeof id === 'string' && id.includes('-') && !/^[0-9a-f]{8}-/i.test(id)) {
+      return id;
+    }
+    const num = parseInt(id, 10);
+    if (isNaN(num)) return `${prefix}-${id}`;
+    return `${prefix}-${String(num).padStart(digits, '0')}`;
+  },
+
   exportCSV(filename, rows) {
     if (!rows || !rows.length) {
       this.showToast("No data to export", "danger");
@@ -107,8 +117,11 @@ generateReceiptHTML(order) {
 
     const dateStr = order.date ? new Date(order.date).toLocaleString() : new Date().toLocaleString();
     const cashierName = order.cashier || "Cashier";
-    const receiptNo = order.receiptNumber || "N/A";
-    const subtotal = Number(order.total_amount || order.net_amount || 0); // Assuming no discount/tax currently handled
+    let receiptNo = order.receiptNumber || "N/A";
+    if (order.id && (!receiptNo || receiptNo === "N/A" || receiptNo.length > 20)) {
+      receiptNo = Utils.formatId('TXN', order.id);
+    }
+    const subtotal = Number(order.total_amount || order.net_amount || 0);
     const discount = Number(order.discount_amount || 0);
     const total = subtotal - discount; // Adjust if subtotal already implies net
 
@@ -218,59 +231,73 @@ generateReceiptHTML(order) {
     const sidebarToggle = document.getElementById("sidebarToggle");
     const mobileMenuBtn = document.getElementById("mobileMenuBtn");
     const sidebarOverlay = document.getElementById("sidebarOverlay");
-    const mainContent = document.querySelector(".main-content");
+    const mainContent = document.querySelector(".main-content") || document.getElementById("mainContent");
 
     if (!sidebar) return;
 
+    const isMobile = () => window.innerWidth <= 768;
+    const updateIcon = (collapsed) => {
+      if (!sidebarToggle) return;
+      sidebarToggle.innerHTML = '<i class="fas fa-bars"></i>';
+      sidebarToggle.setAttribute('title', collapsed ? 'Expand Sidebar' : 'Collapse Sidebar');
+    };
+
     // Apply saved state on load (desktop only)
-    const isMobile = window.innerWidth <= 768;
     const savedCollapsed = localStorage.getItem('sidebar_collapsed') === 'true';
-    
-    if (!isMobile && savedCollapsed) {
+    if (!isMobile() && savedCollapsed) {
       sidebar.classList.add('collapsed');
+      document.body.classList.add('sidebar-collapsed');
       if (mainContent) mainContent.classList.add('sidebar-collapsed');
-      if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-bars"></i>';
-    } else if (!isMobile) {
-      if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-times"></i>';
+      updateIcon(true);
+    } else {
+      sidebar.classList.remove('collapsed');
+      document.body.classList.remove('sidebar-collapsed');
+      if (mainContent) mainContent.classList.remove('sidebar-collapsed');
+      updateIcon(false);
     }
 
-    if (sidebarToggle) {
-      sidebarToggle.addEventListener("click", () => {
-        if (window.innerWidth <= 768) {
-          // Mobile: Toggle off-canvas
+    // Bind sidebarToggle with guard against duplicate handlers
+    if (sidebarToggle && !sidebarToggle.dataset.bound) {
+      sidebarToggle.dataset.bound = "true";
+      sidebarToggle.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (isMobile()) {
           sidebar.classList.remove('open');
           if (sidebarOverlay) sidebarOverlay.classList.remove('open');
         } else {
-          // Desktop: Collapse/Expand
           const isCollapsed = sidebar.classList.toggle('collapsed');
-          if (mainContent) mainContent.classList.toggle('sidebar-collapsed');
-          
-          if (isCollapsed) {
-            sidebarToggle.innerHTML = '<i class="fas fa-bars"></i>';
-          } else {
-            sidebarToggle.innerHTML = '<i class="fas fa-times"></i>';
-          }
-          
-          localStorage.setItem('sidebar_collapsed', isCollapsed);
+          document.body.classList.toggle('sidebar-collapsed', isCollapsed);
+          if (mainContent) mainContent.classList.toggle('sidebar-collapsed', isCollapsed);
+          updateIcon(isCollapsed);
+          localStorage.setItem('sidebar_collapsed', isCollapsed ? 'true' : 'false');
         }
       });
     }
 
-    if (mobileMenuBtn && sidebarOverlay) {
-      mobileMenuBtn.addEventListener("click", () => {
+    // Bind mobile menu button
+    if (mobileMenuBtn && !mobileMenuBtn.dataset.bound) {
+      mobileMenuBtn.dataset.bound = "true";
+      mobileMenuBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         sidebar.classList.add("open");
-        sidebarOverlay.classList.add("open");
+        if (sidebarOverlay) sidebarOverlay.classList.add("open");
       });
+    }
 
+    // Overlay click to close
+    if (sidebarOverlay && !sidebarOverlay.dataset.bound) {
+      sidebarOverlay.dataset.bound = "true";
       sidebarOverlay.addEventListener("click", () => {
         sidebar.classList.remove("open");
         sidebarOverlay.classList.remove("open");
       });
     }
 
-    // Optional: Window resize handling to prevent stuck states
     window.addEventListener("resize", () => {
-      if (window.innerWidth > 768) {
+      if (!isMobile()) {
         sidebar.classList.remove("open");
         if (sidebarOverlay) sidebarOverlay.classList.remove("open");
       }

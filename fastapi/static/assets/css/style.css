@@ -311,9 +311,16 @@ nav::-webkit-scrollbar-thumb,
 
 .sidebar-user {
     display: flex;
-    align-items: center;
-    gap: 12px;
+    flex-direction: column;
+    align-items: flex-start;
     padding: 12px 20px;
+    gap: 3px;
+}
+
+/* Erase avatar-fallback logo in sidebar (Picture 3) per user request */
+.sidebar-user .avatar-fallback,
+.sidebar .avatar-fallback {
+    display: none !important;
 }
 
 .avatar-fallback {
@@ -334,21 +341,29 @@ nav::-webkit-scrollbar-thumb,
 
 .sidebar-user-info {
     overflow: hidden;
+    width: 100%;
 }
 
 .sidebar-user-info strong {
     display: block;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-main);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-main, #18181b);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    text-transform: capitalize;
+    line-height: 1.25;
 }
 
 .sidebar-user-info span {
+    display: block;
     font-size: 11px;
-    color: var(--text-muted);
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    margin-top: 2px;
+    line-height: 1.2;
 }
 
 .logout-btn {
@@ -462,9 +477,7 @@ body.sidebar-collapsed .sidebar .sidebar-bottom {
 
 .sidebar.collapsed .sidebar-user,
 body.sidebar-collapsed .sidebar .sidebar-user {
-    justify-content: center !important;
-    padding: 8px 0 !important;
-    gap: 0 !important;
+    display: none !important;
 }
 
 .sidebar.collapsed .sidebar-user-info,
@@ -488,121 +501,6 @@ body.sidebar-collapsed .sidebar .logout-btn span {
 body.sidebar-collapsed .sidebar .logout-btn i {
     margin: 0 !important;
     font-size: 16px !important;
-}
-
-/* Medium Screens (769px to 1180px): Auto-compact 72px rail by default to maximize POS workspace */
-@media (min-width: 769px) and (max-width: 1180px) {
-    .sidebar {
-        width: var(--sidebar-collapsed, 72px);
-    }
-    .sidebar ~ .main-content,
-    .main-content {
-        margin-left: var(--sidebar-collapsed, 72px);
-        width: calc(100% - var(--sidebar-collapsed, 72px));
-        max-width: calc(100% - var(--sidebar-collapsed, 72px));
-    }
-    .sidebar .sidebar-header {
-        padding: 0 10px;
-        justify-content: center;
-    }
-    .sidebar .sidebar-logo-img {
-        display: none;
-    }
-    .sidebar .nav-section-title {
-        display: none;
-    }
-    .sidebar nav {
-        padding: 14px 6px;
-    }
-    .sidebar .nav-link {
-        justify-content: center;
-        padding: 12px 0;
-        gap: 0;
-        border-radius: 12px;
-    }
-    .sidebar .nav-link span {
-        display: none;
-    }
-    .sidebar .nav-link i {
-        font-size: 18px;
-        margin: 0;
-        width: auto;
-    }
-    .sidebar .sidebar-user {
-        justify-content: center;
-        padding: 8px 0;
-        gap: 0;
-    }
-    .sidebar .sidebar-user-info {
-        display: none;
-    }
-    .sidebar .logout-btn {
-        justify-content: center;
-        padding: 10px 0;
-    }
-    .sidebar .logout-btn span {
-        display: none;
-    }
-
-    /* When user expands sidebar on medium screens */
-    .sidebar.expanded,
-    body.sidebar-expanded .sidebar {
-        width: var(--sidebar-width, 240px) !important;
-        box-shadow: 4px 0 25px rgba(0,0,0,0.12) !important;
-    }
-    .sidebar.expanded ~ .main-content,
-    body.sidebar-expanded .main-content {
-        margin-left: var(--sidebar-width, 240px) !important;
-        width: calc(100% - var(--sidebar-width, 240px)) !important;
-        max-width: calc(100% - var(--sidebar-width, 240px)) !important;
-    }
-    .sidebar.expanded .sidebar-header,
-    body.sidebar-expanded .sidebar .sidebar-header {
-        padding: 0 18px !important;
-        justify-content: space-between !important;
-    }
-    .sidebar.expanded .sidebar-logo-img,
-    body.sidebar-expanded .sidebar .sidebar-logo-img {
-        display: block !important;
-    }
-    .sidebar.expanded .nav-section-title,
-    body.sidebar-expanded .sidebar .nav-section-title {
-        display: block !important;
-    }
-    .sidebar.expanded nav,
-    body.sidebar-expanded .sidebar nav {
-        padding: 20px 14px !important;
-    }
-    .sidebar.expanded .nav-link,
-    body.sidebar-expanded .sidebar .nav-link {
-        justify-content: flex-start !important;
-        padding: 12px 16px !important;
-        gap: 14px !important;
-    }
-    .sidebar.expanded .nav-link span,
-    body.sidebar-expanded .sidebar .nav-link span {
-        display: inline !important;
-    }
-    .sidebar.expanded .sidebar-user,
-    body.sidebar-expanded .sidebar .sidebar-user {
-        justify-content: flex-start !important;
-        padding: 12px 20px !important;
-        gap: 12px !important;
-    }
-    .sidebar.expanded .sidebar-user-info,
-    body.sidebar-expanded .sidebar .sidebar-user-info {
-        display: block !important;
-    }
-    .sidebar.expanded .logout-btn,
-    body.sidebar-expanded .sidebar .logout-btn {
-        justify-content: flex-start !important;
-        padding: 10px 16px !important;
-        gap: 12px !important;
-    }
-    .sidebar.expanded .logout-btn span,
-    body.sidebar-expanded .sidebar .logout-btn span {
-        display: inline !important;
-    }
 }
 
 .top-header {

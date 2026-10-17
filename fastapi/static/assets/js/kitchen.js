@@ -17,49 +17,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     const sidebarToggle = document.getElementById("sidebarToggle");
     const mobileMenuBtn = document.getElementById("mobileMenuBtn");
     const sidebarOverlay = document.getElementById("sidebarOverlay");
-    const mainContent = document.getElementById("mainContent");
-
-    function toggleSidebar() {
-        if (!sidebar) return;
-        if (window.innerWidth <= 768) {
-            sidebar.classList.toggle("open");
-            if (sidebarOverlay) sidebarOverlay.classList.toggle("open");
-        } else if (window.innerWidth <= 1180) {
-            sidebar.classList.toggle("expanded");
-            document.body.classList.toggle("sidebar-expanded");
-            if (mainContent) mainContent.classList.toggle("sidebar-expanded");
-        } else {
-            sidebar.classList.toggle("collapsed");
-            document.body.classList.toggle("sidebar-collapsed");
-            if (mainContent) mainContent.classList.toggle("sidebar-collapsed");
-        }
+    // 2. Sidebar init via centralized controller
+    if (typeof Utils !== "undefined" && Utils.initSidebar) {
+        Utils.initSidebar();
     }
-
-    if (sidebarToggle) sidebarToggle.addEventListener("click", toggleSidebar);
-    if (mobileMenuBtn) mobileMenuBtn.addEventListener("click", toggleSidebar);
-
-    if (sidebarOverlay) {
-        sidebarOverlay.addEventListener("click", () => {
-            if (sidebar) sidebar.classList.remove("open");
-            sidebarOverlay.classList.remove("open");
-        });
-    }
-
-    // Auto-fit & auto-resize on window resize/orientation change
-    function handleResponsiveSidebar() {
-        const w = window.innerWidth;
-        if (w > 768) {
-            if (sidebar) sidebar.classList.remove("open");
-            if (sidebarOverlay) sidebarOverlay.classList.remove("open");
-        }
-        if (w > 1180) {
-            if (sidebar) sidebar.classList.remove("expanded");
-            document.body.classList.remove("sidebar-expanded");
-            if (mainContent) mainContent.classList.remove("sidebar-expanded");
-        }
-    }
-    window.addEventListener("resize", handleResponsiveSidebar);
-    window.addEventListener("orientationchange", handleResponsiveSidebar);
 
     // 3. Live Clock & Date Header
     function updateClock() {
