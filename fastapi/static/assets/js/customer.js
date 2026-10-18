@@ -342,50 +342,48 @@ async function fetchMenu() {
         const data = await response.json();
         
         menu = [];
-        const groupedMap = new Map();
+        const categoriesList = [];
 
         data.forEach(category => {
+            const catName = category.name || "Other";
+            if (!categoriesList.includes(catName)) {
+                categoriesList.push(catName);
+            }
             if (category.products && category.products.length > 0) {
                 category.products.forEach(product => {
                     // Do not show inactive products in customer menu
                     if (product.is_active === false || product.is_active === 0 || product.is_active === "0") return;
 
                     let imagePath = resolveImage(product);
-                    const parsed = getBaseProductName(product.name);
-                    const baseName = parsed.baseName;
-                    const variantName = parsed.variantName;
-                    
-                    const groupKey = category.name + "||" + baseName;
-                    
-                    if (groupedMap.has(groupKey)) {
-                        const existing = groupedMap.get(groupKey);
-                        existing.options.push({
+                    const priceNum = parseFloat(product.price) || 0;
+
+                    // Exactly match Cashier POS menu items without artificial regex grouping
+                    menu.push({
+                        id: product.id,
+                        name: product.name,
+                        category: catName,
+                        description: product.description || "",
+                        image: imagePath,
+                        price: priceNum,
+                        options: [{
                             id: product.id,
-                            label: variantName !== "Regular" ? variantName : product.name,
-                            price: product.price
-                        });
-                        if (!existing.image && imagePath) {
-                            existing.image = imagePath;
-                        }
-                    } else {
-                        groupedMap.set(groupKey, {
-                            id: "group_" + product.id,
-                            name: baseName,
-                            category: category.name,
-                            description: product.description || "",
-                            image: imagePath,
-                            options: [{
-                                id: product.id,
-                                label: variantName,
-                                price: product.price
-                            }]
-                        });
-                    }
+                            label: "Regular",
+                            price: priceNum
+                        }]
+                    });
                 });
             }
         });
-        
-        menu = Array.from(groupedMap.values());
+
+        // Dynamically update category tabs to match current categories
+        const categoriesContainer = document.getElementById("categories");
+        if (categoriesContainer) {
+            let catHTML = `<button class="category active" data-category="All" type="button">All Items</button>`;
+            categoriesList.forEach(catName => {
+                catHTML += `<button class="category" data-category="${escapeHTML(catName)}" type="button">${escapeHTML(catName)}</button>`;
+            });
+            categoriesContainer.innerHTML = catHTML;
+        }
         
         if (lp) lp.classList.add("is-hidden");
         
@@ -453,16 +451,18 @@ function renderMenu() {
     const products = getFilteredProducts();
 
     if (products.length === 0) {
-        menuList.innerHTML = `<div style="text-align:center; padding: 20px; color: var(--muted);">No products found.</div>`;
+        menuList.innerHTML = `<div style="text-align:center; padding: 48px 20px; color: var(--muted); font-size: 14px; grid-column: 1 / -1; width: 100%;">
+            <div style="font-size: 36px; margin-bottom: 8px;">🍽️</div>
+            <strong>No items found in this category</strong>
+            <p style="font-size: 13px; margin-top: 6px; color: #a1a1aa;">Items will appear here once added in the POS.</p>
+        </div>`;
         if (menuCount) menuCount.textContent = "0 items";
         return;
     }
 
     menuList.innerHTML = products.map((product) => {
-        const prices = product.options.map(option => option.price);
-        const lowest = Math.min(...prices);
-        const highest = Math.max(...prices);
-        let priceText = lowest === highest ? peso(lowest) : (peso(lowest) + " - " + peso(highest));
+        const priceVal = product.price || (product.options && product.options[0] ? product.options[0].price : 0);
+        const priceText = peso(priceVal);
 
         return `
             <article class="menu-item" data-product-id="${product.id}">
@@ -470,7 +470,7 @@ function renderMenu() {
                 <div class="menu-info">
                     <div class="menu-category">${escapeHTML(product.category)}</div>
                     <div class="menu-name">${escapeHTML(product.name)}</div>
-                    <div class="menu-description">${escapeHTML(product.description)}</div>
+                    ${product.description ? `<div class="menu-description">${escapeHTML(product.description)}</div>` : ''}
                     <div class="menu-bottom">
                         <div class="menu-price">${priceText}</div>
                         <button class="select-button select-product" type="button" data-product-id="${product.id}">Select</button>

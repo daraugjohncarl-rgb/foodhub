@@ -302,9 +302,7 @@ def get_public_menu(tenant_id: int = 1, db: Session = Depends(get_db)):
     for cat in categories:
         products = db.query(models.Product).filter(
             models.Product.category_id == cat.id,
-            models.Product.is_active != False,
-            models.Product.is_active != 0,
-            models.Product.is_active.isnot(None),
+            models.Product.is_active.is_(True),
             models.Product.tenant_id == tenant_id
         ).all()
 
@@ -324,6 +322,29 @@ def get_public_menu(tenant_id: int = 1, db: Session = Depends(get_db)):
                     "is_active": bool(p.is_active),
                     "image_url": getattr(p, "image_url", None)
                 } for p in products
+            ]
+        })
+
+    # Also include products without a category
+    uncat_products = db.query(models.Product).filter(
+        models.Product.category_id.is_(None),
+        models.Product.is_active.is_(True),
+        models.Product.tenant_id == tenant_id
+    ).all()
+    if uncat_products:
+        result.append({
+            "id": 0,
+            "name": "Other",
+            "description": "Other items",
+            "products": [
+                {
+                    "id": p.id,
+                    "sku": p.sku,
+                    "name": p.name,
+                    "price": float(p.price),
+                    "is_active": bool(p.is_active),
+                    "image_url": getattr(p, "image_url", None)
+                } for p in uncat_products
             ]
         })
 

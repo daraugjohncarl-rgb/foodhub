@@ -475,16 +475,17 @@ function filterInventoryList() {
 function openImportMasterlistModal() {
   const categories = [
     { name: "Kitchen", icon: "fa-utensils", desc: "Rice, Cooking Oil, Soy Sauce, Seasonings, Meat & Poultry" },
-    { name: "Street Foods", icon: "fa-burger", desc: "Fishballs, Kikiam, Kwek-Kwek, Squid Rolls, Sauces" },
-    { name: "Coffee Bar", icon: "fa-mug-hot", desc: "Espresso Beans, Syrups, Milk, Drizzles, Powders" },
-    { name: "Beverages", icon: "fa-glass-water", desc: "Sodas, Juices, Bottled Water, Concentrates" },
-    { name: "Milktea Supplies", icon: "fa-cocktail", desc: "Tapioca Pearls, Tea Leaves, Flavor Syrups, Creamer" },
-    { name: "Packaging Materials", icon: "fa-box-open", desc: "Takeout Boxes, Paper Bags, Straws, Cups, Lids" },
-    { name: "Cleaning Supplies", icon: "fa-broom", desc: "Detergent, Sanitizer, Trash Bags, Mops, Sponges" },
-    { name: "Office Supplies and Equipments", icon: "fa-stapler", desc: "Receipt Paper Rolls, Pens, Markers, Staplers" },
-    { name: "Samgyupsal Materials", icon: "fa-fire-burner", desc: "Pork Belly, Beef Slices, Kimchi, Dipping Sauces" },
-    { name: "KITCHEN UTENSILS & EQUIPMENT", icon: "fa-blender", desc: "Knives, Cutting Boards, Fryers, Pans, Tongs" },
-    { name: "FURNITURE & FIXTURES", icon: "fa-chair", desc: "Dining Chairs, Tables, Light Fixtures, Shelving" },
+    { name: "Street Foods", icon: "fa-burger", desc: "Fishballs, Kikiam, Tempura, Hotdog, Lumpia Wrapper, Fries" },
+    { name: "Coffee Bar", icon: "fa-mug-hot", desc: "Coffee Powder, Syrups, Milk, Powders, Boba" },
+    { name: "Beverages", icon: "fa-glass-water", desc: "Bottled Water, Sodas, Beers, Liquors, Juices" },
+    { name: "Packaging", icon: "fa-box-open", desc: "Plastic & Paper Cups, Lids, Bags, Food Boxes, Straws" },
+    { name: "Cleaning Supplies", icon: "fa-broom", desc: "Dishwashing Liquid, Bleach, Hand Soap, Mop, Broom" },
+    { name: "Office Supplies and Equipments", icon: "fa-stapler", desc: "Bond Paper, Ink, Pens, Staplers, Printers, Desktops" },
+    { name: "Monthly Bills", icon: "fa-receipt", desc: "Electricity, Water, Internet, Rent, Phone/load" },
+    { name: "Employee Salary", icon: "fa-users-gear", desc: "Weekly Payroll, 15th and 30th Payroll" },
+    { name: "SAMGYUPSAL", icon: "fa-fire-burner", desc: "Pork Belly, Beef, Kimchi, Grill Pan, Gas Canister" },
+    { name: "KITCHEN UTENSILS & EQUIPMENT", icon: "fa-blender", desc: "Gas Stove, Rice Cooker, Pots, Pans, Utensils, Tools" },
+    { name: "FURNITURE & FIXTURES", icon: "fa-chair", desc: "Dining Table, Chairs, Stools, Electric Fan, Storage Rack" },
   ];
 
   Utils.openModal("📦 Import Master List", `
@@ -506,7 +507,7 @@ function openImportMasterlistModal() {
 
       <div style="background:rgba(201,162,39,0.08); border:1px solid rgba(201,162,39,0.25); border-radius:12px; padding:14px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
         <div>
-          <strong style="color:var(--text-main); font-size:13px;">⚡ Complete Master Import (All 11 Departments)</strong>
+          <strong style="color:var(--text-main); font-size:13px;">⚡ Complete Master Import (All 12 Departments)</strong>
           <div style="font-size:11px; color:var(--text-muted);">Imports all standard master catalog items with 0 initial stock.</div>
         </div>
         <button class="btn btn-primary btn-sm" onclick="submitImportMasterlist(null)">

@@ -226,6 +226,17 @@ MASTERLIST_DATA: Dict[str, List[tuple]] = {
         ("File Organizer", "units", 4, 1),
         ("Bulletin Board", "units", 2, 1)
     ],
+    "Monthly Bills": [
+        ("Electricity", "bills", 1, 1),
+        ("Water", "bills", 1, 1),
+        ("Internet", "bills", 1, 1),
+        ("Rent", "bills", 1, 1),
+        ("Phone/load", "bills", 1, 1)
+    ],
+    "Employee Salary": [
+        ("Weekly Payroll", "payouts", 1, 1),
+        ("15th and 30th Payroll", "payouts", 1, 1)
+    ],
     "SAMGYUPSAL": [
         ("Pork Belly", "kg", 40, 10),
         ("Beef", "kg", 30, 8),

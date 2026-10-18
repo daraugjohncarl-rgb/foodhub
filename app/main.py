@@ -126,43 +126,16 @@ def seed_default_data():
         if orphan_users:
             db.commit()
 
-        # 5. Seed / Sync Official Blessie FoodHub POS Menu Masterlist
-        from app.seed_data import POS_MENU_MASTERLIST
-
-        from decimal import Decimal
-        for cat_name, items in POS_MENU_MASTERLIST.items():
-            cat = db.query(models.Category).filter(models.Category.tenant_id == tenant.id, models.Category.name == cat_name).first()
-            if not cat:
-                cat = models.Category(tenant_id=tenant.id, name=cat_name, description=f"{cat_name} Menu")
-                db.add(cat)
-                db.flush()
-            
-            for item_name, price in items:
-                prod = db.query(models.Product).filter(models.Product.tenant_id == tenant.id, models.Product.name == item_name).first()
-                if not prod:
-                    sku_code = f"POS-{abs(hash(item_name)) % 10000:04d}"
-                    prod = models.Product(
-                        tenant_id=tenant.id,
-                        category_id=cat.id,
-                        name=item_name,
-                        sku=sku_code,
-                        price=Decimal(str(price)),
-                        cost=Decimal(str(round(price * 0.55, 2))),
-                        is_active=True
-                    )
-                    db.add(prod)
-        db.commit()
+        # 5. Note: Masterlist auto-seeding removed to allow custom inventory and product menu management.
 
         # 6. Seed default suppliers under 'Main Branch - Blessie FoodHub'
         target_tenant = db.query(models.Tenant).filter(models.Tenant.name == "Main Branch - Blessie FoodHub").first()
         if target_tenant:
             from app.seed_data import DEFAULT_SUPPLIERS
+            existing_sup_names = {s[0] for s in db.query(models.Supplier.supplier_name).filter(models.Supplier.tenant_id == target_tenant.id).all()}
+            has_new_sup = False
             for s_data in DEFAULT_SUPPLIERS:
-                existing_supplier = db.query(models.Supplier).filter(
-                    models.Supplier.tenant_id == target_tenant.id,
-                    models.Supplier.supplier_name == s_data["name"]
-                ).first()
-                if not existing_supplier:
+                if s_data["name"] not in existing_sup_names:
                     new_sup = models.Supplier(
                         tenant_id=target_tenant.id,
                         supplier_name=s_data["name"],
@@ -172,7 +145,10 @@ def seed_default_data():
                         status="Active"
                     )
                     db.add(new_sup)
-            db.commit()
+                    existing_sup_names.add(s_data["name"])
+                    has_new_sup = True
+            if has_new_sup:
+                db.commit()
 
     except Exception as e:
         db.rollback()
