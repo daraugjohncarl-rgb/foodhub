@@ -1,7 +1,7 @@
 import os
 import sys
 import logging
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -41,13 +41,14 @@ if raw_db_url:
     else:
         DATABASE_URL = raw_db_url
 
+    parsed = urlparse(raw_db_url.replace("postgresql+psycopg://", "postgresql://").replace("mysql+pymysql://", "mysql://"))
     is_mysql = "mysql" in DATABASE_URL
     is_postgres = "postgres" in DATABASE_URL
-    DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
-    DB_PORT = os.getenv("DB_PORT", "3306" if is_mysql else "5432")
-    DB_USER = os.getenv("DB_USER", "root" if is_mysql else "postgres")
-    DB_PASSWORD = os.getenv("DB_PASS") if os.getenv("DB_PASS") is not None else os.getenv("DB_PASSWORD", "")
-    DB_NAME = os.getenv("DB_NAME", "pos")
+    DB_HOST = parsed.hostname or os.getenv("DB_HOST", "127.0.0.1")
+    DB_PORT = str(parsed.port or (3306 if is_mysql else 5432))
+    DB_USER = parsed.username or os.getenv("DB_USER", "root" if is_mysql else "postgres")
+    DB_PASSWORD = parsed.password if parsed.password is not None else (os.getenv("DB_PASS") if os.getenv("DB_PASS") is not None else os.getenv("DB_PASSWORD", ""))
+    DB_NAME = (parsed.path.lstrip("/") if parsed.path else "") or os.getenv("DB_NAME", "pos")
 else:
     # Check if configured for postgres or mysql
     if db_engine_type in ("postgres", "postgresql") or os.getenv("DB_PORT") == "5432":

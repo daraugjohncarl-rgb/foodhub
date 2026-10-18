@@ -1,12 +1,4 @@
+# Expose the Blessie FoodHub POS FastAPI app instance for ASGI servers running `uvicorn main:app`
+from app.main import app
 
-from fastapi import FastAPI
-
-app = FastAPI(title="My First API")
-
-@app.get("/")
-def home():
-    return {"message": "FastAPI is working!"}
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+__all__ = ["app"]
