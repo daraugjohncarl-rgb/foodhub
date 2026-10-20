@@ -2,7 +2,7 @@
  * Super Admin Dashboard Controller (dashboard.js)
  * Connects Super Admin metrics, Branch Admin accounts, System Reports, and profile info to FastAPI backend.
  */
-document.addEventListener('DOMContentLoaded', async () => {
+async function initDashboardApp() {
     // 1. Sidebar & Mobile Toggle Handlers
     const sidebar = document.getElementById('sidebar');
     const sidebarToggle = document.getElementById('sidebarToggle');
@@ -253,4 +253,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadDashboardStats();
     await loadRecentAdmins();
     await loadRecentReports();
-});
+}
+
+// Fast startup: initialize immediately if DOM is already ready, or on DOMContentLoaded
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initDashboardApp);
+} else {
+    initDashboardApp();
+}

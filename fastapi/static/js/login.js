@@ -30,8 +30,7 @@ function getRoleDashboardUrl(role) {
     }
 }
 
-// Authentication Logic
-document.addEventListener("DOMContentLoaded", () => {
+function initLoginApp() {
     // If already logged in, redirect directly to user's assigned dashboard
     if (localStorage.getItem("access_token")) {
         const role = localStorage.getItem("role") || "";
@@ -142,4 +141,11 @@ document.addEventListener("DOMContentLoaded", () => {
             if (signinIcon) signinIcon.style.display = "inline-block";
         }
     });
-});
+}
+
+// Fast startup: initialize immediately if DOM is already ready, or on DOMContentLoaded
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initLoginApp);
+} else {
+    initLoginApp();
+}

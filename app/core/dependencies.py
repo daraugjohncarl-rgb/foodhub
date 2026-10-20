@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import Depends, HTTPException, status
+from fastapi import Request, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 import jwt
 from jwt.exceptions import PyJWTError as JWTError
@@ -8,16 +8,20 @@ from app.db import get_db
 import app.models as models
 from app.core.security import SECRET_KEY, ALGORITHM
 
-# Define oauth2 scheme which extracts the bearer token from Authorization header
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+# Define oauth2 scheme which extracts the bearer token from Authorization header (auto_error=False allows cookie fallback)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
 def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    request: Request,
+    token: Optional[str] = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
 ) -> models.User:
     """
-    Dependency function to authenticate requests. Decodes the JWT token,
-    checks expiration/integrity, and returns the User object from the database.
+    Dependency function to authenticate requests via either:
+    1. HTTP Authorization Bearer header
+    2. Secure HttpOnly 'session_token' cookie
+    Decodes the JWT token, verifies expiration, integrity, user activity status,
+    and single-session token_version.
     Raises 401 Unauthorized exceptions if validation fails or account is deactivated.
     """
     credentials_exception = HTTPException(
@@ -25,10 +29,20 @@ def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+    # 1. Resolve token: header takes priority, fallback to secure session cookie
+    token_str = token if isinstance(token, str) and token.strip() else None
+    auth_token = token_str or request.cookies.get("session_token")
+    if not auth_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required. Please sign in.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     
     try:
         # Decode the token payload
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(auth_token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id_str: str = payload.get("sub")
         if user_id_str is None:
             raise credentials_exception
@@ -37,11 +51,10 @@ def get_current_user(
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Session expired after 1 day. Please log in again.",
+            detail="Session has expired. Please sign in again.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     except (JWTError, ValueError):
-        # ValueError handles cases where user_id string cannot be parsed as an integer
         raise credentials_exception
         
     # Look up user in database
@@ -56,16 +69,47 @@ def get_current_user(
             detail="User account is deactivated."
         )
         
-    # Single-device enforcement: Check if a newer login occurred on another device
+    # Single-session / token version revocation enforcement
     if token_version is not None and getattr(user, "token_version", None) is not None:
         if token_version != user.token_version:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Your account has been logged in on another device. You have been logged out on this device.",
+                detail="Your session has been revoked or logged into on another device.",
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
     return user
+
+
+def get_current_user_optional(
+    request: Request,
+    token: Optional[str] = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+) -> Optional[models.User]:
+    """
+    Safely retrieves the current authenticated user without raising an exception if unauthenticated.
+    Returns None if no session exists or if the session is invalid/expired.
+    """
+    token_str = token if isinstance(token, str) and token.strip() else None
+    auth_token = token_str or request.cookies.get("session_token")
+    if not auth_token:
+        return None
+    try:
+        payload = jwt.decode(auth_token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id_str = payload.get("sub")
+        if not user_id_str:
+            return None
+        user_id = int(user_id_str)
+        token_version = payload.get("token_version")
+        user = db.query(models.User).filter(models.User.id == user_id).first()
+        if not user or not user.is_active:
+            return None
+        if token_version is not None and getattr(user, "token_version", None) is not None:
+            if token_version != user.token_version:
+                return None
+        return user
+    except Exception:
+        return None
 
 
 def require_admin(

@@ -2240,6 +2240,7 @@
             }
         }
     </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 
 <body>
@@ -2305,7 +2306,7 @@
 
             <button class="header-cart" id="headerCart" type="button">
 
-                🛒
+                <i class="fas fa-shopping-cart"></i>
 
                 <span>
                     Cart
@@ -2457,9 +2458,7 @@
 
         <div class="cart-left">
 
-            <div class="cart-icon">
-                🛒
-            </div>
+            <div class="cart-icon"><i class="fas fa-shopping-cart"></i></div>
 
             <div class="cart-info">
 
@@ -2492,13 +2491,9 @@
 
             <div class="detail-image" id="detailImage">
 
-                <button class="detail-back" id="closeProduct" type="button">
-                    ←
-                </button>
+                <button class="detail-back" id="closeProduct" type="button" title="Back"><i class="fas fa-arrow-left"></i></button>
 
-                <button class="detail-favorite" type="button">
-                    ♡
-                </button>
+                <button class="detail-favorite" type="button" title="Favorite"><i class="far fa-heart"></i></button>
 
             </div>
 
@@ -2735,9 +2730,7 @@
 
             <div class="success" id="success">
 
-                <div class="success-icon">
-                    ✓
-                </div>
+                <div class="success-icon"><i class="fas fa-check"></i></div>
 
                 <h2>
                     Order Received
@@ -4899,7 +4892,7 @@
             class="detail-favorite"
             type="button"
         >
-            ♡
+            <i class="far fa-heart"></i>
         </button>
 
         ${productImage(selectedProduct)}
@@ -5260,7 +5253,7 @@
             <div class="empty">
 
                 <div class="empty-icon">
-                    🛒
+                    <i class="fas fa-shopping-cart"></i>
                 </div>
 
                 <h3>

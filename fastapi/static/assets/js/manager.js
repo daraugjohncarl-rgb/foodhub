@@ -36,23 +36,8 @@ window.openLogoutModal = openLogoutModal;
 window.closeLogoutModal = closeLogoutModal;
 window.doLogout = doLogout;
 
-document.addEventListener("DOMContentLoaded", async () => {
-    // 1. Role Guard: Enforce authenticated MANAGER (or higher) access
-    let user = null;
-    if (typeof Auth !== "undefined" && typeof Auth.requireRole === "function") {
-        user = Auth.requireRole(["manager", "admin", "super_admin"]);
-    } else if (typeof requireRole === "function") {
-        user = requireRole(["manager", "admin", "super_admin"]);
-    }
-    if (!user) return;
-
-    // 2. Sidebar & Mobile Menu Handlers
-    // 2. Sidebar init via centralized controller
-    if (typeof Utils !== "undefined" && Utils.initSidebar) {
-        Utils.initSidebar();
-    }
-
-    // 3. Live Clock & Date Header
+async function initManagerApp() {
+    // 1. Immediately update Live Clock & Date Header so header never gets stuck on "Loading..."
     function updateClock() {
         const now = new Date();
         const clockEl = document.getElementById("liveClock");
@@ -62,6 +47,22 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     updateClock();
     setInterval(updateClock, 1000);
+
+    // 2. Role Guard: Enforce authenticated MANAGER (or higher) access with session recovery
+    let user = null;
+    if (typeof Auth !== "undefined" && typeof Auth.requireRoleAsync === "function") {
+        user = await Auth.requireRoleAsync(["manager", "admin", "super_admin"]);
+    } else if (typeof Auth !== "undefined" && typeof Auth.requireRole === "function") {
+        user = Auth.requireRole(["manager", "admin", "super_admin"]);
+    } else if (typeof requireRole === "function") {
+        user = requireRole(["manager", "admin", "super_admin"]);
+    }
+    if (!user) return;
+
+    // 3. Sidebar init via centralized controller
+    if (typeof Utils !== "undefined" && Utils.initSidebar) {
+        Utils.initSidebar();
+    }
 
     // 4. Bind Logout Button clicks
     const logoutBtn = document.getElementById("logoutBtn");
@@ -126,4 +127,11 @@ document.addEventListener("DOMContentLoaded", async () => {
         const initialView = (window.location.hash ? window.location.hash.replace("#", "") : "") || sessionStorage.getItem("active_feature") || "dashboard";
         renderView(initialView);
     }
-});
+}
+
+// Fast startup: initialize immediately if DOM is already ready, or on DOMContentLoaded
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initManagerApp);
+} else {
+    initManagerApp();
+}

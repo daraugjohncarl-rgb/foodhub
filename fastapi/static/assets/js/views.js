@@ -349,7 +349,7 @@ async function renderInventory(c) {
         <button class="btn ${currentInvCategory === cat ? 'btn-primary' : 'btn-outline'}" 
           style="padding:6px 14px; font-size:12px; white-space:nowrap; border-radius:20px;"
           onclick="filterInventoryCategory('${cat}')">
-          ${cat === 'ALL' ? '🌐 All Items' : cat}
+          ${cat === 'ALL' ? '<i class="fas fa-layer-group"></i> All Items' : cat}
         </button>
       `).join('')}
     </div>
@@ -488,9 +488,9 @@ function openImportMasterlistModal() {
     { name: "FURNITURE & FIXTURES", icon: "fa-chair", desc: "Dining Table, Chairs, Stools, Electric Fan, Storage Rack" },
   ];
 
-  Utils.openModal("📦 Import Master List", `
+  Utils.openModal('<i class="fas fa-file-import" style="color:var(--accent); margin-right:8px;"></i> Import Master List to Database', `
     <!-- Tabs: Official Departments vs Custom List / Paste Names -->
-    <div style="display:flex; gap:10px; margin-bottom:16px; border-bottom:1px solid rgba(205,190,150,0.3); padding-bottom:8px;">
+    <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px; border-bottom:1px solid rgba(205,190,150,0.3); padding-bottom:8px;">
       <button id="tab-master-depts" class="btn btn-primary btn-sm" onclick="switchImportTab('depts')" style="font-size:12px;">
         <i class="fas fa-boxes-stacked"></i> Official Department Master List
       </button>
@@ -502,31 +502,60 @@ function openImportMasterlistModal() {
     <!-- Tab 1: Official Department Master List -->
     <div id="import-pane-depts">
       <div style="font-size:12px; color:var(--text-muted); margin-bottom:14px; background:rgba(201,162,39,0.06); padding:10px 14px; border-radius:8px; border-left:3px solid #c9a227;">
-        <strong><i class="fas fa-info-circle"></i> Zero Current Stock Rule:</strong> When importing, items without existing stock are safely created with <strong>0.0 current stock</strong>. Current stock is NOT added artificially. Existing items preserve their stock.
+        <strong><i class="fas fa-database"></i> Direct Database Import (0 Current Stock):</strong> When importing, items are automatically stored directly into the database with <strong>0.0 current stock</strong>.
       </div>
 
-      <div style="background:rgba(201,162,39,0.08); border:1px solid rgba(201,162,39,0.25); border-radius:12px; padding:14px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-        <div>
-          <strong style="color:var(--text-main); font-size:13px;">⚡ Complete Master Import (All 12 Departments)</strong>
-          <div style="font-size:11px; color:var(--text-muted);">Imports all standard master catalog items with 0 initial stock.</div>
+      <!-- File Upload / Specific Department Importer -->
+      <div style="background:rgba(201,162,39,0.06); border:1.5px dashed rgba(201,162,39,0.45); border-radius:12px; padding:16px; margin-bottom:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+          <div style="flex:1; min-width:240px;">
+            <strong style="color:var(--text-main); font-size:13px; display:flex; align-items:center; gap:6px;">
+              <i class="fas fa-file-word" style="color:#c9a227; font-size:16px;"></i> Import from Master List File (.docx, .csv, .txt)
+            </strong>
+            <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">Upload The-MASTERLIST-1.docx or your file to import specific departments or all items to DB.</div>
+          </div>
+          <label class="btn btn-primary btn-sm" style="cursor:pointer; font-size:12px; display:inline-flex; align-items:center; gap:6px; white-space:nowrap;">
+            <i class="fas fa-folder-open"></i> Choose File
+            <input type="file" id="masterlist-file-input" accept=".docx,.csv,.txt" style="display:none;" onchange="handleMasterlistFileUpload(this)">
+          </label>
         </div>
-        <button class="btn btn-primary btn-sm" onclick="submitImportMasterlist(null)">
-          <i class="fas fa-cloud-arrow-down"></i> Import All
+
+        <div id="file-upload-status" style="display:none; font-size:12px; color:var(--text-main); margin-top:10px; padding:8px 12px; background:rgba(255,255,255,0.85); border-radius:6px; border:1px solid rgba(205,190,150,0.4);"></div>
+
+        <div id="file-parsed-preview" style="display:none; background:#ffffff; border:1px solid rgba(205,190,150,0.4); border-radius:8px; padding:12px; margin-top:10px;">
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; align-items:flex-end;">
+            <div class="input-group" style="margin-bottom:0;">
+              <label style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--text-muted); margin-bottom:4px; display:block;">Select Department to Import from File:</label>
+              <select id="file-dept-selector" class="input-field" style="width:100%; height:38px; font-size:13px; font-weight:600;"></select>
+            </div>
+            <button id="btn-import-file-db" class="btn btn-primary" onclick="submitFileImport()" style="height:38px; font-size:12px; display:inline-flex; align-items:center; justify-content:center; gap:6px; white-space:nowrap;">
+              <i class="fas fa-database"></i> Import to Database (0 Stock)
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px;">
+        <h4 style="font-size:12px; text-transform:uppercase; color:var(--text-muted); margin:0;">Or Import by Specific Department</h4>
+        <button class="btn btn-outline btn-sm" onclick="submitImportMasterlist(null)" style="font-size:11px; padding:4px 10px; border-color:#c9a227; color:#c9a227;">
+          <i class="fas fa-cloud-arrow-down"></i> Import All Departments
         </button>
       </div>
 
-      <h4 style="font-size:12px; text-transform:uppercase; color:var(--text-muted); margin-bottom:10px;">Or Import by Department</h4>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; max-height:260px; overflow-y:auto; padding-right:4px;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px; max-height:clamp(220px, 44vh, 460px); overflow-y:auto; padding-right:6px;">
         ${categories.map(c => `
-          <div style="border:1px solid rgba(205,190,150,0.3); border-radius:10px; padding:10px; background:#ffffff; display:flex; flex-direction:column; justify-content:space-between; gap:6px;">
+          <div style="border:1px solid rgba(205,190,150,0.35); border-radius:12px; padding:12px 14px; background:#ffffff; display:flex; flex-direction:column; justify-content:space-between; gap:10px; transition:all 0.15s ease;" onmouseenter="this.style.boxShadow='0 4px 14px rgba(201,162,39,0.12)'" onmouseleave="this.style.boxShadow='none'">
             <div>
-              <div style="font-weight:700; font-size:12px; color:var(--text-main); display:flex; align-items:center; gap:6px;">
-                <i class="fas ${c.icon}" style="color:#c9a227;"></i> ${c.name}
+              <div style="font-weight:700; font-size:13px; color:var(--text-main); display:flex; align-items:center; gap:8px;">
+                <span style="width:28px; height:28px; border-radius:6px; background:rgba(201,162,39,0.12); display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
+                  <i class="fas ${c.icon}" style="color:#c9a227; font-size:13px;"></i>
+                </span>
+                ${c.name}
               </div>
-              <div style="font-size:10px; color:var(--text-muted); margin-top:2px; line-height:1.3;">${c.desc}</div>
+              <div style="font-size:11px; color:var(--text-muted); margin-top:6px; line-height:1.4;">${c.desc}</div>
             </div>
-            <button class="btn btn-outline btn-sm" style="align-self:flex-start; font-size:11px; padding:3px 8px;" onclick="submitImportMasterlist('${c.name}')">
-              Import ${c.name}
+            <button class="btn btn-outline btn-sm" style="align-self:flex-start; font-size:11px; padding:4px 10px; border-radius:6px; margin-top:auto;" onclick="submitImportMasterlist('${c.name}')">
+              <i class="fas fa-file-import"></i> Import ${c.name}
             </button>
           </div>
         `).join('')}
@@ -539,7 +568,7 @@ function openImportMasterlistModal() {
         <strong><i class="fas fa-check-circle"></i> Item Name Only Import:</strong> Paste item names below (one per line). If there is no current stock, stock will NOT be added and stays at <strong>0.0</strong>.
       </div>
 
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-bottom:12px;">
         <div class="input-group">
           <label style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Department Category</label>
           <select id="custom-import-cat" class="input-field" style="width:100%;">
@@ -579,7 +608,23 @@ Pork Chop" style="width:100%; font-family:monospace; font-size:12px;"></textarea
         </button>
       </div>
     </div>
-  `, `<button class="btn btn-outline" onclick="Utils.closeModal()">Close</button>`);
+  `, `<button class="btn btn-outline" onclick="Utils.closeModal()">Close</button>`, "modal-responsive modal-xl");
+
+  // Auto-fit, Auto-Resize, and Responsive sizing
+  const modalContent = document.getElementById("modal-content");
+  if (modalContent) {
+    modalContent.style.width = "min(960px, 95vw)";
+    modalContent.style.maxWidth = "960px";
+    modalContent.style.maxHeight = "92vh";
+    modalContent.style.display = "flex";
+    modalContent.style.flexDirection = "column";
+    const modalBody = modalContent.querySelector(".modal-body");
+    if (modalBody) {
+      modalBody.style.overflowY = "auto";
+      modalBody.style.maxHeight = "calc(92vh - 120px)";
+      modalBody.style.flex = "1";
+    }
+  }
 }
 
 function switchImportTab(tab) {
@@ -666,6 +711,87 @@ async function submitCustomListImport() {
   }
 }
 
+let uploadedMasterlistFile = null;
+
+async function handleMasterlistFileUpload(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  uploadedMasterlistFile = file;
+
+  const infoBox = document.getElementById("file-upload-status");
+  if (infoBox) {
+    infoBox.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Reading & analyzing <strong>${file.name}</strong>...`;
+    infoBox.style.display = "block";
+  }
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  try {
+    const res = await Auth.fetch("/api/v1/inventory/parse-file", {
+      method: "POST",
+      body: formData
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to parse file");
+    }
+    const data = await res.json();
+    const depts = Object.keys(data.departments || {});
+    
+    const deptSelect = document.getElementById("file-dept-selector");
+    const previewArea = document.getElementById("file-parsed-preview");
+    if (deptSelect && previewArea) {
+      deptSelect.innerHTML = `
+        <option value="ALL">All Departments (${data.total_items} items total)</option>
+        ${depts.map(d => `<option value="${d}">${d} (${data.departments[d].length} items)</option>`).join('')}
+      `;
+      previewArea.style.display = "block";
+    }
+    if (infoBox) {
+      infoBox.innerHTML = `<i class="fas fa-check-circle" style="color:#10b981;"></i> <strong>${file.name}</strong> loaded: <strong>${data.total_items} items</strong> across <strong>${depts.length} departments</strong> found in file. Select a department above or import all.`;
+    }
+  } catch (err) {
+    if (infoBox) {
+      infoBox.innerHTML = `<span style="color:var(--danger);"><i class="fas fa-circle-exclamation"></i> ${err.message}</span>`;
+    }
+  }
+}
+
+async function submitFileImport() {
+  if (!uploadedMasterlistFile) {
+    Utils.showToast("Please choose a file (.docx, .csv, .txt) first", "danger");
+    return;
+  }
+  const selDept = document.getElementById("file-dept-selector") ? document.getElementById("file-dept-selector").value : "ALL";
+  const formData = new FormData();
+  formData.append("file", uploadedMasterlistFile);
+  if (selDept && selDept !== "ALL") {
+    formData.append("department", selDept);
+  }
+
+  const btn = document.getElementById("btn-import-file-db");
+  if (btn) btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Saving to Database...`;
+
+  try {
+    const res = await Auth.fetch("/api/v1/inventory/import-file", {
+      method: "POST",
+      body: formData
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "File import failed");
+    }
+    const result = await res.json();
+    Utils.showToast(result.message || "Successfully imported items to database!", "success");
+    Utils.closeModal();
+    renderInventory();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+    if (btn) btn.innerHTML = `<i class="fas fa-database"></i> Import to Database (0 Stock)`;
+  }
+}
+
 async function submitImportMasterlist(category) {
   try {
     const url = category ? `/api/v1/inventory/import-masterlist?selected_category=${encodeURIComponent(category)}` : `/api/v1/inventory/import-masterlist`;
@@ -687,7 +813,7 @@ function openUrgentRestockModal() {
   if (!cachedAnalytics || !cachedAnalytics.urgent_restock) return;
   const list = cachedAnalytics.urgent_restock;
 
-  Utils.openModal("📊 Automated Inventory Analysis & Health Audit", `
+  Utils.openModal('<i class="fas fa-chart-line" style="color:var(--accent); margin-right:8px;"></i> Automated Inventory Analysis & Health Audit', `
     <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; margin-bottom:18px;">
       <div style="background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25); border-radius:10px; padding:12px; text-align:center;">
         <div style="font-size:11px; font-weight:700; color:#10b981;">HEALTHY ITEMS</div>
@@ -954,9 +1080,17 @@ async function renderProducts(c) {
           ${categories.map(cat => `<option value="${cat.id}">${cat.name}</option>`).join('')}
         </select>
       </div>
-      <button class="btn btn-primary" onclick="openAddProductModal()" style="display:inline-flex; align-items:center; gap:8px;">
-        <i class="fas fa-plus"></i> Add Menu Product
-      </button>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button class="btn btn-outline" onclick="openCategoriesModal()" style="display:inline-flex; align-items:center; gap:8px; border-color:#c9a227; color:#c9a227; cursor:pointer;" title="Add and edit menu categories">
+          <i class="fas fa-tags"></i> Add / Edit Categories
+        </button>
+        <button class="btn btn-outline" onclick="openImportProductsModal()" style="display:inline-flex; align-items:center; gap:8px; border-color:#10b981; color:#10b981; cursor:pointer; font-weight:600;" title="Import food products with pictures">
+          <i class="fas fa-file-import"></i> Import Food with Pictures
+        </button>
+        <button class="btn btn-primary" onclick="openAddProductModal()" style="display:inline-flex; align-items:center; gap:8px; cursor:pointer;">
+          <i class="fas fa-plus"></i> Add Menu Product
+        </button>
+      </div>
     </div>
 
     <div class="section-card">
@@ -1114,7 +1248,12 @@ function openAddProductModal() {
     <form id="form-add-prod" onsubmit="event.preventDefault(); submitAddProduct();">
       <!-- Category Selection Dropdown -->
       <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Category <span style="color:var(--danger);">*</span></label>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); margin:0;">Category <span style="color:var(--danger);">*</span></label>
+          <button type="button" class="btn btn-outline btn-sm" onclick="promptAddCategoryInline('prod-category')" style="font-size:11px; padding:2px 8px; border-color:#c9a227; color:#c9a227; cursor:pointer;" title="Quickly create a new category">
+            <i class="fas fa-plus"></i> New Category
+          </button>
+        </div>
         <select id="prod-category" class="input-field" required style="width:100%;">
           <option value="">-- Select Category --</option>
           ${cats.map(cat => `<option value="${cat.id}">${cat.name}</option>`).join('')}
@@ -1223,7 +1362,12 @@ function openEditProductModal(id) {
   Utils.openModal("Edit Menu Product #" + p.id, `
     <form id="form-edit-prod" onsubmit="event.preventDefault(); submitEditProduct(${p.id});">
       <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Category</label>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); margin:0;">Category</label>
+          <button type="button" class="btn btn-outline btn-sm" onclick="promptAddCategoryInline('edit-prod-category')" style="font-size:11px; padding:2px 8px; border-color:#c9a227; color:#c9a227; cursor:pointer;" title="Quickly create a new category">
+            <i class="fas fa-plus"></i> New Category
+          </button>
+        </div>
         <select id="edit-prod-category" class="input-field" style="width:100%;">
           <option value="">-- No Category --</option>
           ${cats.map(cat => `<option value="${cat.id}" ${p.category_id === cat.id ? 'selected' : ''}>${cat.name}</option>`).join('')}
@@ -1334,7 +1478,7 @@ async function submitEditProduct(id) {
 }
 
 async function deleteProductPrompt(id, name) {
-  const confirmed = confirm(`Are you sure you want to delete "${name || 'this product'}"?`);
+  const confirmed = confirm(`Are you sure you want to delete "${name || 'this product'}"? This action cannot be undone.`);
   if (!confirmed) return;
 
   try {
@@ -1353,6 +1497,737 @@ async function deleteProductPrompt(id, name) {
     Utils.showToast(err.message, "danger");
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3.1 CATEGORY MANAGEMENT (ADD & EDIT CATEGORIES)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function openCategoriesModal() {
+  const catRes = await Auth.fetch("/api/v1/categories");
+  const categories = catRes.ok ? await catRes.json() : (window.cachedCategories || []);
+  window.cachedCategories = categories;
+
+  const prods = window.cachedProducts || [];
+  const countMap = {};
+  prods.forEach(p => {
+    if (p.category_id) countMap[p.category_id] = (countMap[p.category_id] || 0) + 1;
+  });
+
+  const catRows = categories.length ? categories.map(cat => {
+    const pCount = countMap[cat.id] || 0;
+    return `
+      <tr id="cat-row-${cat.id}">
+        <td><strong style="color:var(--text-main); font-size:13px;">${cat.name}</strong></td>
+        <td style="color:var(--text-muted); font-size:12px;">${cat.description || '—'}</td>
+        <td style="text-align:center;">
+          <span class="badge" style="background:rgba(205,190,150,0.2); font-size:11px; font-weight:700;">${pCount} items</span>
+        </td>
+        <td style="text-align:right; white-space:nowrap;">
+          <button class="btn btn-outline btn-sm" onclick="openEditCategoryModal(${cat.id})" style="font-size:11px; padding:3px 8px; margin-right:4px;" title="Edit Category">
+            <i class="fas fa-edit"></i> Edit
+          </button>
+          <button class="btn btn-danger btn-sm" onclick="deleteCategoryPrompt(${cat.id}, '${(cat.name || '').replace(/'/g, "\\'")}')" style="font-size:11px; padding:3px 8px; background:#dc3545; border-color:#dc3545; color:#fff;" title="Delete Category">
+            <i class="fas fa-trash"></i>
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('') : `<tr><td colspan="4" style="text-align:center; padding:20px; color:var(--text-muted);">No categories created yet.</td></tr>`;
+
+  Utils.openModal('<i class="fas fa-tags" style="color:var(--accent); margin-right:8px;"></i> Manage Menu Categories', `
+    <div style="margin-bottom:20px; padding:16px; border-radius:10px; background:rgba(205,190,150,0.08); border:1px solid rgba(205,190,150,0.25);">
+      <h4 style="margin:0 0 10px 0; font-size:13px; text-transform:uppercase; color:var(--text-main); font-weight:700;">
+        <i class="fas fa-plus-circle" style="color:var(--accent); margin-right:6px;"></i> Add New Category
+      </h4>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+        <div style="flex:1; min-width:180px;">
+          <label style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Category Name *</label>
+          <input type="text" id="cat-new-name" class="input-field" placeholder="e.g. Beverages, Hot Meals, Desserts" style="width:100%; height:38px;">
+        </div>
+        <div style="flex:1.5; min-width:220px;">
+          <label style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Description (Optional)</label>
+          <input type="text" id="cat-new-desc" class="input-field" placeholder="Brief description of items in this category" style="width:100%; height:38px;">
+        </div>
+        <button class="btn btn-primary" onclick="submitAddCategory()" style="height:38px; display:inline-flex; align-items:center; gap:6px; white-space:nowrap;">
+          <i class="fas fa-plus"></i> Save Category
+        </button>
+      </div>
+    </div>
+
+    <div class="section-card" style="margin:0; box-shadow:none; border:1px solid rgba(205,190,150,0.25);">
+      <div class="section-head" style="padding:12px 16px;">
+        <h4 style="margin:0; font-size:13px;">Existing Categories (${categories.length})</h4>
+      </div>
+      <div class="table-wrap" style="max-height:300px; overflow-y:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Category Name</th>
+              <th>Description</th>
+              <th style="width:100px; text-align:center;">Products</th>
+              <th style="width:120px; text-align:right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="cat-tbody">
+            ${catRows}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `, `<button class="btn btn-outline" onclick="Utils.closeModal()">Close</button>`, "modal-lg");
+  const modalEl = document.getElementById("modal-content");
+  if (modalEl) modalEl.style.maxWidth = "750px";
+}
+
+async function submitAddCategory() {
+  const nameInput = document.getElementById("cat-new-name");
+  const descInput = document.getElementById("cat-new-desc");
+  const name = (nameInput?.value || "").trim();
+  const description = (descInput?.value || "").trim() || null;
+
+  if (!name) {
+    Utils.showToast("Category name is required.", "danger");
+    if (nameInput) nameInput.focus();
+    return;
+  }
+
+  try {
+    const res = await Auth.fetch("/api/v1/categories", {
+      method: "POST",
+      body: JSON.stringify({ name, description })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to create category.");
+    }
+    Utils.showToast(`Category '${name}' created successfully!`, "success");
+    await openCategoriesModal();
+    if (document.getElementById("prod-tbody")) {
+      renderProducts();
+    }
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+}
+
+function openEditCategoryModal(catId) {
+  const cat = (window.cachedCategories || []).find(c => c.id === catId);
+  if (!cat) return;
+
+  Utils.openModal(`Edit Category: ${cat.name}`, `
+    <form id="form-edit-cat" onsubmit="event.preventDefault(); submitEditCategory(${cat.id});">
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Category Name <span style="color:var(--danger);">*</span></label>
+        <input type="text" id="edit-cat-name" class="input-field" required value="${cat.name}" style="width:100%;">
+      </div>
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Description</label>
+        <input type="text" id="edit-cat-desc" class="input-field" value="${cat.description || ''}" placeholder="Optional description" style="width:100%;">
+      </div>
+    </form>
+  `, `
+    <div style="display:flex; justify-content:space-between; width:100%; gap:10px;">
+      <button type="button" class="btn btn-outline" onclick="openCategoriesModal()">Back to Categories</button>
+      <button class="btn btn-primary" onclick="submitEditCategory(${cat.id})"><i class="fas fa-save"></i> Save Changes</button>
+    </div>
+  `);
+}
+
+async function submitEditCategory(catId) {
+  const name = (document.getElementById("edit-cat-name")?.value || "").trim();
+  const description = (document.getElementById("edit-cat-desc")?.value || "").trim() || null;
+
+  if (!name) {
+    Utils.showToast("Category name cannot be empty.", "danger");
+    return;
+  }
+
+  try {
+    const res = await Auth.fetch(`/api/v1/categories/${catId}`, {
+      method: "PUT",
+      body: JSON.stringify({ name, description })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to update category.");
+    }
+    Utils.showToast(`Category updated to '${name}' successfully!`, "success");
+    await openCategoriesModal();
+    if (document.getElementById("prod-tbody")) {
+      renderProducts();
+    }
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+}
+
+async function deleteCategoryPrompt(catId, catName) {
+  const confirmed = confirm(`Are you sure you want to delete category "${catName}"?\nProducts in this category will be unassigned (not deleted).`);
+  if (!confirmed) return;
+
+  try {
+    const res = await Auth.fetch(`/api/v1/categories/${catId}`, {
+      method: "DELETE"
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to delete category.");
+    }
+    Utils.showToast(`Category "${catName}" deleted successfully.`, "success");
+    await openCategoriesModal();
+    if (document.getElementById("prod-tbody")) {
+      renderProducts();
+    }
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+}
+
+async function promptAddCategoryInline(targetSelectId) {
+  const name = prompt("Enter the new Category name (e.g. Pasta, Coffee, Desserts):");
+  if (!name || !name.trim()) return;
+
+  try {
+    const res = await Auth.fetch("/api/v1/categories", {
+      method: "POST",
+      body: JSON.stringify({ name: name.trim() })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to create category.");
+    }
+    const newCat = await res.json();
+    Utils.showToast(`Category '${newCat.name}' created!`, "success");
+
+    if (!window.cachedCategories) window.cachedCategories = [];
+    window.cachedCategories.push(newCat);
+    if (!window.cachedCategoryMap) window.cachedCategoryMap = {};
+    window.cachedCategoryMap[newCat.id] = newCat.name;
+
+    const select = document.getElementById(targetSelectId);
+    if (select) {
+      const opt = document.createElement("option");
+      opt.value = newCat.id;
+      opt.textContent = newCat.name;
+      opt.selected = true;
+      select.appendChild(opt);
+    }
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3.2 PRODUCT & MENU IMPORT (IMAGES & CATALOG IMPORTER)
+// ─────────────────────────────────────────────────────────────────────────────
+
+window.pendingImportImages = [];
+
+function switchProdImportTab(tab) {
+  const pImages = document.getElementById("prod-import-pane-images");
+  const pPreset = document.getElementById("prod-import-pane-preset");
+  const pText = document.getElementById("prod-import-pane-text");
+  const tImages = document.getElementById("tab-import-images");
+  const tPreset = document.getElementById("tab-import-preset");
+  const tText = document.getElementById("tab-import-text");
+
+  if (pImages) pImages.style.display = tab === "images" ? "block" : "none";
+  if (pPreset) pPreset.style.display = tab === "preset" ? "block" : "none";
+  if (pText) pText.style.display = tab === "text" ? "block" : "none";
+
+  if (tImages) tImages.className = tab === "images" ? "btn btn-primary btn-sm" : "btn btn-outline btn-sm";
+  if (tPreset) tPreset.className = tab === "preset" ? "btn btn-primary btn-sm" : "btn btn-outline btn-sm";
+  if (tText) tText.className = tab === "text" ? "btn btn-primary btn-sm" : "btn btn-outline btn-sm";
+}
+
+function cleanProductNameFromFilename(filename) {
+  if (!filename) return "Menu Item";
+  let base = filename.replace(/\.[^/.]+$/, "");
+  base = base.replace(/^\d+[\s\.\-_]+/, "");
+  base = base.replace(/[_\-]+/g, " ");
+  base = base.replace(/\s+/g, " ").trim();
+  return base.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+}
+
+function generateProductSku(name, index) {
+  const words = (name || "").split(/\s+/).filter(Boolean);
+  let prefix = words.map(w => w[0].toUpperCase()).slice(0, 3).join('');
+  if (prefix.length < 2) prefix = (name || "PRD").substring(0, 3).toUpperCase();
+  const num = (index !== undefined ? 100 + index : Math.floor(Math.random() * 900) + 100);
+  return `${prefix}-${num}`;
+}
+
+async function openImportProductsModal() {
+  window.pendingImportImages = [];
+  const cats = window.cachedCategories || [];
+
+  let presets = [];
+  try {
+    const res = await Auth.fetch("/api/v1/products/preset-library");
+    if (res.ok) presets = await res.json();
+  } catch (e) {
+    console.warn("Could not fetch preset library:", e);
+  }
+
+  window.cachedPresetLibrary = presets;
+
+  const presetCards = presets.map((item, idx) => `
+    <div style="display:flex; align-items:center; gap:12px; padding:10px; border-radius:8px; border:1px solid rgba(205,190,150,0.25); background:rgba(255,255,255,0.7);">
+      <input type="checkbox" id="preset-chk-${idx}" class="preset-select-chk" value="${idx}" checked style="width:18px; height:18px; cursor:pointer;">
+      <div style="width:44px; height:44px; border-radius:8px; overflow:hidden; border:1px solid rgba(205,190,150,0.3); background:#fff; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+        <img src="${item.image_url}" alt="${item.name}" style="width:100%; height:100%; object-fit:cover;" onerror="this.onerror=null; this.parentElement.innerHTML='<i class=\\'fas fa-utensils\\' style=\\'color:#cbd5e1; font-size:18px;\\'></i>';">
+      </div>
+      <div style="flex:1; min-width:0;">
+        <strong style="font-size:12px; color:var(--text-main); display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${item.name}</strong>
+        <div style="font-size:11px; color:var(--text-muted); display:flex; gap:8px;">
+          <span>${item.category_name}</span>
+          <span>•</span>
+          <span style="color:#c9a227; font-weight:700;">₱${Number(item.price).toFixed(2)}</span>
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  Utils.openModal('<i class="fas fa-file-import" style="color:var(--accent); margin-right:8px;"></i> Import Menu Products & Catalog', `
+    <!-- Import Navigation Tabs -->
+    <div style="display:flex; gap:8px; border-bottom:1px solid rgba(205,190,150,0.25); padding-bottom:12px; margin-bottom:16px; flex-wrap:wrap;">
+      <button id="tab-import-images" class="btn btn-primary btn-sm" onclick="switchProdImportTab('images')" style="font-size:12px;">
+        <i class="fas fa-images"></i> Upload Image Files (Auto Name from Image)
+      </button>
+      <button id="tab-import-preset" class="btn btn-outline btn-sm" onclick="switchProdImportTab('preset')" style="font-size:12px;">
+        <i class="fas fa-book-open"></i> Preset Menu Library (${presets.length} Items)
+      </button>
+      <button id="tab-import-text" class="btn btn-outline btn-sm" onclick="switchProdImportTab('text')" style="font-size:12px;">
+        <i class="fas fa-file-lines"></i> Paste Names / CSV List
+      </button>
+    </div>
+
+    <!-- PANE 1: Upload Images (Extracts Product Name & Links Image) -->
+    <div id="prod-import-pane-images">
+      <div style="padding:14px; background:rgba(201,162,39,0.08); border-radius:8px; border-left:4px solid var(--accent); margin-bottom:16px; font-size:12px; line-height:1.5;">
+        <strong><i class="fas fa-magic"></i> Auto-Naming & Image Import:</strong>
+        Select or drag in image files from your computer (e.g. <code>Caramel Macchiato.png</code>, <code>Burger with Fries.jpg</code>, <code>Spaghetti with Bread.png</code>).
+        The product name is automatically formatted from each image's file name, and each photo is attached to its product!
+      </div>
+
+      <!-- Drag & Drop Zone -->
+      <div id="prod-img-dropzone" onclick="document.getElementById('import-images-file-input').click()" style="border:2px dashed rgba(205,190,150,0.6); border-radius:12px; padding:28px 20px; text-align:center; cursor:pointer; background:rgba(0,0,0,0.01); transition:all 0.2s;" ondragover="event.preventDefault(); this.style.borderColor='var(--accent)';" ondragleave="this.style.borderColor='rgba(205,190,150,0.6)';" ondrop="handleDropImportImages(event)">
+        <i class="fas fa-cloud-arrow-up" style="font-size:36px; color:var(--accent); margin-bottom:10px; display:block;"></i>
+        <h4 style="margin:0 0 6px 0; font-size:15px; color:var(--text-main);">Click or Drag & Drop Product Images Here</h4>
+        <p style="margin:0; font-size:12px; color:var(--text-muted);">Supports PNG, JPG, JPEG, WEBP. You can select multiple images at once.</p>
+        <input type="file" id="import-images-file-input" accept="image/*" multiple style="display:none;" onchange="handleImportImagesSelect(this)">
+      </div>
+
+
+      <!-- Live Preview Table of Pending Items -->
+      <div id="batch-img-preview-wrap" style="display:none; margin-top:16px; max-height:280px; overflow-y:auto; border:1px solid rgba(205,190,150,0.25); border-radius:8px;">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:60px; text-align:center;">Photo</th>
+              <th style="width:120px;">Code (SKU)</th>
+              <th>Product Name (Auto-Derived)</th>
+              <th style="width:160px;">Category</th>
+              <th style="width:110px;">Price (₱)</th>
+              <th style="width:50px; text-align:center;"></th>
+            </tr>
+          </thead>
+          <tbody id="batch-img-tbody"></tbody>
+        </table>
+      </div>
+
+      <div id="batch-img-footer" style="display:none; margin-top:16px; text-align:right;">
+        <button id="btn-submit-import-images" class="btn btn-primary" onclick="submitImportImageProducts()" style="display:inline-flex; align-items:center; gap:8px;">
+          <i class="fas fa-check-circle"></i> Import All Products to Menu
+        </button>
+      </div>
+    </div>
+
+    <!-- PANE 2: Preset Library (Blessie FoodHub 24 catalog items with existing photos) -->
+    <div id="prod-import-pane-preset" style="display:none;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+        <div style="font-size:12px; color:var(--text-muted);">
+          Select dishes and drinks from the official Blessie FoodHub catalog with full-resolution pictures:
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-outline btn-sm" onclick="toggleAllPresetCheckboxes(true)" style="font-size:11px; padding:3px 8px;">Select All</button>
+          <button class="btn btn-outline btn-sm" onclick="toggleAllPresetCheckboxes(false)" style="font-size:11px; padding:3px 8px;">Deselect All</button>
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:10px; max-height:360px; overflow-y:auto; padding:4px;">
+        ${presetCards}
+      </div>
+      <div style="margin-top:16px; text-align:right; border-top:1px solid rgba(205,190,150,0.25); padding-top:12px;">
+        <button class="btn btn-primary" onclick="submitImportPresetItems()" style="display:inline-flex; align-items:center; gap:8px;">
+          <i class="fas fa-cloud-arrow-down"></i> Import Selected Catalog Items
+        </button>
+      </div>
+    </div>
+
+    <!-- PANE 3: Paste / CSV List (Auto-matches photos by name) -->
+    <div id="prod-import-pane-text" style="display:none;">
+      <div style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">
+        Paste product names below (one item per line). Format: <code>Item Name, Price, Category</code> or just <code>Item Name</code>.<br>
+        Photos from the menu asset library will be automatically matched based on the product name!
+      </div>
+      <textarea id="prod-import-textarea" class="input-field" rows="8" style="width:100%; font-family:monospace; font-size:12px;" placeholder="Example:
+Caramel Macchiato, 85, Coffee & Drinks
+Burger with Fries, 85, Burgers & Sandwiches
+Carbonara with Bread, 110, Pasta & Noodles
+Pancit Canton with Toasted Bread, 85, Pasta & Noodles
+Arroz Caldo, 65, Mains & Bowls"></textarea>
+      <div style="margin-top:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <div style="font-size:11px; color:var(--text-muted);">
+          <i class="fas fa-info-circle"></i> Matching images in <code>/static/assets/images</code> will be auto-attached.
+        </div>
+        <button class="btn btn-primary" onclick="submitImportTextList()" style="display:inline-flex; align-items:center; gap:8px;">
+          <i class="fas fa-file-import"></i> Process & Import Items
+        </button>
+      </div>
+    </div>
+  `, `<button class="btn btn-outline" onclick="Utils.closeModal()">Close</button>`, "modal-lg");
+
+  const modalEl = document.getElementById("modal-content");
+  if (modalEl) modalEl.style.maxWidth = "860px";
+}
+
+function handleDropImportImages(e) {
+  e.preventDefault();
+  const dt = e.dataTransfer;
+  if (dt && dt.files && dt.files.length) {
+    processSelectedImageFiles(dt.files);
+  }
+}
+
+function handleImportImagesSelect(input) {
+  if (input && input.files && input.files.length) {
+    processSelectedImageFiles(input.files);
+  }
+}
+
+function processSelectedImageFiles(fileList) {
+  const cats = window.cachedCategories || [];
+  const startIndex = window.pendingImportImages.length;
+
+  for (let i = 0; i < fileList.length; i++) {
+    const file = fileList[i];
+    if (!file.type.startsWith("image/")) continue;
+
+    const cleanName = cleanProductNameFromFilename(file.name);
+    const sku = generateProductSku(cleanName, startIndex + i + 1);
+    const previewUrl = URL.createObjectURL(file);
+
+    let defaultCatId = "";
+    const nameLower = cleanName.toLowerCase();
+    if (nameLower.includes("coffee") || nameLower.includes("latte") || nameLower.includes("matcha") || nameLower.includes("americano")) {
+      const match = cats.find(c => c.name.toLowerCase().includes("drink") || c.name.toLowerCase().includes("coffee") || c.name.toLowerCase().includes("beverage"));
+      if (match) defaultCatId = match.id;
+    } else if (nameLower.includes("burger") || nameLower.includes("sandwich")) {
+      const match = cats.find(c => c.name.toLowerCase().includes("burger") || c.name.toLowerCase().includes("sandwich"));
+      if (match) defaultCatId = match.id;
+    } else if (nameLower.includes("pancit") || nameLower.includes("spaghetti") || nameLower.includes("carbonara") || nameLower.includes("pasta") || nameLower.includes("noodles")) {
+      const match = cats.find(c => c.name.toLowerCase().includes("pasta") || c.name.toLowerCase().includes("noodle"));
+      if (match) defaultCatId = match.id;
+    }
+
+    if (!defaultCatId && cats.length) {
+      defaultCatId = cats[0].id;
+    }
+
+    window.pendingImportImages.push({
+      file: file,
+      name: cleanName,
+      sku: sku,
+      category_id: defaultCatId,
+      price: 99.00,
+      previewUrl: previewUrl
+    });
+  }
+
+  renderPendingImagesTable();
+}
+
+function renderPendingImagesTable() {
+  const items = window.pendingImportImages;
+  const tbody = document.getElementById("batch-img-tbody");
+  const controls = document.getElementById("batch-img-controls");
+  const previewWrap = document.getElementById("batch-img-preview-wrap");
+  const footer = document.getElementById("batch-img-footer");
+  const countSpan = document.getElementById("batch-img-count");
+  const cats = window.cachedCategories || [];
+
+  if (!items.length) {
+    if (controls) controls.style.display = "none";
+    if (previewWrap) previewWrap.style.display = "none";
+    if (footer) footer.style.display = "none";
+    return;
+  }
+
+  if (controls) controls.style.display = "flex";
+  if (previewWrap) previewWrap.style.display = "block";
+  if (footer) footer.style.display = "block";
+  if (countSpan) countSpan.textContent = `${items.length} ${items.length === 1 ? 'image' : 'images'} ready to import`;
+
+  if (tbody) {
+    tbody.innerHTML = items.map((item, idx) => `
+      <tr>
+        <td style="text-align:center;">
+          <div style="width:40px; height:40px; border-radius:6px; overflow:hidden; border:1px solid rgba(205,190,150,0.3); margin:0 auto; background:#fff;">
+            <img src="${item.previewUrl}" style="width:100%; height:100%; object-fit:cover;">
+          </div>
+        </td>
+        <td>
+          <input type="text" class="input-field" value="${item.sku}" style="height:32px; font-size:12px; font-family:monospace; font-weight:700; width:100%;" onchange="window.pendingImportImages[${idx}].sku = this.value.trim()">
+        </td>
+        <td>
+          <input type="text" class="input-field" value="${item.name}" style="height:32px; font-size:12px; font-weight:600; width:100%;" onchange="window.pendingImportImages[${idx}].name = this.value.trim()">
+        </td>
+        <td>
+          <select class="input-field batch-row-cat" style="height:32px; font-size:12px; width:100%;" onchange="window.pendingImportImages[${idx}].category_id = this.value">
+            <option value="">-- No Category --</option>
+            ${cats.map(c => `<option value="${c.id}" ${item.category_id == c.id ? 'selected' : ''}>${c.name}</option>`).join('')}
+          </select>
+        </td>
+        <td>
+          <input type="number" step="0.01" class="input-field batch-row-price" value="${item.price}" style="height:32px; font-size:12px; width:100%; font-weight:700; color:#c9a227;" onchange="window.pendingImportImages[${idx}].price = parseFloat(this.value) || 0">
+        </td>
+        <td style="text-align:center;">
+          <button type="button" class="btn-icon" onclick="removePendingImportImage(${idx})" style="color:#ef4444; border:none; background:transparent; cursor:pointer;" title="Remove">
+            <i class="fas fa-trash"></i>
+          </button>
+        </td>
+      </tr>
+    `).join('');
+  }
+}
+
+function removePendingImportImage(idx) {
+  window.pendingImportImages.splice(idx, 1);
+  renderPendingImagesTable();
+}
+
+function applyBatchCategoryToAll() {
+  const catVal = document.getElementById("batch-cat-select")?.value;
+  if (!catVal) return;
+  window.pendingImportImages.forEach(it => { it.category_id = catVal; });
+  renderPendingImagesTable();
+  Utils.showToast("Category applied to all pending items.", "info");
+}
+
+function applyBatchPriceToAll() {
+  const priceVal = parseFloat(document.getElementById("batch-price-input")?.value);
+  if (isNaN(priceVal) || priceVal < 0) return;
+  window.pendingImportImages.forEach(it => { it.price = priceVal; });
+  renderPendingImagesTable();
+  Utils.showToast("Price applied to all pending items.", "info");
+}
+
+async function submitImportImageProducts() {
+  const items = window.pendingImportImages;
+  if (!items.length) {
+    Utils.showToast("Please select at least one image file.", "warning");
+    return;
+  }
+
+  const btn = document.getElementById("btn-submit-import-images");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Uploading & Importing (${items.length})...`;
+  }
+
+  try {
+    const batchPayload = [];
+
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      let imageUrl = null;
+
+      if (it.file) {
+        const formData = new FormData();
+        formData.append("file", it.file);
+        try {
+          const upRes = await Auth.fetch("/api/v1/products/upload-image", {
+            method: "POST",
+            body: formData
+          });
+          if (upRes.ok) {
+            const upData = await upRes.json();
+            imageUrl = upData.image_url;
+          }
+        } catch (err) {
+          console.warn("Image upload failed for", it.name, err);
+        }
+      }
+
+      batchPayload.push({
+        name: it.name,
+        sku: it.sku,
+        category_id: it.category_id ? Number(it.category_id) : null,
+        price: Number(it.price) || 99.00,
+        cost: 0,
+        image_url: imageUrl,
+        is_active: true
+      });
+    }
+
+    const res = await Auth.fetch("/api/v1/products/import-batch", {
+      method: "POST",
+      body: JSON.stringify({ items: batchPayload })
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Batch product import failed.");
+    }
+
+    const result = await res.json();
+    Utils.showToast(result.message || `Successfully imported ${batchPayload.length} products!`, "success");
+    Utils.closeModal();
+    renderProducts();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<i class="fas fa-check-circle"></i> Import All Products to Menu`;
+    }
+  }
+}
+
+function toggleAllPresetCheckboxes(checked) {
+  const chks = document.querySelectorAll(".preset-select-chk");
+  chks.forEach(c => { c.checked = checked; });
+}
+
+async function submitImportPresetItems() {
+  const presets = window.cachedPresetLibrary || [];
+  const chks = document.querySelectorAll(".preset-select-chk:checked");
+  if (!chks.length) {
+    Utils.showToast("Please select at least one item from the library.", "warning");
+    return;
+  }
+
+  const selectedIndexes = Array.from(chks).map(c => parseInt(c.value, 10));
+  const selectedItems = selectedIndexes.map(idx => presets[idx]).filter(Boolean);
+
+  try {
+    const res = await Auth.fetch("/api/v1/products/import-batch", {
+      method: "POST",
+      body: JSON.stringify({ items: selectedItems })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to import library items.");
+    }
+    const result = await res.json();
+    Utils.showToast(result.message || `Imported ${selectedItems.length} menu items!`, "success");
+    Utils.closeModal();
+    renderProducts();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+}
+
+async function submitImportTextList() {
+  const text = (document.getElementById("prod-import-textarea")?.value || "").trim();
+  if (!text) {
+    Utils.showToast("Please enter product names to import.", "warning");
+    return;
+  }
+
+  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+  if (!lines.length) {
+    Utils.showToast("No valid lines found to import.", "warning");
+    return;
+  }
+
+  const imageMap = {
+    "burger": "/static/assets/images/burger solo.png",
+    "burger with fries": "/static/assets/images/burger with fries.png",
+    "molo": "/static/assets/images/MOLO.png",
+    "nachos": "/static/assets/images/nachos.png",
+    "nachofries": "/static/assets/images/nachofries.png",
+    "pancit canton with toasted bread": "/static/assets/images/Pancit Canton with Toasted Bread.png",
+    "pancit canton": "/static/assets/images/PANCIT CANTON.png",
+    "sotanghon guisado": "/static/assets/images/sotanghon guisado.png",
+    "spaghetti with bread": "/static/assets/images/spaghetti with bread.png",
+    "spaghetti with burger": "/static/assets/images/spaghetti with burger.png",
+    "toasted bread": "/static/assets/images/toasted bread.png",
+    "tuna sandwich": "/static/assets/images/tuna sandwich.png",
+    "arroz caldo": "/static/assets/images/arrozcaldo.png",
+    "arrozcaldo": "/static/assets/images/arrozcaldo.png",
+    "caramel macchiato": "/static/assets/images/coffee/caramel macchiato.png",
+    "coffee jelly": "/static/assets/images/coffee/coffee jelly.png",
+    "dirty matcha": "/static/assets/images/coffee/dirty matcha.png",
+    "french vanilla": "/static/assets/images/coffee/french vanill.png",
+    "french vanill": "/static/assets/images/coffee/french vanill.png",
+    "iced americano": "/static/assets/images/coffee/iced americano.png",
+    "iced coffee": "/static/assets/images/coffee/iced coffe.png",
+    "matcha milk": "/static/assets/images/coffee/matcha milk.png",
+    "salted caramel": "/static/assets/images/coffee/salted caramel.png",
+    "spanish latte": "/static/assets/images/coffee/spanish latte.png",
+    "vietnamese coffee": "/static/assets/images/coffee/vietnamese coffee.png"
+  };
+
+  function matchImageByName(prodName) {
+    const nl = (prodName || "").toLowerCase();
+    for (const key in imageMap) {
+      if (nl.includes(key)) return imageMap[key];
+    }
+    return null;
+  }
+
+  const items = lines.map((line, idx) => {
+    const parts = line.split(",").map(p => p.trim());
+    const name = parts[0];
+    const price = parts[1] ? parseFloat(parts[1]) : 99.00;
+    const catName = parts[2] || null;
+    return {
+      name: name,
+      price: isNaN(price) ? 99.00 : price,
+      category_name: catName,
+      sku: generateProductSku(name, idx + 1),
+      image_url: matchImageByName(name),
+      is_active: true
+    };
+  });
+
+  try {
+    const res = await Auth.fetch("/api/v1/products/import-batch", {
+      method: "POST",
+      body: JSON.stringify({ items })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to import items from list.");
+    }
+    const result = await res.json();
+    Utils.showToast(result.message || `Imported ${items.length} products!`, "success");
+    Utils.closeModal();
+    renderProducts();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+}
+
+window.openCategoriesModal = openCategoriesModal;
+window.submitAddCategory = submitAddCategory;
+window.openEditCategoryModal = openEditCategoryModal;
+window.submitEditCategory = submitEditCategory;
+window.deleteCategoryPrompt = deleteCategoryPrompt;
+window.promptAddCategoryInline = promptAddCategoryInline;
+window.openImportProductsModal = openImportProductsModal;
+window.handleDropImportImages = handleDropImportImages;
+window.handleImportImagesSelect = handleImportImagesSelect;
+window.removePendingImportImage = removePendingImportImage;
+window.applyBatchCategoryToAll = applyBatchCategoryToAll;
+window.applyBatchPriceToAll = applyBatchPriceToAll;
+window.submitImportImageProducts = submitImportImageProducts;
+window.toggleAllPresetCheckboxes = toggleAllPresetCheckboxes;
+window.submitImportPresetItems = submitImportPresetItems;
+window.submitImportTextList = submitImportTextList;
+window.switchProdImportTab = switchProdImportTab;
+window.deleteProductPrompt = deleteProductPrompt;
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. CASHIER POINT OF SALE (POS)
@@ -1429,11 +2304,11 @@ async function renderPOS(c) {
         align-self: start !important;
         z-index: 50 !important;
       }
-      @media (max-width: 1200px) {
-        .pos-container { grid-template-columns: minmax(0, 1fr) clamp(240px, 26vw, 300px) !important; }
+      @media (max-width: 1439px) {
+        .pos-container { grid-template-columns: minmax(0, 1fr) clamp(280px, 28vw, 320px) !important; gap: 12px !important; }
       }
-      @media (max-width: 768px) {
-        .pos-container { grid-template-columns: 1fr !important; }
+      @media (max-width: 1024px) {
+        .pos-container { grid-template-columns: 1fr !important; gap: 14px !important; }
         .pos-cart { position: static !important; width: 100% !important; height: auto !important; max-height: none !important; margin-top: 14px !important; }
         .pos-cart .cart-items { max-height: 380px !important; overflow-y: auto !important; }
       }
@@ -1447,12 +2322,12 @@ async function renderPOS(c) {
         #pos-voice-live-strip > div:last-child { width: 100% !important; justify-content: space-between !important; }
       }
       @media (max-width: 480px) {
-        .stats-grid.pos-stats-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 100px), 1fr)) !important; gap: 6px !important; }
-        .pos-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 110px), 1fr)) !important; gap: 8px !important; }
+        .stats-grid.pos-stats-grid { grid-template-columns: repeat(3, 1fr) !important; gap: 4px !important; }
+        .pos-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 8px !important; }
       }
-      @media (max-width: 360px) {
-        .stats-grid.pos-stats-grid { grid-template-columns: 1fr !important; }
-        .pos-grid { grid-template-columns: 1fr !important; }
+      @media (max-width: 375px) {
+        .stats-grid.pos-stats-grid { grid-template-columns: 1fr !important; gap: 6px !important; }
+        .pos-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 6px !important; }
       }
       .cat-pill {
         white-space: nowrap; border-radius: 16px; padding: 5px 14px; 
@@ -1497,12 +2372,12 @@ async function renderPOS(c) {
           <div id="pos-voice-live-strip" class="pos-voice-live-strip" style="display:none; margin-bottom:8px; padding:8px 12px; background:linear-gradient(90deg, #fef2f2, #fff7ed); border:1px solid #f87171; border-radius:10px; align-items:center; justify-content:space-between; animation:fadeIn 0.2s ease;">
             <div style="display:flex; align-items:center; gap:8px; font-size:12px; color:#991b1b; font-weight:600; min-width:0; overflow:hidden;">
               <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#ef4444; animation:voicePulse 1s infinite; flex-shrink:0;"></span>
-              <span style="flex-shrink:0;">🔴 Recording Voice Order:</span>
+              <span style="flex-shrink:0;"><i class="fas fa-microphone" style="color:#ef4444; margin-right:4px;"></i> Recording Voice Order:</span>
               <span id="pos-voice-transcript-text" style="color:#18181b; font-style:italic; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Speak order (e.g. "isa ka c1 solo", "c1 solo 1", "1 1pc chickenjoy solo")...</span>
             </div>
             <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
               <span style="font-size:10px; color:#b91c1c; background:rgba(239,68,68,0.1); padding:2px 6px; border-radius:4px; font-weight:700;">EN • TAGALOG • HILIGAYNON</span>
-              <button type="button" onclick="stopVoiceRecordingDirect()" style="border:none; background:transparent; color:#991b1b; font-size:14px; font-weight:bold; cursor:pointer; padding:0 4px;" title="Stop Voice Recording">✕</button>
+              <button type="button" onclick="stopVoiceRecordingDirect()" style="border:none; background:transparent; color:#991b1b; font-size:14px; font-weight:bold; cursor:pointer; padding:0 4px;" title="Stop Voice Recording"><i class="fas fa-times"></i></button>
             </div>
           </div>
 
@@ -1573,7 +2448,7 @@ async function renderPOS(c) {
             <span id="cart-total" style="color:#c9a227;">₱0.00</span>
           </div>
           <button class="btn btn-primary" style="width:100%; height:40px; font-size:13px; font-weight:700; border-radius:10px; background:linear-gradient(135deg, #c9a227, #987719); border:none; box-shadow:0 4px 12px rgba(201,162,39,0.2);" onclick="openPaymentModal()">
-            💵 Charge & Checkout
+            <i class="fas fa-cash-register" style="margin-right:6px;"></i> Charge & Checkout
           </button>
         </div>
       </div>
@@ -1599,8 +2474,7 @@ function renderPOSProductCards(products) {
     <div class="pos-item-card" onclick="addToCart(${p.id}, '${p.name.replace(/'/g, "\\'")}', ${p.price})" style="position:relative; background:#ffffff; border:1px solid rgba(205,190,150,0.3); border-radius:10px; overflow:hidden; cursor:pointer; transition:transform 0.15s, box-shadow 0.15s; display:flex; flex-direction:column; box-shadow:0 2px 8px rgba(0,0,0,0.02);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 18px rgba(201,162,39,0.15)';" onmouseout="this.style.transform='none'; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.02)';">
       
       <!-- Top Badges -->
-      <div style="position:absolute; top:6px; left:6px; right:6px; display:flex; justify-content:space-between; z-index:2; pointer-events:none;">
-        <span style="background:rgba(255,255,255,0.92); backdrop-filter:blur(4px); color:var(--text-main); font-size:8px; font-weight:700; padding:2px 5px; border-radius:4px; box-shadow:0 2px 6px rgba(0,0,0,0.05); text-transform:uppercase;">${getProductCategoryName(p) !== 'Uncategorized' ? getProductCategoryName(p) : 'FOOD'}</span>
+      <div style="position:absolute; top:6px; right:6px; z-index:2;">
         <button class="add-btn" onclick="event.stopPropagation(); addToCart(${p.id}, '${p.name.replace(/'/g, "\\'")}', ${p.price})" style="width:22px; height:22px; border-radius:50%; background:#ffffff; color:#c9a227; border:none; box-shadow:0 2px 6px rgba(0,0,0,0.1); cursor:pointer; display:flex; align-items:center; justify-content:center; pointer-events:auto; font-size:9px; transition:background 0.2s;" onmouseover="this.style.background='#f0f0f0';" onmouseout="this.style.background='#ffffff';"><i class="fas fa-plus"></i></button>
       </div>
 
@@ -1675,6 +2549,12 @@ function updateCartUI() {
 
   if (subtotalEl) subtotalEl.textContent = Utils.formatCurrency(total);
   if (totalEl) totalEl.textContent = Utils.formatCurrency(total);
+
+  // Clean up floating bottom bar
+  const floatBar = document.getElementById("mobile-cart-float-bar");
+  if (floatBar) {
+    floatBar.remove();
+  }
 }
 
 function renderCartItems() {
@@ -2290,7 +3170,7 @@ function startVoiceRecordingDirect() {
       textEl.innerHTML = `Listening... Speak order (e.g. "isa ka c1 solo", "3 pos 5341", "1 bucket ice c2")`;
       textEl.style.color = "#18181b";
     }
-    Utils.showToast("🎤 Voice recording started. Speak your order...", "info");
+    Utils.showToast("Voice recording started. Speak your order...", "info");
   };
 
   window.voiceSessionCommitted = window.voiceSessionCommitted || new Set();
@@ -2472,14 +3352,14 @@ function executeVoiceOrderDirect(text, isFinal = true) {
     updateCartUI();
     playVoiceBeep();
     if (textEl) {
-      textEl.innerHTML = `<span style="color:#047857;">✅ Inserted ${summaryNames.join(', ')} into Current Cart!</span>`;
+      textEl.innerHTML = `<span style="color:#047857;"><i class="fas fa-check-circle"></i> Inserted ${summaryNames.join(', ')} into Current Cart!</span>`;
     }
   } else if (isFinal && (!items.length || !items.some(i => i.product))) {
     // Only show "Item not found" on final silence, not while typing/speaking interim digits or lone quantities
     const cleanedText = text.trim();
     if (!/^\d{1,2}$/.test(cleanedText) && !['pos', 'sku', 'code'].includes(cleanedText.toLowerCase())) {
       if (textEl) {
-        textEl.innerHTML = `<span style="color:#b91c1c;">⚠️ Item not found: "${text}"</span>`;
+        textEl.innerHTML = `<span style="color:#b91c1c;"><i class="fas fa-exclamation-triangle"></i> Item not found: "${text}"</span>`;
       }
     }
   }
@@ -2509,7 +3389,7 @@ function openPaymentModal() {
   const total = posCart.reduce((sum, i) => sum + (i.price * i.quantity), 0);
   window.isFirstTenderTap = true;
 
-  Utils.openModal("Process Order Checkout", `
+  Utils.openModal('<i class="fas fa-credit-card" style="color:var(--accent); margin-right:8px;"></i> Process Order Checkout', `
     <form id="form-payment" onsubmit="event.preventDefault(); submitCheckout();">
       <div style="text-align:center; padding:18px; background:rgba(201,162,39,0.08); border-radius:14px; margin-bottom:18px; border:1px solid rgba(205,190,150,0.3);">
         <span style="font-size:12px; text-transform:uppercase; color:var(--text-muted); font-weight:600; letter-spacing:0.5px;">Total Amount Due</span>
@@ -2794,9 +3674,14 @@ async function renderKitchen(c) {
                 <i class="fas fa-check-circle" style="font-size:16px;"></i> Order Completed
               </div>
             ` : `
-              <button class="btn btn-primary" style="width:100%; font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:8px; background:#10b981; color:#fff; border:none; cursor:pointer;" onclick="updateOrderStatus('${ord.raw_id}', 'COMPLETED')">
-                <i class="fas fa-check-circle"></i> Complete Order
-              </button>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                <button type="button" class="btn" style="font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:6px; border:1px solid #ef4444; color:#ef4444; background:rgba(239,68,68,0.06); cursor:pointer;" onclick="promptRejectOrder(${ord.raw_id || ord.id})">
+                  <i class="fas fa-ban"></i> Reject
+                </button>
+                <button type="button" class="btn btn-primary" style="font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:8px; background:#10b981; color:#fff; border:none; cursor:pointer;" onclick="updateOrderStatus('${ord.raw_id}', 'COMPLETED')">
+                  <i class="fas fa-check-circle"></i> Complete Order
+                </button>
+              </div>
             `}
           </div>
         </div>
@@ -3042,7 +3927,7 @@ async function renderDrinksStation(c) {
                 <div>
                   <div style="display:flex; align-items:center; gap:8px;">
                     <strong style="font-size:16px; font-weight:800; color:var(--text-main);">${(typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('ORD', ord.raw_id || ord.id) : (ord.id || 'ORD-0000')}</strong>
-                    <span style="font-size:11px; font-weight:700; background:#2563eb; color:#ffffff; padding:2px 8px; border-radius:12px;">🍹 DRINKS</span>
+                    <span style="font-size:11px; font-weight:700; background:#2563eb; color:#ffffff; padding:2px 8px; border-radius:12px;"><i class="fas fa-glass-water" style="margin-right:4px;"></i> DRINKS</span>
                   </div>
                   <div style="font-size:11px; color:var(--text-muted); margin-top:3px;">
                     <i class="far fa-clock"></i> ${ord.time || 'Just now'} • <strong>${ord.table || 'Takeout'}</strong>
@@ -3077,9 +3962,14 @@ async function renderDrinksStation(c) {
                     <i class="fas fa-check-circle" style="font-size:16px;"></i> Order Completed
                   </div>
                 ` : `
-                  <button class="btn btn-primary" style="width:100%; font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:8px; background:#10b981; color:#fff; border:none; cursor:pointer;" onclick="updateDrinksStatus('${ord.raw_id}', 'COMPLETED')">
-                    <i class="fas fa-check-circle"></i> Complete Order
-                  </button>
+                  <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                    <button type="button" class="btn" style="font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:6px; border:1px solid #ef4444; color:#ef4444; background:rgba(239,68,68,0.06); cursor:pointer;" onclick="promptRejectOrder(${ord.raw_id || ord.id})">
+                      <i class="fas fa-ban"></i> Reject
+                    </button>
+                    <button type="button" class="btn btn-primary" style="font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:8px; background:#10b981; color:#fff; border:none; cursor:pointer;" onclick="updateDrinksStatus('${ord.raw_id}', 'COMPLETED')">
+                      <i class="fas fa-check-circle"></i> Complete Order
+                    </button>
+                  </div>
                 `}
               </div>
             </div>
@@ -3356,13 +4246,26 @@ window.submitRejectOrder = async function(txId) {
     }
 
     Utils.closeModal();
-    Utils.showToast(`✅ Order #${txId} was successfully rejected / cancelled.`, "success");
+    Utils.showToast(`Order #${txId} was successfully rejected / cancelled.`, "success");
 
     try {
       localStorage.setItem("RESTOTRACK_SYNC_KITCHEN", JSON.stringify({ timestamp: Date.now(), orderId: txId, status: "rejected" }));
     } catch (e) {}
 
-    renderTransactions(document.getElementById("view-container"));
+    const activeLink = document.querySelector("aside.sidebar .nav-link.active, .sidebar a.active");
+    const activeView = activeLink ? (activeLink.getAttribute("href") || "").replace(/^#\/?/, "").trim() : "";
+    const hash = window.location.hash ? window.location.hash.replace(/^#\/?/, "").trim() : "";
+    const path = window.location.pathname || "";
+
+    if (activeView === "kitchen" || hash === "kitchen" || path.includes("kitchen")) {
+      if (typeof renderKitchen === "function") renderKitchen();
+    } else if (activeView === "drinks" || activeView === "drinks_station" || hash === "drinks" || hash === "drinks_station" || document.getElementById("drinks-tickets-grid")) {
+      if (typeof renderDrinksStation === "function") renderDrinksStation();
+    } else if (typeof renderTransactions === "function" && document.getElementById("view-container")) {
+      renderTransactions(document.getElementById("view-container"));
+    } else if (typeof renderKitchen === "function") {
+      renderKitchen();
+    }
   } catch (err) {
     Utils.showToast(err.message, "danger");
   }
@@ -3389,7 +4292,7 @@ window.changeOrderStatusDirect = async function(txId, newStatus) {
       throw new Error(err.detail || "Failed to update status.");
     }
 
-    Utils.showToast(`✅ Order #${txId} marked as ${newStatus.toUpperCase()}.`, "success");
+    Utils.showToast(`Order #${txId} marked as ${newStatus.toUpperCase()}.`, "success");
 
     try {
       localStorage.setItem("RESTOTRACK_SYNC_KITCHEN", JSON.stringify({ timestamp: Date.now(), orderId: txId, status: newStatus }));
@@ -4362,7 +5265,7 @@ window.addEventListener("storage", (e) => {
       try {
         const payload = JSON.parse(e.newValue);
         if (payload.status === "READY" || payload.status === "COMPLETED") {
-          Utils.showToast(`🔔 Kitchen: Order #${payload.orderId} is READY TO GO!`, "success");
+          Utils.showToast(`Kitchen: Order #${payload.orderId} is READY TO GO!`, "success");
         } else if (payload.status === "PREPARING") {
           Utils.showToast(`Kitchen accepted Order #${payload.orderId}`, "info");
         } else {
@@ -4603,7 +5506,7 @@ async function loadCustomerOrdersTable() {
             <div>
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                 <span style="background:#c9a227; color:#18181b; font-weight:800; font-size:12px; padding:4px 10px; border-radius:16px; letter-spacing:0.5px;">
-                  🪑 TABLE ${o.table_number || 'Takeout'}
+                  <i class="fas fa-chair" style="margin-right:4px;"></i> TABLE ${o.table_number || 'Takeout'}
                 </span>
                 <span style="font-size:11px; font-family:monospace; background:rgba(201,162,39,0.12); color:#c9a227; padding:3px 8px; border-radius:4px; font-weight:800; letter-spacing:0.5px;">
                   ${(typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('CUST', o.id) : (o.order_number || `CUST-${o.id}`)}
@@ -5200,33 +6103,122 @@ function renderMovementsTableRows(movements) {
   }).join('');
 }
 
+async function reloadTransferDialogData(showToast = true) {
+  const form = document.getElementById("form-cash-movement");
+  if (!form) return;
+
+  const spin = document.getElementById("transfer-reload-spin");
+  if (spin) spin.classList.add("fa-spin");
+
+  const badge = document.getElementById("cm-network-badge");
+  if (badge) {
+    badge.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Syncing...`;
+    badge.style.color = "var(--primary, #3b82f6)";
+  }
+
+  try {
+    const [drawerRes, plRes] = await Promise.all([
+      Auth.fetch("/api/v1/shifts/drawer-summary").catch(() => null),
+      Auth.fetch("/api/v1/analytics/profit-loss").catch(() => null)
+    ]);
+
+    if (drawerRes && drawerRes.ok) cachedDrawerData = await drawerRes.json();
+    if (plRes && plRes.ok) cachedProfitLossData = await plRes.json();
+
+    const transferReason = document.getElementById("cm-transfer-reason")?.value || "";
+    const isManagerProfitIncome = transferReason.includes("Manager");
+
+    let shifts = (cachedDrawerData && cachedDrawerData.shifts) || [];
+    let cashierShifts = shifts.filter(s => {
+      const role = (s.role || '').toLowerCase();
+      const uname = (s.cashier_username || '').toLowerCase();
+      return role === 'cashier' || uname === 'cashier' || (!['admin', 'manager', 'superadmin', 'kitchen', 'inventory'].includes(uname) && !['admin', 'manager', 'superadmin', 'kitchen', 'inventory'].includes(role));
+    });
+    if (!cashierShifts.length && shifts.length) cashierShifts = shifts;
+    let openShifts = cashierShifts.filter(s => s.status === 'open');
+    if (!openShifts.length && cashierShifts.length) openShifts = [cashierShifts[0]];
+
+    const shiftSelect = document.getElementById("cm-shift-id");
+    let currentShiftId = shiftSelect ? parseInt(shiftSelect.value, 10) : null;
+    const targetShift = (currentShiftId ? openShifts.find(s => s.id === currentShiftId) : null) || openShifts[0] || cashierShifts[0] || null;
+
+    const expectedCash = targetShift ? (targetShift.expected_cash || 0) : (cachedProfitLossData?.cashout?.active_drawer_cash || 0);
+    const cashierOverallIncome = targetShift 
+      ? (targetShift.cashier_overall_income !== undefined ? targetShift.cashier_overall_income : ((targetShift.total_sales || 0) + (targetShift.expected_cash || 0)))
+      : (cachedDrawerData?.overall_income || expectedCash || 0);
+    const availableSafeCash = cachedProfitLossData?.cashout?.manager_safe_cash !== undefined
+      ? cachedProfitLossData.cashout.manager_safe_cash
+      : Math.max(0, (cachedProfitLossData?.cashout?.total_cashout_income || 0) - (cachedProfitLossData?.cashout?.total_transferred_to_admin || 0));
+
+    const freshAmount = isManagerProfitIncome
+      ? (cashierOverallIncome > 0 ? cashierOverallIncome : (expectedCash > 0 ? expectedCash : 0))
+      : (availableSafeCash > 0 ? availableSafeCash : 0);
+
+    const amountInput = document.getElementById("cm-amount");
+    if (amountInput) {
+      amountInput.value = freshAmount > 0 ? freshAmount.toFixed(2) : "";
+    }
+
+    const infoEl = document.getElementById("cm-expected-info-container");
+    if (infoEl) {
+      infoEl.innerHTML = isManagerProfitIncome ? `
+        Cashier Overall Income: <strong id="cm-expected-info" style="color:#10b981;">${Utils.formatCurrency(cashierOverallIncome)}</strong>
+        &bull; Live Drawer: <strong>${Utils.formatCurrency(expectedCash)}</strong>
+      ` : `
+        Available in Manager Safe: <strong id="cm-expected-info" style="color:#10b981;">${Utils.formatCurrency(availableSafeCash)}</strong>
+        &bull; <span style="color:#ef4444; font-weight:700;"><i class="fas fa-arrow-down"></i> Decreases Manager Realized Income</span>
+      `;
+    }
+
+    if (shiftSelect && shiftSelect.tagName === "SELECT") {
+      shiftSelect.innerHTML = openShifts.map(s => {
+        const sIncome = s.cashier_overall_income !== undefined ? s.cashier_overall_income : ((s.total_sales || 0) + (s.expected_cash || 0));
+        return `
+        <option value="${s.id}" ${s.id === (targetShift ? targetShift.id : "") ? 'selected' : ''}>
+          Shift #${s.id} — ${s.cashier_name} (@${s.cashier_username}) [Overall Income: ${Utils.formatCurrency(sIncome)} | Drawer: ${Utils.formatCurrency(s.expected_cash)}]
+        </option>
+        `;
+      }).join('');
+    }
+
+    if (badge) {
+      badge.innerHTML = `<i class="fas fa-wifi"></i> Live Network`;
+      badge.style.color = "#10b981";
+    }
+
+    if (showToast && typeof Utils !== 'undefined' && Utils.showToast) {
+      Utils.showToast("Transfer figures fast-reloaded from live network.", "info");
+    }
+  } catch (err) {
+    console.error("Fast reload transfer error:", err);
+    if (badge) {
+      badge.innerHTML = `<i class="fas fa-triangle-exclamation"></i> Sync Error`;
+      badge.style.color = "#ef4444";
+    }
+  } finally {
+    if (spin) spin.classList.remove("fa-spin");
+  }
+}
+
 async function openAddCashMovementModal(defaultShiftId = null, targetType = null) {
   // Determine destination: Manager Profit Income (default when in cash drawer) vs Admin
-  const currentLink = document.querySelector("aside.sidebar .nav-link.active");
-  const activeView = currentLink ? currentLink.getAttribute("href")?.replace("#", "") : (window.location.hash?.replace("#", "") || "");
+  const currentLink = document.querySelector("aside.sidebar .nav-link.active, .sidebar a.active");
+  const activeView = currentLink ? (currentLink.getAttribute("href") || "").replace(/^#\/?/, "").trim() : ((window.location.hash || "").replace(/^#\/?/, "").trim() || "dashboard");
   const isManagerProfitIncome = targetType === 'manager_income' || (!targetType && activeView !== 'profit_loss' && activeView !== 'purchases');
 
-  // Load fresh Profit Loss data if transferring to Admin
-  if (!isManagerProfitIncome && !cachedProfitLossData) {
-    try {
-      const res = await Auth.fetch("/api/v1/analytics/profit-loss");
-      if (res.ok) cachedProfitLossData = await res.json();
-    } catch (e) {}
+  // Immediately fetch fresh, accurate, real-time data from network in parallel
+  try {
+    const [drawerRes, plRes] = await Promise.all([
+      Auth.fetch("/api/v1/shifts/drawer-summary").catch(() => null),
+      Auth.fetch("/api/v1/analytics/profit-loss").catch(() => null)
+    ]);
+    if (drawerRes && drawerRes.ok) cachedDrawerData = await drawerRes.json();
+    if (plRes && plRes.ok) cachedProfitLossData = await plRes.json();
+  } catch (e) {
+    console.warn("Network reload on transfer modal error:", e);
   }
 
   let shifts = (cachedDrawerData && cachedDrawerData.shifts) || [];
-  if (!shifts.length || !shifts.some(s => s.status === 'open')) {
-    try {
-      const res = await Auth.fetch("/api/v1/shifts/drawer-summary");
-      if (res.ok) {
-        cachedDrawerData = await res.json();
-        shifts = (cachedDrawerData && cachedDrawerData.shifts) || [];
-      }
-    } catch (e) {
-      console.error("Error loading drawer summary:", e);
-    }
-  }
-
   // Strictly filter to cashier accounts only (not admin, manager, superadmin, etc.)
   let cashierShifts = shifts.filter(s => {
     const role = (s.role || '').toLowerCase();
@@ -5275,6 +6267,16 @@ async function openAddCashMovementModal(defaultShiftId = null, targetType = null
   Utils.openModal(modalTitle, `
     <form id="form-cash-movement" onsubmit="event.preventDefault(); submitAddCashMovement();">
       <input type="hidden" id="cm-transfer-reason" value="${transferReason}">
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; padding:8px 12px; background:var(--bg-main, #f8fafc); border-radius:10px; border:1px solid var(--border-color, #e2e8f0);">
+        <span id="cm-network-badge" style="display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#10b981;">
+          <i class="fas fa-wifi"></i> Live Network
+        </span>
+        <button type="button" class="btn btn-outline btn-sm" onclick="reloadTransferDialogData(true)" title="Fast reload fresh balances from live network" style="display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:700; padding:4px 10px; border-radius:8px; cursor:pointer;">
+          <i class="fas fa-rotate" id="transfer-reload-spin"></i> Fast Reload
+        </button>
+      </div>
+
       ${isManagerProfitIncome && openShifts.length > 1 && !defaultShiftId ? `
         <div class="input-group" style="margin-bottom:14px;">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Select Active Cashier Shift <span style="color:var(--danger);">*</span></label>
@@ -5289,7 +6291,7 @@ async function openAddCashMovementModal(defaultShiftId = null, targetType = null
           ${labelText} <span style="color:var(--danger);">*</span>
         </label>
         <input type="number" step="0.01" min="0.01" id="cm-amount" class="input-field" required value="${defaultCashoutAmount > 0 ? defaultCashoutAmount.toFixed(2) : ''}" placeholder="0.00" style="width:100%; font-size:26px; font-weight:800; padding:12px; text-align:center; color:#10b981; border:2px solid #10b981; border-radius:10px;">
-        <div style="text-align:center; font-size:12px; color:var(--text-muted); margin-top:8px;">
+        <div id="cm-expected-info-container" style="text-align:center; font-size:12px; color:var(--text-muted); margin-top:8px;">
           ${isManagerProfitIncome ? `
             Cashier Overall Income: <strong id="cm-expected-info" style="color:#10b981;">${Utils.formatCurrency(cashierOverallIncome)}</strong>
             &bull; Live Drawer: <strong>${Utils.formatCurrency(expectedCash)}</strong>
@@ -5300,7 +6302,7 @@ async function openAddCashMovementModal(defaultShiftId = null, targetType = null
         </div>
       </div>
     </form>
-  `, `<button class="btn btn-primary" onclick="submitAddCashMovement()" style="width:100%; justify-content:center; padding:12px; font-size:14px; font-weight:700; border-radius:10px;"><i class="fas ${btnIcon}"></i> ${btnText}</button>`);
+  `, `<button id="btn-submit-cash-movement" class="btn btn-primary" onclick="submitAddCashMovement()" style="width:100%; justify-content:center; padding:12px; font-size:14px; font-weight:700; border-radius:10px;"><i class="fas ${btnIcon}"></i> ${btnText}</button>`);
 }
 
 async function submitAddCashMovement() {
@@ -5314,6 +6316,12 @@ async function submitAddCashMovement() {
   if (isNaN(amount) || amount <= 0) {
     Utils.showToast("Please provide a valid transfer amount greater than ₱0.00.", "danger");
     return;
+  }
+
+  const submitBtn = document.getElementById("btn-submit-cash-movement");
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Processing Real-Time Transfer...`;
   }
 
   try {
@@ -5333,7 +6341,7 @@ async function submitAddCashMovement() {
 
     const data = await res.json();
     const destName = isManagerIncome ? "Manager Profit Income" : "Admin";
-    Utils.showToast(data.message || `✅ Successfully transferred ₱${amount.toFixed(2)} to ${destName}! ${isManagerIncome ? 'Cashier drawer reset to ₱0.00.' : 'Manager realized cash decreased.'}`, "success");
+    Utils.showToast(data.message || `Successfully transferred ₱${amount.toFixed(2)} to ${destName}! ${isManagerIncome ? 'Cashier drawer reset to ₱0.00.' : 'Manager realized cash decreased.'}`, "success");
     Utils.closeModal();
 
     // Reset drawer and profit-loss caches so views re-fetch live updated balances
@@ -5343,21 +6351,39 @@ async function submitAddCashMovement() {
     // Broadcast signal so Cashier POS in other tabs/windows immediately resets drawer to ₱0.00
     try {
       localStorage.setItem("RESTOTRACK_DRAWER_RESET", Date.now().toString());
+      if (window.BlessieRealtime && typeof window.BlessieRealtime.sendEvent === 'function') {
+        window.BlessieRealtime.sendEvent(isManagerIncome ? "CASHOUT_COMPLETED" : "TRANSFER_TO_ADMIN", { amount, reason });
+      }
     } catch (e) {}
 
-    // Re-render current view if on cash_drawer, dashboard, or profit_loss
-    const currentLink = document.querySelector("aside.sidebar .nav-link.active");
-    const activeView = currentLink ? currentLink.getAttribute("href")?.replace("#", "") : (window.location.hash?.replace("#", "") || "");
-    if (activeView === "dashboard") {
+    // Fast-reload all relevant views across the application in real-time
+    const currentLink = document.querySelector("aside.sidebar .nav-link.active, .sidebar a.active");
+    const activeView = currentLink ? (currentLink.getAttribute("href") || "").replace(/^#\/?/, "").trim() : ((window.location.hash || "").replace(/^#\/?/, "").trim() || "dashboard");
+    
+    if (activeView === "dashboard" && typeof renderDashboard === "function") {
       renderDashboard();
-    } else if (activeView === "profit_loss" || activeView === "purchases") {
+    } else if ((activeView === "profit_loss" || activeView === "purchases") && typeof renderProfitLoss === "function") {
       renderProfitLoss();
-    } else {
-      renderCashDrawerTracker();
+    } else if (activeView === "cash_drawer" && typeof renderCashDrawerTracker === "function") {
+      renderCashDrawerTracker(null, true);
+    } else if (activeView === "transactions" && typeof renderTransactions === "function") {
+      renderTransactions();
+    }
+
+    // Immediately update POS live cashier counter if present in DOM
+    const dCashEl = document.getElementById("pos-cash-in-drawer-display");
+    if (dCashEl) {
+      dCashEl.textContent = Utils.formatCurrency(0);
     }
   } catch (err) {
     console.error("Transfer error:", err);
     Utils.showToast(err.message, "danger");
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      const btnIcon = isManagerIncome ? "fa-vault" : "fa-paper-plane";
+      const btnText = isManagerIncome ? "Transfer to Manager Profit Income & Reset Cashier to ₱0.00" : "Transfer to Admin (Decreases Realized Cash)";
+      submitBtn.innerHTML = `<i class="fas ${btnIcon}"></i> ${btnText}`;
+    }
   }
 }
 
@@ -5515,7 +6541,7 @@ async function saveCashierDrawerCash(shiftId, directVal = null) {
     }
 
     const data = await res.json();
-    Utils.showToast(data.message || `✅ Cashier drawer updated to ${Utils.formatCurrency(amount)}`, "success");
+    Utils.showToast(data.message || `Cashier drawer updated to ${Utils.formatCurrency(amount)}`, "success");
 
     try {
       localStorage.setItem("RESTOTRACK_DRAWER_RESET", Date.now().toString());
@@ -5564,7 +6590,7 @@ async function submitEditCashierDrawer(event, shiftId) {
     }
 
     const data = await res.json();
-    Utils.showToast(data.message || `✅ Cashier drawer updated to ${Utils.formatCurrency(amount)}`, "success");
+    Utils.showToast(data.message || `Cashier drawer updated to ${Utils.formatCurrency(amount)}`, "success");
     Utils.closeModal();
 
     try {
@@ -5584,6 +6610,7 @@ window.saveCashierDrawerCash = saveCashierDrawerCash;
 window.submitEditCashierDrawer = submitEditCashierDrawer;
 window.openAddCashMovementModal = openAddCashMovementModal;
 window.submitAddCashMovement = submitAddCashMovement;
+window.reloadTransferDialogData = reloadTransferDialogData;
 
 // =========================================================================
 // Blessie FoodHub Real-Time Synchronization Engine (WebSocket + Fallbacks)
@@ -5631,7 +6658,7 @@ window.submitAddCashMovement = submitAddCashMovement;
   }
 
   function handleRealtimeEvent(event, data) {
-    console.log(`[RealTime] ⚡ Live event received: ${event}`, data);
+    console.log(`[RealTime] Live event received: ${event}`, data);
 
     try {
       localStorage.setItem("RESTOTRACK_EVENT", JSON.stringify({ event, data, timestamp: Date.now() }));
@@ -5650,12 +6677,19 @@ window.submitAddCashMovement = submitAddCashMovement;
           localStorage.setItem("RESTOTRACK_DRAWER_RESET", Date.now().toString());
         } catch (e) {}
 
+        // If transfer dialog is open, fast reload it with live network figures immediately
+        if (document.getElementById("form-cash-movement") && typeof reloadTransferDialogData === "function") {
+          reloadTransferDialogData(false);
+        }
+
         if (activeView === "cash_drawer") {
           debouncedDrawerRefresh(true);
         } else if (activeView === "profit_loss" || activeView === "purchases") {
           if (typeof renderProfitLoss === "function") renderProfitLoss();
         } else if (activeView === "dashboard") {
           if (typeof renderDashboard === "function") renderDashboard();
+        } else if (activeView === "transactions") {
+          if (typeof renderTransactions === "function") renderTransactions();
         } else if (activeView === "pos") {
           if (typeof Auth !== 'undefined') {
             Auth.fetch("/api/v1/shifts/drawer-summary").then(r => r.ok ? r.json() : null).then(dData => {
@@ -5675,9 +6709,12 @@ window.submitAddCashMovement = submitAddCashMovement;
       case "ORDER_CREATED":
       case "CUSTOMER_ORDER_CREATED":
         playOrderNotificationChime();
+        if (document.getElementById("form-cash-movement") && typeof reloadTransferDialogData === "function") {
+          reloadTransferDialogData(false);
+        }
         if (data && (data.customer_name || data.order_number)) {
           if (typeof Utils !== 'undefined' && Utils.showToast) {
-            Utils.showToast(`🔔 New Order Received: ${data.order_number || ''} (${data.customer_name || 'Customer'})`, "info");
+            Utils.showToast(`New Order Received: ${data.order_number || ''} (${data.customer_name || 'Customer'})`, "info");
           }
         }
         // Always refresh pending customer online orders and badges immediately
@@ -5739,12 +6776,17 @@ window.submitAddCashMovement = submitAddCashMovement;
       case "FINANCIAL_UPDATED":
         cachedProfitLossData = null;
         cachedDrawerData = null;
+        if (document.getElementById("form-cash-movement") && typeof reloadTransferDialogData === "function") {
+          reloadTransferDialogData(false);
+        }
         if (activeView === "profit_loss" || activeView === "purchases") {
           if (typeof renderProfitLoss === "function") renderProfitLoss();
-        } else if (activeView === "dashboard" && typeof renderDashboard === "function") {
-          renderDashboard();
+        } else if (activeView === "dashboard") {
+          if (typeof renderDashboard === "function") renderDashboard();
         } else if (activeView === "cash_drawer") {
           debouncedDrawerRefresh(true);
+        } else if (activeView === "transactions") {
+          if (typeof renderTransactions === "function") renderTransactions();
         }
         break;
     }
@@ -5770,7 +6812,7 @@ window.submitAddCashMovement = submitAddCashMovement;
       socket = new WebSocket(wsUrl);
 
       socket.onopen = () => {
-        console.log(`[RealTime] 🟢 Connected to WebSocket at ${wsUrl}`);
+        console.log(`[RealTime] Connected to WebSocket at ${wsUrl}`);
         reconnectAttempts = 0;
         if (reconnectTimer) {
           clearTimeout(reconnectTimer);
@@ -5836,9 +6878,13 @@ window.submitAddCashMovement = submitAddCashMovement;
             case "TRANSFER_TO_ADMIN":
               cachedDrawerData = null;
               cachedProfitLossData = null;
+              if (document.getElementById("form-cash-movement") && typeof reloadTransferDialogData === "function") {
+                reloadTransferDialogData(false);
+              }
               if (activeView === "cash_drawer") debouncedDrawerRefresh(true);
               else if (activeView === "profit_loss" || activeView === "purchases") renderProfitLoss();
               else if (activeView === "dashboard") renderDashboard();
+              else if (activeView === "transactions") renderTransactions();
               break;
             case "ORDER_CREATED":
             case "CUSTOMER_ORDER_CREATED":
@@ -5859,7 +6905,14 @@ window.submitAddCashMovement = submitAddCashMovement;
               break;
             case "FINANCIAL_UPDATED":
               cachedProfitLossData = null;
-              if (activeView === "profit_loss") renderProfitLoss();
+              cachedDrawerData = null;
+              if (document.getElementById("form-cash-movement") && typeof reloadTransferDialogData === "function") {
+                reloadTransferDialogData(false);
+              }
+              if (activeView === "profit_loss" || activeView === "purchases") renderProfitLoss();
+              else if (activeView === "dashboard") renderDashboard();
+              else if (activeView === "cash_drawer") debouncedDrawerRefresh(true);
+              else if (activeView === "transactions") renderTransactions();
               break;
           }
         }

@@ -129,7 +129,7 @@ if (tableParam) {
     tableParam = sessionStorage.getItem("customer_qr_table") || localStorage.getItem("customer_qr_table");
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+function initCustomerApp() {
     // 1. Direct menu access (bypass landing page for seamless QR scan experience)
     const lp = document.getElementById("landingPage");
     if (lp) {
@@ -309,7 +309,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     updateCart();
-});
+}
+
+// Fast startup: initialize immediately if DOM is already ready, or on DOMContentLoaded
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initCustomerApp);
+} else {
+    initCustomerApp();
+}
 
 /* =========================================================
    UTILITIES
@@ -392,7 +399,11 @@ async function fetchMenu() {
     } catch (error) {
         console.error("Error fetching menu:", error);
         showToast("Error loading menu. Please refresh.");
-        if (lp) lp.classList.remove("is-loading");
+        if (lp) {
+            lp.classList.remove("is-loading");
+            lp.classList.add("is-hidden");
+            lp.style.display = "none";
+        }
     }
 }
 
@@ -452,7 +463,7 @@ function renderMenu() {
 
     if (products.length === 0) {
         menuList.innerHTML = `<div style="text-align:center; padding: 48px 20px; color: var(--muted); font-size: 14px; grid-column: 1 / -1; width: 100%;">
-            <div style="font-size: 36px; margin-bottom: 8px;">🍽️</div>
+            <div style="font-size: 36px; margin-bottom: 8px; color: var(--accent, #c9a227);"><i class="fas fa-utensils"></i></div>
             <strong>No items found in this category</strong>
             <p style="font-size: 13px; margin-top: 6px; color: #a1a1aa;">Items will appear here once added in the POS.</p>
         </div>`;
@@ -772,7 +783,7 @@ async function submitOrder(event) {
         // Update live status text
         const liveStatusEl = document.getElementById("liveStatusText");
         if (liveStatusEl) {
-            liveStatusEl.textContent = "🟡 Awaiting Cashier Confirmation";
+            liveStatusEl.innerHTML = '<i class="fas fa-clock" style="margin-right:5px; color:#d97706;"></i> Awaiting Cashier Confirmation';
             liveStatusEl.style.color = "#b45309";
         }
 
@@ -839,7 +850,7 @@ function updateCustomerAuthUI() {
         if (loginBtn) loginBtn.style.display = "none";
         if (profileBadge) {
             profileBadge.style.display = "inline-flex";
-            if (greeting) greeting.textContent = `👋 ${customerName}`;
+            if (greeting) greeting.innerHTML = `<i class="fas fa-user-circle" style="margin-right:5px; color:var(--accent, #c9a227);"></i> ${customerName}`;
         }
         if (customerNameInput && !customerNameInput.value) {
             customerNameInput.value = customerName;
@@ -1107,17 +1118,17 @@ function getStatusBadgeHtml(status) {
     const s = (status || "").toLowerCase();
     switch (s) {
         case "pending":
-            return '<span style="background:#fef3c7; color:#92400e; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;">🟡 Pending Cashier</span>';
+            return '<span style="background:#fef3c7; color:#92400e; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;"><i class="fas fa-clock" style="margin-right:4px;"></i> Pending Cashier</span>';
         case "accepted":
         case "preparing":
-            return '<span style="background:#dbeafe; color:#1e40af; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;">🔵 Preparing</span>';
+            return '<span style="background:#dbeafe; color:#1e40af; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;"><i class="fas fa-fire-burner" style="margin-right:4px;"></i> Preparing</span>';
         case "ready":
-            return '<span style="background:#d1fae5; color:#065f46; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;">🟢 Ready</span>';
+            return '<span style="background:#d1fae5; color:#065f46; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;"><i class="fas fa-bell" style="margin-right:4px;"></i> Ready</span>';
         case "completed":
-            return '<span style="background:#f3f4f6; color:#374151; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;">✅ Completed</span>';
+            return '<span style="background:#f3f4f6; color:#374151; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;"><i class="fas fa-check-circle" style="margin-right:4px;"></i> Completed</span>';
         case "rejected":
         case "cancelled":
-            return '<span style="background:#fee2e2; color:#991b1b; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;">🔴 Cancelled</span>';
+            return '<span style="background:#fee2e2; color:#991b1b; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;"><i class="fas fa-times-circle" style="margin-right:4px;"></i> Cancelled</span>';
         default:
             return `<span style="background:#f4f4f5; color:#71717a; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;">${status || 'Pending'}</span>`;
     }
@@ -1150,7 +1161,7 @@ async function renderCustomerOrdersModalList() {
     if (!orders || orders.length === 0) {
         listEl.innerHTML = `
             <div style="text-align: center; color: #71717a; padding: 30px 10px;">
-                <i style="font-size: 28px; margin-bottom: 8px; display: block;">📋</i>
+                <div style="font-size: 28px; margin-bottom: 8px; display: block; color: var(--accent, #c9a227);"><i class="fas fa-clipboard-list"></i></div>
                 <strong>No active orders found</strong>
                 <p style="font-size: 12px; margin-top: 4px;">Orders you place from the menu will appear here live!</p>
             </div>
@@ -1222,22 +1233,22 @@ function handleCustomerOrderUpdate(data) {
             const liveStatusEl = document.getElementById("liveStatusText");
             if (liveStatusEl) {
                 if (status === "accepted" || status === "preparing") {
-                    liveStatusEl.textContent = "🔵 Order Confirmed & Preparing in Kitchen";
+                    liveStatusEl.innerHTML = '<i class="fas fa-fire-burner" style="margin-right:5px; color:#1e40af;"></i> Order Confirmed & Preparing in Kitchen';
                     liveStatusEl.style.color = "#1e40af";
                 } else if (status === "ready") {
-                    liveStatusEl.textContent = "🟢 Order Ready for Pickup / Serving!";
+                    liveStatusEl.innerHTML = '<i class="fas fa-bell" style="margin-right:5px; color:#065f46;"></i> Order Ready for Pickup / Serving!';
                     liveStatusEl.style.color = "#065f46";
                 } else if (status === "completed") {
-                    liveStatusEl.textContent = "✅ Order Completed. Thank you!";
+                    liveStatusEl.innerHTML = '<i class="fas fa-check-circle" style="margin-right:5px; color:#15803d;"></i> Order Completed. Thank you!';
                     liveStatusEl.style.color = "#15803d";
                 } else if (status === "rejected" || status === "cancelled") {
-                    liveStatusEl.textContent = "🔴 Order Cancelled";
+                    liveStatusEl.innerHTML = '<i class="fas fa-times-circle" style="margin-right:5px; color:#991b1b;"></i> Order Cancelled';
                     liveStatusEl.style.color = "#991b1b";
                 }
             }
         }
 
-        showToast(`🔔 Order ${orderNumber} is now ${status.toUpperCase()}!`);
+        showToast(`Order ${orderNumber} is now ${status.toUpperCase()}!`);
     }
 }
 

@@ -13,14 +13,15 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.db import engine, Base, get_db
 import app.models as models
 from app.core.security import get_password_hash
+from app.core.dependencies import get_current_user_optional
 from app.routers.auth import router as auth_router
 from app.routers.users import router as users_router
 from app.routers.activity_logs import router as activity_logs_router
@@ -227,66 +228,111 @@ if os.path.exists(os.path.join(STATIC_DIR, "assets")):
     app.mount("/assets", StaticFiles(directory=os.path.join(STATIC_DIR, "assets")), name="assets")
 
 
-# Explicit HTML Page Routes for Roles
+NO_CACHE_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0, private",
+    "Pragma": "no-cache",
+    "Expires": "0",
+    "X-Content-Type-Options": "nosniff"
+}
+
+def get_role_dashboard(role_str: str) -> str:
+    r = (role_str or "").lower()
+    if r == "super_admin":
+        return "/dashboard"
+    elif r in ("admin", "manager", "inventory", "cashier", "kitchen", "customer"):
+        return f"/{r}"
+    return "/"
+
+def serve_protected_page(request: Request, db: Session, page_path: str, allowed_roles: set):
+    """
+    Enforces server-side session-based authentication for HTML pages.
+    - If unauthenticated, expired, or revoked: redirects to /login?unauthorized=1.
+    - If authenticated but wrong role: redirects to authorized dashboard.
+    - If authorized: returns FileResponse with strict anti-cache headers so browser Back button cannot restore access.
+    """
+    user = get_current_user_optional(request=request, token=None, db=db)
+    if not user:
+        return RedirectResponse(url="/login?unauthorized=1", status_code=status.HTTP_302_FOUND)
+    
+    role_str = (user.role.value if hasattr(user.role, 'value') else str(user.role)).lower()
+    allowed_lower = {r.lower() for r in allowed_roles}
+    
+    # SUPER_ADMIN has master access across administrative interfaces
+    if role_str == "super_admin" or role_str in allowed_lower:
+        return FileResponse(page_path, headers=NO_CACHE_HEADERS)
+    
+    # User is logged in but not permitted on this dashboard -> redirect to their authorized dashboard
+    return RedirectResponse(url=get_role_dashboard(role_str), status_code=status.HTTP_302_FOUND)
+
+
+# Public & Authentication HTML Page Routes
 @app.get("/", response_class=FileResponse)
 @app.get("/login", response_class=FileResponse)
 @app.get("/auth/login", response_class=FileResponse)
-def get_login_page():
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+def get_login_page(request: Request, db: Session = Depends(get_db)):
+    """
+    Sign in page. If user already has an active server session, redirects to their assigned dashboard.
+    """
+    user = get_current_user_optional(request=request, token=None, db=db)
+    if user:
+        role_str = (user.role.value if hasattr(user.role, 'value') else str(user.role)).lower()
+        return RedirectResponse(url=get_role_dashboard(role_str), status_code=status.HTTP_302_FOUND)
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"), headers=NO_CACHE_HEADERS)
 
+
+# Role-Protected HTML Page Routes
 @app.get("/admin", response_class=FileResponse)
 @app.get("/admin.html", response_class=FileResponse)
 @app.get("/admin/dashboard", response_class=FileResponse)
 @app.get("/admin/dashboard.html", response_class=FileResponse)
-def get_admin_shell():
+def get_admin_shell(request: Request, db: Session = Depends(get_db)):
     admin_page = os.path.join(STATIC_DIR, "admin", "admin.html")
     if not os.path.exists(admin_page):
         admin_page = os.path.join(STATIC_DIR, "pages", "admin.html")
     if not os.path.exists(admin_page):
         admin_page = os.path.join(STATIC_DIR, "admin.html")
-    return FileResponse(admin_page)
+    return serve_protected_page(request, db, admin_page, allowed_roles={"admin", "super_admin"})
 
 @app.get("/manager", response_class=FileResponse)
 @app.get("/manager.html", response_class=FileResponse)
-def get_manager_shell():
+def get_manager_shell(request: Request, db: Session = Depends(get_db)):
     page = os.path.join(STATIC_DIR, "pages", "manager.html")
     if not os.path.exists(page):
         page = os.path.join(STATIC_DIR, "manager.html")
-    return FileResponse(page)
+    return serve_protected_page(request, db, page, allowed_roles={"manager", "admin", "super_admin"})
 
 @app.get("/inventory", response_class=FileResponse)
 @app.get("/inventory.html", response_class=FileResponse)
-def get_inventory_shell():
+def get_inventory_shell(request: Request, db: Session = Depends(get_db)):
     page = os.path.join(STATIC_DIR, "pages", "inventory.html")
     if not os.path.exists(page):
         page = os.path.join(STATIC_DIR, "inventory.html")
-    return FileResponse(page)
+    return serve_protected_page(request, db, page, allowed_roles={"inventory", "manager", "admin", "super_admin"})
 
 @app.get("/cashier", response_class=FileResponse)
 @app.get("/cashier.html", response_class=FileResponse)
-def get_cashier_shell():
+def get_cashier_shell(request: Request, db: Session = Depends(get_db)):
     page = os.path.join(STATIC_DIR, "pages", "cashier.html")
     if not os.path.exists(page):
         page = os.path.join(STATIC_DIR, "cashier.html")
-    return FileResponse(page)
+    return serve_protected_page(request, db, page, allowed_roles={"cashier", "admin", "super_admin"})
 
 @app.get("/kitchen", response_class=FileResponse)
 @app.get("/kitchen.html", response_class=FileResponse)
-def get_kitchen_shell():
+def get_kitchen_shell(request: Request, db: Session = Depends(get_db)):
     page = os.path.join(STATIC_DIR, "pages", "kitchen.html")
     if not os.path.exists(page):
         page = os.path.join(STATIC_DIR, "kitchen.html")
-    return FileResponse(page)
+    return serve_protected_page(request, db, page, allowed_roles={"kitchen", "admin", "super_admin"})
 
 @app.get("/customer", response_class=FileResponse)
 @app.get("/customer.html", response_class=FileResponse)
 @app.get("/costumer", response_class=FileResponse)
 def get_customer_page():
-    return FileResponse(os.path.join(STATIC_DIR, "customer.html"))
+    return FileResponse(os.path.join(STATIC_DIR, "customer.html"), headers=NO_CACHE_HEADERS)
 
 
-
-
+# Super Admin Protected Pages
 @app.get("/dashboard", response_class=FileResponse)
 @app.get("/dashboard.html", response_class=FileResponse)
 @app.get("/super_admin", response_class=FileResponse)
@@ -296,8 +342,9 @@ def get_customer_page():
 @app.get("/super-admin", response_class=FileResponse)
 @app.get("/super-admin/dashboard", response_class=FileResponse)
 @app.get("/super-admin/dashboard.html", response_class=FileResponse)
-def get_dashboard_page():
-    return FileResponse(os.path.join(STATIC_DIR, "super_admin", "dashboard.html"))
+def get_dashboard_page(request: Request, db: Session = Depends(get_db)):
+    page = os.path.join(STATIC_DIR, "super_admin", "dashboard.html")
+    return serve_protected_page(request, db, page, allowed_roles={"super_admin"})
 
 @app.get("/users", response_class=FileResponse)
 @app.get("/users.html", response_class=FileResponse)
@@ -305,8 +352,9 @@ def get_dashboard_page():
 @app.get("/super_admin/users.html", response_class=FileResponse)
 @app.get("/super-admin/users", response_class=FileResponse)
 @app.get("/super-admin/users.html", response_class=FileResponse)
-def get_users_page():
-    return FileResponse(os.path.join(STATIC_DIR, "super_admin", "users.html"))
+def get_users_page(request: Request, db: Session = Depends(get_db)):
+    page = os.path.join(STATIC_DIR, "super_admin", "users.html")
+    return serve_protected_page(request, db, page, allowed_roles={"super_admin"})
 
 @app.get("/create-user", response_class=FileResponse)
 @app.get("/create_user", response_class=FileResponse)
@@ -320,8 +368,9 @@ def get_users_page():
 @app.get("/super-admin/create_user", response_class=FileResponse)
 @app.get("/super-admin/create-user.html", response_class=FileResponse)
 @app.get("/super-admin/create_user.html", response_class=FileResponse)
-def get_create_user_page():
-    return FileResponse(os.path.join(STATIC_DIR, "super_admin", "create_user.html"))
+def get_create_user_page(request: Request, db: Session = Depends(get_db)):
+    page = os.path.join(STATIC_DIR, "super_admin", "create_user.html")
+    return serve_protected_page(request, db, page, allowed_roles={"super_admin"})
 
 @app.get("/activity-logs", response_class=FileResponse)
 @app.get("/activity_logs", response_class=FileResponse)
@@ -335,8 +384,9 @@ def get_create_user_page():
 @app.get("/super-admin/activity_logs", response_class=FileResponse)
 @app.get("/super-admin/activity-logs.html", response_class=FileResponse)
 @app.get("/super-admin/activity_logs.html", response_class=FileResponse)
-def get_activity_logs_page():
-    return FileResponse(os.path.join(STATIC_DIR, "super_admin", "activity_logs.html"))
+def get_activity_logs_page(request: Request, db: Session = Depends(get_db)):
+    page = os.path.join(STATIC_DIR, "super_admin", "activity_logs.html")
+    return serve_protected_page(request, db, page, allowed_roles={"super_admin"})
 
 @app.get("/reports", response_class=FileResponse)
 @app.get("/reports.html", response_class=FileResponse)
@@ -344,8 +394,9 @@ def get_activity_logs_page():
 @app.get("/super_admin/reports.html", response_class=FileResponse)
 @app.get("/super-admin/reports", response_class=FileResponse)
 @app.get("/super-admin/reports.html", response_class=FileResponse)
-def get_reports_page():
-    return FileResponse(os.path.join(STATIC_DIR, "super_admin", "reports.html"))
+def get_reports_page(request: Request, db: Session = Depends(get_db)):
+    page = os.path.join(STATIC_DIR, "super_admin", "reports.html")
+    return serve_protected_page(request, db, page, allowed_roles={"super_admin"})
 
 @app.get("/profile", response_class=FileResponse)
 @app.get("/profile.html", response_class=FileResponse)
@@ -353,8 +404,9 @@ def get_reports_page():
 @app.get("/super_admin/profile.html", response_class=FileResponse)
 @app.get("/super-admin/profile", response_class=FileResponse)
 @app.get("/super-admin/profile.html", response_class=FileResponse)
-def get_profile_page():
-    return FileResponse(os.path.join(STATIC_DIR, "super_admin", "profile.html"))
+def get_profile_page(request: Request, db: Session = Depends(get_db)):
+    page = os.path.join(STATIC_DIR, "super_admin", "profile.html")
+    return serve_protected_page(request, db, page, allowed_roles={"super_admin"})
 
 @app.get("/settings", response_class=FileResponse)
 @app.get("/settings.html", response_class=FileResponse)
@@ -362,8 +414,9 @@ def get_profile_page():
 @app.get("/super_admin/settings.html", response_class=FileResponse)
 @app.get("/super-admin/settings", response_class=FileResponse)
 @app.get("/super-admin/settings.html", response_class=FileResponse)
-def get_settings_page():
-    return FileResponse(os.path.join(STATIC_DIR, "super_admin", "settings.html"))
+def get_settings_page(request: Request, db: Session = Depends(get_db)):
+    page = os.path.join(STATIC_DIR, "super_admin", "settings.html")
+    return serve_protected_page(request, db, page, allowed_roles={"super_admin"})
 
 
 @app.get("/test-db")

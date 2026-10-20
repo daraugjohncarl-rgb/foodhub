@@ -18,7 +18,8 @@ body {
     padding: 25px;
     font-family: "Inter", sans-serif;
     color: #333;
-    background: #fdfbf7;
+    background: url("/static/images/INBOXX.jpg") no-repeat center center fixed;
+    background-size: cover;
     position: relative;
     overflow: hidden;
 }
@@ -26,11 +27,8 @@ body {
 body::before {
     content: "";
     position: absolute;
-    inset: -12px;
-    background: 
-        radial-gradient(circle at 10% 20%, rgba(201, 162, 39, 0.08) 0%, transparent 40%),
-        radial-gradient(circle at 90% 80%, rgba(201, 162, 39, 0.08) 0%, transparent 40%);
-    filter: blur(10px);
+    inset: 0;
+    background: radial-gradient(circle at center, rgba(0,0,0,0.2) 0%, rgba(0,0,0,0.6) 100%);
     z-index: 0;
 }
 
@@ -38,7 +36,7 @@ body::after {
     content: "";
     position: absolute;
     inset: 0;
-    background: rgba(0, 0, 0, 0.02);
+    background: rgba(201, 162, 39, 0.05); /* Slight gold tint overlay */
     z-index: 1;
 }
 
@@ -373,16 +371,16 @@ body::after {
 
     .login-container {
         max-width: 100%;
-        padding: 36px 24px;
-        border-radius: 24px;
+        padding: 32px 22px;
+        border-radius: 22px;
     }
 
     .logo-image {
-        max-width: 220px;
+        max-width: 200px;
     }
 
     .welcome-section h1 {
-        font-size: 22px;
+        font-size: 20px;
     }
 
     .welcome-section p {
@@ -391,12 +389,27 @@ body::after {
 
     .input-field input {
         height: 46px;
-        font-size: 12px;
+        font-size: 14px;
     }
 
     .signin-btn {
         height: 46px;
         font-size: 13px;
+    }
+}
+
+@media (max-width: 375px) {
+    body {
+        padding: 8px;
+    }
+
+    .login-container {
+        padding: 24px 16px;
+        border-radius: 18px;
+    }
+
+    .welcome-section h1 {
+        font-size: 18px;
     }
 }
 

@@ -326,6 +326,28 @@ class CategoryResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CategoryUpdate(BaseModel):
+    """Request body to update a product category."""
+    name: Optional[str] = Field(None, max_length=100)
+    description: Optional[str] = Field(None, max_length=255)
+
+
+class ProductImportItem(BaseModel):
+    name: str = Field(..., max_length=100)
+    category_id: Optional[int] = None
+    category_name: Optional[str] = None
+    price: Decimal
+    cost: Optional[Decimal] = Decimal("0.0")
+    image_url: Optional[str] = None
+    sku: Optional[str] = None
+    barcode: Optional[str] = None
+    is_active: Optional[bool] = True
+
+
+class ProductImportBatchRequest(BaseModel):
+    items: List[ProductImportItem]
+
+
 # ─────────────────────────────────────────────
 # Admin Product Schemas (tenant auto-injected)
 # ─────────────────────────────────────────────

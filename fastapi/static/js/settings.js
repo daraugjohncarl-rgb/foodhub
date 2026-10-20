@@ -22,7 +22,7 @@ function updateThemeSelectionUI(theme) {
     }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+function initSettingsApp() {
     // Navigation & Sidebar
     const sidebarToggle = document.getElementById('sidebarToggle');
     const sidebar = document.getElementById('sidebar');
@@ -139,4 +139,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
-});
+}
+
+// Fast startup: initialize immediately if DOM is already ready, or on DOMContentLoaded
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initSettingsApp);
+} else {
+    initSettingsApp();
+}

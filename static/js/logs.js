@@ -2,7 +2,7 @@
  * Activity Logs / Audit Trail Controller (logs.js)
  * Loads, searches, and clears system audit trails from FastAPI backend.
  */
-document.addEventListener('DOMContentLoaded', () => {
+function initLogsApp() {
     // Navigation & Sidebar
     const sidebarToggle = document.getElementById('sidebarToggle');
     const sidebar = document.getElementById('sidebar');
@@ -169,4 +169,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     loadLogs();
-});
+}
+
+// Fast startup: initialize immediately if DOM is already ready, or on DOMContentLoaded
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initLogsApp);
+} else {
+    initLogsApp();
+}

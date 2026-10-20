@@ -2,27 +2,8 @@
  * Branch Admin Controller (admin.js)
  * Synchronized with Super Admin visual design system and dynamic view architecture.
  */
-document.addEventListener("DOMContentLoaded", async () => {
-    // 1. Role Guard: Enforce authenticated ADMIN or SUPER_ADMIN access
-    let user = null;
-    if (typeof Auth !== "undefined" && typeof Auth.requireRole === "function") {
-        user = Auth.requireRole(["admin", "super_admin"]);
-    } else if (typeof requireRole === "function") {
-        user = requireRole(["admin", "super_admin"]);
-    }
-    if (!user) return;
-
-    // 2. Sidebar & Mobile Menu Handlers
-    const sidebar = document.getElementById("sidebar");
-    const sidebarToggle = document.getElementById("sidebarToggle");
-    const mobileMenuBtn = document.getElementById("mobileMenuBtn");
-    const sidebarOverlay = document.getElementById("sidebarOverlay");
-    // 2. Sidebar init via centralized controller
-    if (typeof Utils !== "undefined" && Utils.initSidebar) {
-        Utils.initSidebar();
-    }
-
-    // 3. Live Clock & Date Header
+async function initAdminApp() {
+    // 1. Immediately update Live Clock & Date Header so header never gets stuck on "Loading..."
     function updateClock() {
         const now = new Date();
         const clockEl = document.getElementById("liveClock");
@@ -32,6 +13,22 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     updateClock();
     setInterval(updateClock, 1000);
+
+    // 2. Role Guard: Enforce authenticated ADMIN or SUPER_ADMIN access with session recovery
+    let user = null;
+    if (typeof Auth !== "undefined" && typeof Auth.requireRoleAsync === "function") {
+        user = await Auth.requireRoleAsync(["admin", "super_admin"]);
+    } else if (typeof Auth !== "undefined" && typeof Auth.requireRole === "function") {
+        user = Auth.requireRole(["admin", "super_admin"]);
+    } else if (typeof requireRole === "function") {
+        user = requireRole(["admin", "super_admin"]);
+    }
+    if (!user) return;
+
+    // 3. Sidebar init via centralized controller
+    if (typeof Utils !== "undefined" && Utils.initSidebar) {
+        Utils.initSidebar();
+    }
 
     // 4. Logout Confirmation Modal
     const logoutBtn = document.getElementById("logoutBtn");
@@ -92,4 +89,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     // Initial render: restore current feature from URL hash or session, fallback to dashboard
     const initialView = (window.location.hash ? window.location.hash.replace("#", "") : "") || sessionStorage.getItem("active_feature") || "dashboard";
     renderView(initialView);
-});
+}
+
+// Fast startup: initialize immediately if DOM is already ready, or on DOMContentLoaded
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initAdminApp);
+} else {
+    initAdminApp();
+}

@@ -4,18 +4,143 @@ Inventory Router — Admin & Manager Module
 Tenant-scoped stock management for Branch Admins, Managers, and Inventory Officers.
 Includes Masterlist Batch Importer and Automated Inventory Analytics.
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, File, UploadFile, Form
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
 from typing import List, Optional, Dict, Any
 from decimal import Decimal
 import time
+import io
+import zipfile
+import csv
+import xml.etree.ElementTree as ET
 
 from app.db import get_db
 import app.models as models
 import app.schemas as schemas
 from app.core.dependencies import require_inventory_access, get_inventory_tenant_id, get_current_user
+
+
+def parse_masterlist_file(file_bytes: bytes, filename: str) -> Dict[str, List[Dict[str, Any]]]:
+    fn = filename.lower()
+    departments: Dict[str, List[Dict[str, Any]]] = {}
+
+    if fn.endswith('.docx'):
+        try:
+            with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+                xml_content = z.read('word/document.xml')
+            root = ET.fromstring(xml_content)
+            w = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+
+            current_dept = "General"
+            subheaders = {'cooking equipment', 'kitchen utensils', 'kitchen tools', 'storage', 'masterlist'}
+
+            for p in root.iter(w + 'p'):
+                texts = [node.text for node in p.iter(w + 't') if node.text]
+                line = ''.join(texts).strip()
+                if not line:
+                    continue
+
+                bolds = p.findall(f'.//{w}b')
+                is_bold = len(bolds) > 0
+
+                clean_line = line.replace(' (ok)', '').strip()
+                if 'packaging' in clean_line.lower():
+                    clean_line = 'Packaging'
+
+                if clean_line.lower() == 'masterlist':
+                    continue
+
+                if is_bold:
+                    if clean_line.lower() in subheaders:
+                        continue
+                    current_dept = clean_line
+                    if current_dept not in departments:
+                        departments[current_dept] = []
+                else:
+                    item_name = line.replace('Bakers', "Baker's").strip()
+                    if item_name:
+                        if current_dept not in departments:
+                            departments[current_dept] = []
+                        
+                        dept_lower = current_dept.lower()
+                        if 'beverage' in dept_lower or 'coffee' in dept_lower:
+                            unit = "bottles" if any(k in item_name.lower() for k in ['water', 'coke', 'beer', 'syrup', 'soju']) else "kg" if any(k in item_name.lower() for k in ['powder', 'sugar', 'boba']) else "cans" if 'condense' in item_name.lower() or 'cream' in item_name.lower() else "units"
+                        elif 'bill' in dept_lower:
+                            unit = "bills"
+                        elif 'salary' in dept_lower:
+                            unit = "payouts"
+                        elif 'utensil' in dept_lower or 'equipment' in dept_lower or 'furniture' in dept_lower:
+                            unit = "sets" if any(k in item_name.lower() for k in ['knife', 'measuring', 'lights']) else "units"
+                        elif 'office' in dept_lower:
+                            unit = "boxes" if any(k in item_name.lower() for k in ['pen', 'clip', 'staple', 'marker']) else "reams" if 'paper' in item_name.lower() else "units"
+                        else:
+                            unit = "kg" if any(k in item_name.lower() for k in ['meat', 'pork', 'beef', 'chicken', 'rice', 'sugar', 'salt', 'flour', 'onion', 'garlic']) else "L" if 'oil' in item_name.lower() or 'sauce' in item_name.lower() or 'vinegar' in item_name.lower() else "packs"
+
+                        departments[current_dept].append({
+                            "name": item_name,
+                            "unit": unit,
+                            "min_stock": 5.0
+                        })
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to parse Word document: {str(e)}")
+
+    elif fn.endswith('.csv') or fn.endswith('.txt'):
+        try:
+            text = file_bytes.decode('utf-8', errors='ignore')
+            lines = [l.strip() for l in text.splitlines() if l.strip()]
+            header = None
+            start_idx = 0
+            if lines:
+                first_cols = [c.strip().lower() for c in lines[0].split(',')]
+                if any(col in ['name', 'item', 'item name', 'department', 'category'] for col in first_cols):
+                    header = first_cols
+                    start_idx = 1
+            
+            current_dept = "General"
+            for i in range(start_idx, len(lines)):
+                row = [c.strip() for c in lines[i].split(',')]
+                if not row or not any(row):
+                    continue
+                if len(row) == 1 and ((row[0].startswith('[') and row[0].endswith(']')) or row[0].endswith(':')):
+                    current_dept = row[0].strip('[]: ')
+                    continue
+                
+                if header:
+                    row_dict = {header[idx]: row[idx] for idx in range(min(len(header), len(row)))}
+                    name = row_dict.get('item name') or row_dict.get('name') or row_dict.get('item') or row[0]
+                    category = row_dict.get('department') or row_dict.get('category') or current_dept
+                    unit = row_dict.get('unit') or "units"
+                    try:
+                        min_stock = float(row_dict.get('min_stock', 5.0) or 5.0)
+                    except:
+                        min_stock = 5.0
+                else:
+                    name = row[0]
+                    category = row[1] if len(row) > 1 and row[1] else current_dept
+                    unit = row[2] if len(row) > 2 and row[2] else "units"
+                    try:
+                        min_stock = float(row[3]) if len(row) > 3 and row[3] else 5.0
+                    except:
+                        min_stock = 5.0
+                
+                if not name:
+                    continue
+                if category not in departments:
+                    departments[category] = []
+                departments[category].append({
+                    "name": name,
+                    "unit": unit,
+                    "min_stock": min_stock
+                })
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to parse text/CSV file: {str(e)}")
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported file format. Please upload a .docx, .csv, or .txt file.")
+
+    return departments
+
 
 router = APIRouter(tags=["Admin — Inventory"])
 
@@ -544,6 +669,131 @@ def import_custom_items(
         "message": f"Successfully imported {created_count} items ({updated_count} existing synced).",
         "created_count": created_count,
         "updated_count": updated_count
+    }
+
+
+@router.post(
+    "/inventory/parse-file",
+    summary="Parse an uploaded masterlist file (.docx, .csv, .txt) and return preview of departments and items"
+)
+async def parse_inventory_file(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(require_inventory_access),
+):
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+    
+    depts = parse_masterlist_file(content, file.filename)
+    total_items = sum(len(items) for items in depts.values())
+    return {
+        "success": True,
+        "filename": file.filename,
+        "total_items": total_items,
+        "departments": depts
+    }
+
+
+@router.post(
+    "/inventory/import-file",
+    summary="Import items from an uploaded masterlist file directly into database (0 initial stock)"
+)
+async def import_inventory_file(
+    file: UploadFile = File(...),
+    department: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_inventory_access),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+    
+    depts = parse_masterlist_file(content, file.filename)
+    if not depts:
+        raise HTTPException(status_code=400, detail="No departments or items could be found in the uploaded file.")
+    
+    # Filter by specific department if requested by user
+    if department and department.strip() and department.strip().upper() != "ALL":
+        target_dept = department.strip()
+        matched_key = next((k for k in depts.keys() if k.lower() == target_dept.lower()), None)
+        if not matched_key:
+            raise HTTPException(status_code=404, detail=f"Department '{target_dept}' not found in the uploaded file.")
+        depts_to_import = {matched_key: depts[matched_key]}
+    else:
+        depts_to_import = depts
+
+    existing_items: Dict[str, models.InventoryItem] = {
+        item.name.strip().lower(): item 
+        for item in db.query(models.InventoryItem).filter(models.InventoryItem.tenant_id == tenant_id).all()
+    }
+
+    created_count = 0
+    updated_count = 0
+
+    for cat, items in depts_to_import.items():
+        for it in items:
+            name = str(it.get("name", "")).strip()
+            if not name:
+                continue
+            key = name.lower()
+            unit = str(it.get("unit", "units")).strip() or "units"
+            min_stock = Decimal(str(it.get("min_stock", 5.0) or 5.0))
+
+            if key in existing_items:
+                existing = existing_items[key]
+                existing.category = cat
+                if not existing.unit:
+                    existing.unit = unit
+                if existing.min_stock <= 0:
+                    existing.min_stock = min_stock
+                updated_count += 1
+            else:
+                sku_code = f"{cat[:3].upper()}-{abs(hash(name)) % 10000:04d}"
+                new_item = models.InventoryItem(
+                    tenant_id=tenant_id,
+                    name=name,
+                    category=cat,
+                    sku=sku_code,
+                    quantity=Decimal("0.0"),  # Zero initial stock rule
+                    unit=unit,
+                    min_stock=min_stock,
+                    unit_price=Decimal("0.0")
+                )
+                db.add(new_item)
+                existing_items[key] = new_item
+                created_count += 1
+
+    db.commit()
+
+    # Log action in activity logs
+    log = models.ActivityLog(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        action="File Master List Imported",
+        performed_by=current_user.username,
+        role=str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role),
+        details=f"Imported file '{file.filename}': {created_count} items created with 0 stock in DB, {updated_count} synced."
+    )
+    db.add(log)
+    db.commit()
+
+    try:
+        from app.core.websocket import notify_realtime_event
+        notify_realtime_event(tenant_id, "INVENTORY_UPDATED", {
+            "action": "imported",
+            "created_count": created_count,
+            "updated_count": updated_count
+        })
+    except Exception:
+        pass
+
+    return {
+        "success": True,
+        "message": f"Successfully imported {created_count} items from '{file.filename}' directly into database with 0 initial stock ({updated_count} synced).",
+        "created_count": created_count,
+        "updated_count": updated_count,
+        "departments_imported": list(depts_to_import.keys())
     }
 
 

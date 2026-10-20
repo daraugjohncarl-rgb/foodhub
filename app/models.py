@@ -245,7 +245,7 @@ class TransactionItem(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     transaction_id = Column(Integer, ForeignKey("transactions.id", ondelete="CASCADE"), nullable=False, index=True)
-    product_id = Column(Integer, ForeignKey("products.id", ondelete="RESTRICT"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True)
     quantity = Column(Integer, default=1, nullable=False)
     unit_price = Column(Numeric(10, 2), nullable=False)
     total_price = Column(Numeric(10, 2), nullable=False)

@@ -386,10 +386,6 @@ CREATE INDEX "ix_stock_movements_tenant_type_created" ON "stock_movements" ("ten
 -- 5. Insert Existing Records
 -- Records for: tenants [Supabase (1 rows)]
 INSERT INTO "tenants" ("id", "name", "subdomain_or_code", "is_active", "created_at") VALUES (1, 'Main Branch - Blessie FoodHub', 'main-branch', TRUE, '2026-08-24 20:20:52') ON CONFLICT DO NOTHING;
--- Records for: suppliers [Supabase (3 rows)]
-INSERT INTO "suppliers" ("id", "tenant_id", "supplier_name", "contact_number", "category", "contact_person", "email", "address", "products_supplied", "status", "notes", "created_at", "updated_at") VALUES (4, 1, 'Ginebra Supplier', '+63 907 002 5333', 'Beverages', NULL, NULL, NULL, 'Ginebra', 'Active', NULL, '2026-10-15 21:53:08', '2026-10-15 21:53:08') ON CONFLICT DO NOTHING;
-INSERT INTO "suppliers" ("id", "tenant_id", "supplier_name", "contact_number", "category", "contact_person", "email", "address", "products_supplied", "status", "notes", "created_at", "updated_at") VALUES (5, 1, 'CLVB Supplier', '+63 966 245 9939', 'Beverages', NULL, NULL, NULL, 'CLVB', 'Active', NULL, '2026-10-15 21:53:08', '2026-10-15 21:53:08') ON CONFLICT DO NOTHING;
-INSERT INTO "suppliers" ("id", "tenant_id", "supplier_name", "contact_number", "category", "contact_person", "email", "address", "products_supplied", "status", "notes", "created_at", "updated_at") VALUES (6, 1, 'Mako’s Beer Supplier', '+63 981 406 5671', 'Beverages', NULL, NULL, NULL, 'Mako’s Beer', 'Active', NULL, '2026-10-15 21:53:08', '2026-10-15 21:53:08') ON CONFLICT DO NOTHING;
 -- Records for: users [Supabase (8 rows)]
 INSERT INTO "users" ("id", "tenant_id", "username", "first_name", "last_name", "email", "phone", "password_hash", "role", "is_active", "token_version", "created_at", "updated_at") VALUES (1, NULL, 'superadmin', NULL, NULL, 'superadmin@inboxpos.com', NULL, '$2b$12$67bNSDGZ7W3J.sfl/6pJfOqERxeiEfNqI3zGzLeWfET7.faImFwjm', 'SUPER_ADMIN', TRUE, 5, '2026-08-24 20:20:52', '2026-10-18 07:48:32.417543') ON CONFLICT DO NOTHING;
 INSERT INTO "users" ("id", "tenant_id", "username", "first_name", "last_name", "email", "phone", "password_hash", "role", "is_active", "token_version", "created_at", "updated_at") VALUES (2, 1, 'admin', NULL, NULL, 'admin@inboxpos.com', NULL, '$2b$12$8Xt/UtrY3X/Mor6sQF5QfO6V2lSFulbqlm7U9gWatBtSBJPVz7Z6S', 'ADMIN', TRUE, 18, '2026-08-24 20:20:52', '2026-10-18 07:58:16.744571') ON CONFLICT DO NOTHING;
@@ -399,13 +395,6 @@ INSERT INTO "users" ("id", "tenant_id", "username", "first_name", "last_name", "
 INSERT INTO "users" ("id", "tenant_id", "username", "first_name", "last_name", "email", "phone", "password_hash", "role", "is_active", "token_version", "created_at", "updated_at") VALUES (6, 1, 'kitchen', 'jojo', 'banes', 'kitchen@gmail.com', '09846473821', '$2b$12$.CRT1Xx.ZLM7OhGrV9iiNOM6u8gvkIEb94HLRAQGYM2EwzsE4jz6u', 'KITCHEN', TRUE, 5, '2026-08-24 22:22:58', '2026-10-18 07:48:50.694460') ON CONFLICT DO NOTHING;
 INSERT INTO "users" ("id", "tenant_id", "username", "first_name", "last_name", "email", "phone", "password_hash", "role", "is_active", "token_version", "created_at", "updated_at") VALUES (13, 1, 'manager', NULL, NULL, 'manager@inboxpos.com', NULL, '$2b$12$/XILaolR40Y7hLyHFWrtyOpMGtAoDe9s0CG6.8G/VFCnHli9tEFae', 'MANAGER', TRUE, 3, '2026-10-18 02:12:44.131460', '2026-10-18 07:48:39.304373') ON CONFLICT DO NOTHING;
 INSERT INTO "users" ("id", "tenant_id", "username", "first_name", "last_name", "email", "phone", "password_hash", "role", "is_active", "token_version", "created_at", "updated_at") VALUES (14, 1, 'inventory', NULL, NULL, 'inventory@inboxpos.com', NULL, '$2b$12$QoqZtAQWMWo3KDG/u3Oq8usZHJ8ALhauQsjhb58SJ5U1kzpylXfSO', 'INVENTORY', TRUE, 4, '2026-10-18 02:12:47.345609', '2026-10-18 07:48:47.651294') ON CONFLICT DO NOTHING;
--- Records for: restaurant_tables [Supabase (1 rows)]
-INSERT INTO "restaurant_tables" ("id", "tenant_id", "table_number", "status") VALUES (6, 1, '1', 'active') ON CONFLICT DO NOTHING;
--- Records for: shifts [Supabase (1 rows)]
-INSERT INTO "shifts" ("id", "tenant_id", "user_id", "start_time", "end_time", "start_cash", "end_cash", "status", "created_at", "updated_at") VALUES (1, 1, 5, '2026-10-18 07:58:20.665206', NULL, '0.00', NULL, 'open', '2026-10-18 07:58:20.665206', '2026-10-18 07:58:20.665206') ON CONFLICT DO NOTHING;
--- Records for: activity_logs [Supabase (1 rows)]
-INSERT INTO "activity_logs" ("id", "tenant_id", "user_id", "action", "performed_by", "target_user", "role", "details", "created_at") VALUES (1, NULL, 2, 'Login', 'admin', 'admin', 'ADMIN', 'User ''admin'' logged in successfully.', '2026-10-18 07:58:18.635198') ON CONFLICT DO NOTHING;
-
 -- 6. Synchronize Auto-Increment Sequences (Robust Procedural Block)
 DO $$
 DECLARE

@@ -812,13 +812,44 @@
       }
     }
 
-    document.addEventListener("DOMContentLoaded", () => {
-      // If already logged in, redirect directly to user's assigned dashboard
-      if (typeof Auth !== "undefined" && Auth.isAuthenticated()) {
+    function initLoginParams() {
+      // Check query parameters for session notifications
+      const params = new URLSearchParams(window.location.search);
+      const errorBanner = document.getElementById("errorBanner");
+      const errorMessage = document.getElementById("errorMessage");
+
+      if (params.get("logged_out") === "1") {
+        if (errorBanner && errorMessage) {
+          errorBanner.style.background = "rgba(16,185,129,0.12)";
+          errorBanner.style.borderColor = "rgba(16,185,129,0.35)";
+          errorBanner.style.color = "#10b981";
+          errorBanner.querySelector("i").className = "fas fa-check-circle";
+          errorMessage.textContent = "You have been logged out successfully.";
+          errorBanner.style.display = "flex";
+        }
+      } else if (params.get("unauthorized") === "1" || params.get("expired") === "1") {
+        if (errorBanner && errorMessage) {
+          errorBanner.style.background = "rgba(245,158,11,0.12)";
+          errorBanner.style.borderColor = "rgba(245,158,11,0.35)";
+          errorBanner.style.color = "#d97706";
+          errorBanner.querySelector("i").className = "fas fa-triangle-exclamation";
+          errorMessage.textContent = params.get("expired") === "1" 
+            ? "Your session has expired. Please sign in again."
+            : "Please sign in to access that protected page.";
+          errorBanner.style.display = "flex";
+        }
+      } else if (typeof Auth !== "undefined" && Auth.isAuthenticated()) {
+        // If already logged in, redirect directly to user's assigned dashboard
         const role = Auth.getRole();
         window.location.href = Auth.getDashboardUrl(role);
       }
-    });
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", initLoginParams);
+    } else {
+      initLoginParams();
+    }
 
     document.getElementById("loginForm").addEventListener("submit", async function (event) {
       event.preventDefault();
@@ -847,8 +878,12 @@
       signinIcon.className = "fas fa-arrow-right";
 
       if (res.success) {
-        window.location.href = Auth.getDashboardUrl(res.role);
+        window.location.href = res.redirect_url || Auth.getDashboardUrl(res.role);
       } else {
+        errorBanner.style.background = "rgba(239,68,68,0.12)";
+        errorBanner.style.borderColor = "rgba(239,68,68,0.35)";
+        errorBanner.style.color = "#ef4444";
+        errorBanner.querySelector("i").className = "fas fa-exclamation-circle";
         errorMessage.textContent = res.message || "Invalid credentials.";
         errorBanner.style.display = "flex";
       }

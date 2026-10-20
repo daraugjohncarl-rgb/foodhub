@@ -15,7 +15,7 @@ function togglePw(fieldId, btn) {
     }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+function initCreateUserApp() {
     // Navigation & Sidebar
     const sidebarToggle = document.getElementById('sidebarToggle');
     const sidebar = document.getElementById('sidebar');
@@ -179,4 +179,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
-});
+}
+
+// Fast startup: initialize immediately if DOM is already ready, or on DOMContentLoaded
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initCreateUserApp);
+} else {
+    initCreateUserApp();
+}

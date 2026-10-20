@@ -15,7 +15,7 @@ function toggleProfilePw(fieldId, btn) {
     }
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
+async function initProfileApp() {
     // Navigation & Sidebar
     const sidebarToggle = document.getElementById('sidebarToggle');
     const sidebar = document.getElementById('sidebar');
@@ -204,4 +204,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     loadProfile();
-});
+}
+
+// Fast startup: initialize immediately if DOM is already ready, or on DOMContentLoaded
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initProfileApp);
+} else {
+    initProfileApp();
+}

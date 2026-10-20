@@ -2249,4 +2249,34 @@ img {
     .categories {
         gap: 18px;
     }
+
+    .header-orders-btn span:not(#custOrdersBadge),
+    .header-auth-btn span {
+        display: none !important;
+    }
+
+    .header-orders-btn,
+    .header-auth-btn {
+        padding: 6px 9px !important;
+    }
+
+    .header-actions {
+        gap: 5px !important;
+    }
+}
+
+@media (max-width: 480px) {
+    .header-orders-btn span:not(#custOrdersBadge),
+    .header-auth-btn span {
+        display: none !important;
+    }
+
+    .header-orders-btn,
+    .header-auth-btn {
+        padding: 7px 10px !important;
+    }
+
+    .header-actions {
+        gap: 6px !important;
+    }
 }

@@ -1,26 +1,31 @@
+import os
+import uuid
 from datetime import timedelta
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status, BackgroundTasks
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from app.db import get_db
 import app.models as models
 from app.schemas import UserResponse
 from app.core.security import verify_password, create_access_token
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, get_current_user_optional
 
 router = APIRouter(
     prefix="/auth",
     tags=["Authentication"]
 )
 
-@router.post("/login")
+@router.post("/login", summary="Sign in and establish a secure authenticated session")
 def login(
+    request: Request,
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
     """
-    Authenticate a user using OAuth2 Username & Password.
-    Returns access token along with user role, tenant_id, and username.
+    Authenticate a user using username/email & password.
+    Creates a new secure server-side session, increments token_version to prevent session fixation,
+    sets a secure HttpOnly session cookie, and returns access token and role redirect information.
     """
     # Look up user by username or email
     user = db.query(models.User).filter(
@@ -39,44 +44,68 @@ def login(
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Your account is deactivated.",
+            detail="Your account is deactivated. Please contact your administrator.",
             headers={"WWW-Authenticate": "Bearer"},
         )
         
-    # Enforce single-device login: increment token_version to invalidate any previous device sessions
+    # Single-device / session regeneration: increment token_version to invalidate any previous session
     user.token_version = (user.token_version or 0) + 1
     db.commit()
     db.refresh(user)
 
-    # Construct JWT token payload
-    # Ensure role is converted to its string representation
+    # Construct JWT token payload with unique session ID (jti)
     role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
+    session_id = str(uuid.uuid4())
     token_payload = {
         "sub": str(user.id),
         "username": user.username,
         "role": role_str,
         "tenant_id": user.tenant_id,
-        "token_version": user.token_version
+        "token_version": user.token_version,
+        "jti": session_id
     }
     
-    # Generate the access token (valid for exactly 1 day / 24 hours)
+    # Generate the access token (valid for 1 day / 24 hours)
     access_token = create_access_token(data=token_payload, expires_delta=timedelta(days=1))
+    
+    # Set secure HttpOnly session cookie
+    is_production = os.getenv("APP_ENV", "development").lower() == "production"
+    response.set_cookie(
+        key="session_token",
+        value=access_token,
+        httponly=True,
+        max_age=86400,
+        expires=86400,
+        path="/",
+        samesite="lax",
+        secure=is_production
+    )
     
     # Audit log: record login event
     try:
         log = models.ActivityLog(
+            tenant_id=user.tenant_id,
             user_id=user.id,
             action="Login",
             performed_by=user.username,
             target_user=user.username,
             role=role_str,
-            details=f"User '{user.username}' logged in successfully."
+            details=f"User '{user.username}' logged in successfully (Session ID: {session_id[:8]})."
         )
         db.add(log)
         db.commit()
     except Exception:
         pass  # Never block login due to log failure
     
+    # Determine appropriate redirect URL based on user role
+    role_lower = role_str.lower()
+    if role_lower == "super_admin":
+        redirect_url = "/dashboard"
+    elif role_lower in ("admin", "manager", "inventory", "cashier", "kitchen", "customer"):
+        redirect_url = f"/{role_lower}"
+    else:
+        redirect_url = "/"
+
     return {
         "access_token": access_token,
         "token_type": "bearer",
@@ -84,8 +113,124 @@ def login(
         "tenant_id": user.tenant_id,
         "username": user.username,
         "first_name": user.first_name,
-        "last_name": user.last_name
+        "last_name": user.last_name,
+        "session_id": session_id,
+        "redirect_url": redirect_url
     }
+
+
+def record_logout_in_background(user_id: int, tenant_id, username: str, role_str: str):
+    """
+    Asynchronously increments user token_version and logs activity without delaying HTTP client response.
+    """
+    try:
+        from app.db import SessionLocal
+        bg_db = SessionLocal()
+        try:
+            u = bg_db.query(models.User).filter(models.User.id == user_id).first()
+            if u:
+                u.token_version = (u.token_version or 0) + 1
+                log = models.ActivityLog(
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    action="Logout",
+                    performed_by=username,
+                    target_user=username,
+                    role=role_str,
+                    details=f"User '{username}' logged out successfully."
+                )
+                bg_db.add(log)
+                bg_db.commit()
+        finally:
+            bg_db.close()
+    except Exception:
+        pass
+
+
+@router.post("/logout", summary="Log out and invalidate current server-side session")
+def logout(
+    request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Invalidates current server-side session with instant response:
+    Clears the session cookie immediately and records logout asynchronously.
+    """
+    # 1. Clear HttpOnly session cookie immediately in the response header
+    response.delete_cookie(
+        key="session_token",
+        path="/",
+        httponly=True,
+        samesite="lax"
+    )
+
+    # 2. Extract user info quickly from JWT or cookie without blocking on slow database roundtrips
+    auth_token = request.cookies.get("session_token")
+    if not auth_token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            auth_token = auth_header[7:].strip()
+
+    if auth_token:
+        try:
+            import jwt
+            from app.core.security import SECRET_KEY, ALGORITHM
+            payload = jwt.decode(auth_token, SECRET_KEY, algorithms=[ALGORITHM])
+            user_id = int(payload.get("sub"))
+            username = payload.get("username", "User")
+            role_str = payload.get("role", "User")
+            tenant_id = payload.get("tenant_id")
+            background_tasks.add_task(
+                record_logout_in_background,
+                user_id,
+                tenant_id,
+                username,
+                role_str
+            )
+        except Exception:
+            user = get_current_user_optional(request=request, db=db)
+            if user:
+                role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
+                background_tasks.add_task(
+                    record_logout_in_background,
+                    user.id,
+                    user.tenant_id,
+                    user.username,
+                    role_str
+                )
+
+    return {
+        "success": True,
+        "message": "Successfully logged out. Session invalidated."
+    }
+
+
+@router.get("/session", summary="Check current session validity")
+def get_session_status(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Check if the calling client has a valid, active server-side session.
+    """
+    user = get_current_user_optional(request=request, db=db)
+    if not user:
+        return {"authenticated": False, "user": None}
+    role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
+    return {
+        "authenticated": True,
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "role": role_str,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "tenant_id": user.tenant_id
+        }
+    }
+
 
 from app.schemas import UserResponse, UserUpdate, PasswordChangeRequest, CustomerRegisterRequest
 from app.core.security import verify_password, create_access_token, get_password_hash

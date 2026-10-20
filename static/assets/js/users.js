@@ -2,7 +2,7 @@
  * User Management Controller (users.js)
  * Connects User Lists page to FastAPI backend endpoints.
  */
-document.addEventListener('DOMContentLoaded', () => {
+function initUsersApp() {
     let currentPage = 1;
     const pageSize = 10;
     let totalUsersCount = 0;
@@ -270,7 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <option value="INVENTORY" ${user.role === 'INVENTORY' ? 'selected' : ''}>Inventory Staff</option>
                             <option value="CASHIER" ${user.role === 'CASHIER' ? 'selected' : ''}>Cashier</option>
                             <option value="KITCHEN" ${user.role === 'KITCHEN' ? 'selected' : ''}>Kitchen Staff</option>
-                            <option value="CUSTOMER" ${user.role === 'CUSTOMER' ? 'selected' : ''}>Customer</option>
+                            <option value="SUPER_ADMIN" ${user.role === 'SUPER_ADMIN' ? 'selected' : ''}>Super Admin</option>
                         </select>
                     </div>
                     <div class="input-group">
@@ -465,4 +465,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }, delay);
     });
-});
+}
+
+// Fast startup: initialize immediately if DOM is already ready, or on DOMContentLoaded
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initUsersApp);
+} else {
+    initUsersApp();
+}

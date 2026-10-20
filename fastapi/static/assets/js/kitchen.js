@@ -2,27 +2,37 @@
  * Kitchen KDS Role Controller (kitchen.js)
  * Synchronized with Super Admin & Cashier visual design system.
  */
-document.addEventListener("DOMContentLoaded", async () => {
-    // 1. Role Guard: Enforce authenticated KITCHEN (or higher) access
-    let user = null;
-    if (typeof Auth !== "undefined" && typeof Auth.requireRole === "function") {
-        user = Auth.requireRole(["kitchen", "admin", "super_admin"]);
-    } else if (typeof requireRole === "function") {
-        user = requireRole(["kitchen", "admin", "super_admin"]);
-    }
-    if (!user) return;
 
-    // 2. Sidebar & Mobile Menu Handlers
-    const sidebar = document.getElementById("sidebar");
-    const sidebarToggle = document.getElementById("sidebarToggle");
-    const mobileMenuBtn = document.getElementById("mobileMenuBtn");
-    const sidebarOverlay = document.getElementById("sidebarOverlay");
-    // 2. Sidebar init via centralized controller
-    if (typeof Utils !== "undefined" && Utils.initSidebar) {
-        Utils.initSidebar();
-    }
+// Global Logout Modal Helpers
+function openLogoutModal() {
+    const modal = document.getElementById("logoutModal");
+    if (modal) modal.style.display = "flex";
+    else doLogout();
+}
 
-    // 3. Live Clock & Date Header
+function closeLogoutModal() {
+    const modal = document.getElementById("logoutModal");
+    if (modal) modal.style.display = "none";
+}
+
+function doLogout() {
+    if (typeof Auth !== "undefined" && Auth.logout) {
+        Auth.logout();
+    } else if (typeof logout === "function") {
+        logout();
+    } else {
+        localStorage.clear();
+        sessionStorage.clear();
+        window.location.href = "/";
+    }
+}
+
+window.openLogoutModal = openLogoutModal;
+window.closeLogoutModal = closeLogoutModal;
+window.doLogout = doLogout;
+
+async function initKitchenApp() {
+    // 1. Immediately update Live Clock & Date Header so header never gets stuck on "Loading..."
     function updateClock() {
         const now = new Date();
         const clockEl = document.getElementById("liveClock");
@@ -33,35 +43,28 @@ document.addEventListener("DOMContentLoaded", async () => {
     updateClock();
     setInterval(updateClock, 1000);
 
-    // 4. Logout Confirmation Modal
-    window.openLogoutModal = function() {
-        const modal = document.getElementById("logoutModal");
-        if (modal) modal.style.display = "flex";
-        else window.doLogout();
-    };
+    // 2. Role Guard: Enforce authenticated KITCHEN (or higher) access with seamless session recovery
+    let user = null;
+    if (typeof Auth !== "undefined" && typeof Auth.requireRoleAsync === "function") {
+        user = await Auth.requireRoleAsync(["kitchen", "admin", "super_admin"]);
+    } else if (typeof Auth !== "undefined" && typeof Auth.requireRole === "function") {
+        user = Auth.requireRole(["kitchen", "admin", "super_admin"]);
+    } else if (typeof requireRole === "function") {
+        user = requireRole(["kitchen", "admin", "super_admin"]);
+    }
+    if (!user) return;
 
-    window.closeLogoutModal = function() {
-        const modal = document.getElementById("logoutModal");
-        if (modal) modal.style.display = "none";
-    };
+    // 3. Centralized Sidebar init
+    if (typeof Utils !== "undefined" && Utils.initSidebar) {
+        Utils.initSidebar();
+    }
 
-    window.doLogout = function() {
-        if (typeof Auth !== "undefined" && Auth.logout) {
-            Auth.logout();
-        } else if (typeof logout === "function") {
-            logout();
-        } else {
-            localStorage.clear();
-            sessionStorage.clear();
-            window.location.href = "/";
-        }
-    };
-
+    // 4. Logout button listener
     const logoutBtn = document.getElementById("logoutBtn");
     if (logoutBtn) {
         logoutBtn.addEventListener("click", (e) => {
             e.preventDefault();
-            window.openLogoutModal();
+            openLogoutModal();
         });
     }
 
@@ -89,7 +92,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         Utils.initTheme();
     }
 
-    // 7. Build Navigation Menu & Route to Kitchen View
+    // 7. Build Navigation Menu
     if (typeof buildSidebarMenu === "function") {
         buildSidebarMenu("kitchen", (viewId) => {
             if (typeof renderView === "function") {
@@ -98,14 +101,26 @@ document.addEventListener("DOMContentLoaded", async () => {
         });
     }
 
-    // Restore current feature from URL hash or session, fallback to kitchen
+    // 8. Always render kitchen view for Kitchen KDS (avoids stale sessionStorage from admin/manager sessions)
     if (typeof renderView === "function") {
-        const initialView = (window.location.hash ? window.location.hash.replace("#", "") : "") || sessionStorage.getItem("active_feature") || "kitchen";
-        renderView(initialView);
+        const hash = window.location.hash ? window.location.hash.replace("#", "") : "";
+        const targetView = (hash === "kitchen_logs") ? "kitchen_logs" : "kitchen";
+        renderView(targetView);
     }
 
-    // Periodic auto-refresh
+    // 9. Periodic auto-refresh
     setInterval(() => {
-        if (typeof renderKitchen === "function") renderKitchen();
+        const activeLink = document.querySelector("aside.sidebar .nav-link.active, .sidebar a.active");
+        const activeView = activeLink ? (activeLink.getAttribute("href") || "").replace(/^#\/?/, "").trim() : "";
+        if (activeView === "kitchen" || !activeView) {
+            if (typeof renderKitchen === "function") renderKitchen();
+        }
     }, 10000);
-});
+}
+
+// Fast startup: initialize immediately if DOM is already ready, or on DOMContentLoaded
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initKitchenApp);
+} else {
+    initKitchenApp();
+}

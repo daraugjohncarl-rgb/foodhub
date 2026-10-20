@@ -13,8 +13,12 @@ const Utils = {
 
     const toast = document.createElement("div");
     toast.className = `toast toast-${type === 'danger' ? 'danger' : type === 'success' ? 'success' : 'info'}`;
-    const icon = type === 'success' ? '✓' : type === 'danger' ? '⚠️' : 'ℹ';
-    toast.innerHTML = `<span>${icon}</span> <span>${msg}</span>`;
+    const iconHtml = type === 'success' 
+      ? '<i class="fas fa-check-circle" style="color:var(--success, #10b981);"></i>' 
+      : type === 'danger' 
+        ? '<i class="fas fa-exclamation-triangle" style="color:var(--danger, #ef4444);"></i>' 
+        : '<i class="fas fa-info-circle" style="color:var(--info, #0284c7);"></i>';
+    toast.innerHTML = `<span style="display:inline-flex; align-items:center;">${iconHtml}</span> <span>${msg}</span>`;
     container.appendChild(toast);
 
     setTimeout(() => {
@@ -24,7 +28,7 @@ const Utils = {
     }, 3500);
   },
 
-  openModal(title, bodyHTML, footerHTML = "") {
+  openModal(title, bodyHTML, footerHTML = "", size = "") {
     let container = document.getElementById("modal-container");
     if (!container) {
       container = document.createElement("div");
@@ -35,6 +39,8 @@ const Utils = {
     }
 
     const content = document.getElementById("modal-content");
+    content.className = "modal " + (size || "");
+    content.removeAttribute("style");
     content.innerHTML = `
       <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; padding:18px 24px; border-bottom:1px solid rgba(205,190,150,0.25);">
         <h3 style="font-size:16px; font-weight:700; color:var(--text-main, #18181b);">${title}</h3>
@@ -53,6 +59,11 @@ const Utils = {
     if (container) {
       container.classList.add("hidden");
       container.style.display = "none";
+    }
+    const content = document.getElementById("modal-content");
+    if (content) {
+      content.className = "modal";
+      content.removeAttribute("style");
     }
   },
 
@@ -208,7 +219,7 @@ generateReceiptHTML(order) {
       <button class="btn btn-primary" onclick="Utils.printReceipt(window.currentReceiptOrder)"><i class="fas fa-print"></i> Print Receipt</button>
     `;
 
-    this.openModal("✓ Transaction Complete", html, footer);
+    this.openModal('<i class="fas fa-check-circle" style="color:var(--success, #10b981); margin-right:8px;"></i> Transaction Complete', html, footer);
   },
 
   initTheme() {
@@ -235,7 +246,7 @@ generateReceiptHTML(order) {
 
     if (!sidebar) return;
 
-    const isMobile = () => window.innerWidth <= 768;
+    const isMobile = () => window.innerWidth <= 1024;
     const updateIcon = (collapsed) => {
       if (!sidebarToggle) return;
       sidebarToggle.innerHTML = '<i class="fas fa-bars"></i>';

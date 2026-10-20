@@ -33,7 +33,12 @@ const Auth = {
 
   isAuthenticated() {
     const token = this.getToken();
-    if (!token) return false;
+    if (!token) {
+      // Check if user session credentials exist in storage or cookie
+      const role = this.getRole();
+      if (role) return true;
+      return false;
+    }
     try {
       const parts = token.split(".");
       if (parts.length === 3) {
@@ -81,6 +86,7 @@ const Auth = {
         headers: {
           "Content-Type": "application/x-www-form-urlencoded"
         },
+        credentials: "include",
         body: params
       });
 
@@ -125,6 +131,7 @@ const Auth = {
         success: true,
         token: data.access_token,
         role: (data.role || "").toLowerCase(),
+        redirect_url: data.redirect_url || this.getDashboardUrl(data.role),
         user: userProfile
       };
     } catch (err) {
@@ -137,6 +144,7 @@ const Auth = {
       const response = await fetch("/api/v1/auth/customer-register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify(payload)
       });
       const data = await response.json();
@@ -161,20 +169,44 @@ const Auth = {
     }
   },
 
-  logout() {
+  async logout() {
+    const token = this.getToken();
+
+    // 1. Immediately wipe all client credentials to instantly terminate session
     localStorage.removeItem("access_token");
     localStorage.removeItem("username");
     localStorage.removeItem("role");
     localStorage.removeItem("tenant_id"); 
+    localStorage.removeItem("first_name");
+    localStorage.removeItem("last_name");
+    localStorage.removeItem("full_name");
     localStorage.removeItem("RESTOTRACK_USER");
     localStorage.removeItem("RESTOTRACK_ROLE");
     sessionStorage.clear();
-    window.location.href = "/";
+
+    // 2. Clear client-accessible cookies
+    document.cookie = "session_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;";
+
+    // 3. Dispatch server logout notification with keepalive (browser guarantees execution without blocking UI)
+    try {
+      fetch("/api/v1/auth/logout", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token || ""}`,
+          "Content-Type": "application/json"
+        },
+        credentials: "include",
+        keepalive: true
+      }).catch(() => {});
+    } catch (e) {}
+
+    // 4. Instant redirect to login with confirmation
+    window.location.replace("/login?logged_out=1");
   },
 
   /**
    * Authenticated Fetch Wrapper
-   * Automatically attaches Bearer token and intercepts 401s
+   * Automatically attaches Bearer token, passes session cookies, and intercepts 401s
    */
   async fetch(url, options = {}) {
     const token = this.getToken();
@@ -190,7 +222,8 @@ const Auth = {
 
     const config = {
       ...options,
-      headers
+      headers,
+      credentials: "include"
     };
 
     try {
@@ -223,21 +256,54 @@ const Auth = {
 /**
  * Route Guard for Role Dashboard Shells
  */
+async function requireRoleAsync(allowedRoles = []) {
+  // If local credentials missing, fast-restore from server session cookie
+  if (!Auth.getToken() || !Auth.getRole()) {
+    try {
+      const res = await fetch("/api/v1/auth/session", { credentials: "include" });
+      if (res.ok) {
+        const sData = await res.json();
+        if (sData.authenticated && sData.user) {
+          const u = sData.user;
+          const role = (u.role || "").toLowerCase();
+          localStorage.setItem("role", role);
+          localStorage.setItem("username", u.username);
+          if (u.tenant_id) localStorage.setItem("tenant_id", u.tenant_id);
+          const fullName = [u.first_name, u.last_name].filter(p => p && p.trim()).join(" ") || u.username;
+          localStorage.setItem("full_name", fullName);
+          const userProfile = {
+            id: u.id,
+            username: u.username,
+            name: fullName,
+            first_name: u.first_name,
+            last_name: u.last_name,
+            role: role,
+            tenant_id: u.tenant_id
+          };
+          localStorage.setItem("RESTOTRACK_USER", JSON.stringify(userProfile));
+          localStorage.setItem("RESTOTRACK_ROLE", role);
+        }
+      }
+    } catch (e) {}
+  }
+  return requireRole(allowedRoles);
+}
+
 function requireRole(allowedRoles = []) {
-  if (!Auth.isAuthenticated()) {
+  const currentRole = Auth.getRole();
+  const normalizedAllowed = allowedRoles.map(r => r.toLowerCase());
+
+  if (!Auth.isAuthenticated() && !currentRole) {
     window.location.href = "/";
     return null;
   }
-
-  const currentRole = Auth.getRole();
-  const normalizedAllowed = allowedRoles.map(r => r.toLowerCase());
 
   // SUPER_ADMIN has master access to admin views
   if (currentRole === "super_admin" && normalizedAllowed.includes("admin")) {
     return Auth.getUser();
   }
 
-  if (!normalizedAllowed.includes(currentRole)) {
+  if (currentRole && !normalizedAllowed.includes(currentRole)) {
     alert(`Access Denied: Your account role (${currentRole}) is not permitted on this dashboard.`);
     window.location.href = Auth.getDashboardUrl(currentRole);
     return null;
@@ -279,8 +345,10 @@ function requireRole(allowedRoles = []) {
 
 // Global helpers
 Auth.requireRole = requireRole;
+Auth.requireRoleAsync = requireRoleAsync;
 window.Auth = Auth;
 window.requireRole = requireRole;
+window.requireRoleAsync = requireRoleAsync;
 window.logout = () => Auth.logout();
 
 // Periodic session heartbeat: validates single-device session and 1-day expiration in background

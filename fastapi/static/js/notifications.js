@@ -1,7 +1,7 @@
 /**
  * Notifications & Live Clock Module (notifications.js)
  */
-document.addEventListener('DOMContentLoaded', () => {
+function initNotificationsApp() {
     // 1. Live Date & Clock
     const liveDateEl = document.getElementById('liveDate');
     const liveClockEl = document.getElementById('liveClock');
@@ -87,4 +87,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     renderNotifications();
-});
+}
+
+// Fast startup: initialize immediately if DOM is already ready, or on DOMContentLoaded
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initNotificationsApp);
+} else {
+    initNotificationsApp();
+}

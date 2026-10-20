@@ -1366,6 +1366,32 @@ tbody tr:hover {
     max-width: 600px;
 }
 
+.modal.modal-xl {
+    max-width: 960px;
+}
+
+.modal.modal-responsive {
+    width: min(960px, 95vw);
+    max-width: 960px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.modal.modal-responsive .modal-body {
+    overflow-y: auto;
+    max-height: calc(90vh - 120px);
+    flex: 1;
+}
+
+@media (max-width: 640px) {
+    .modal.modal-responsive {
+        width: 98vw;
+        max-width: 98vw;
+        border-radius: 16px;
+    }
+}
+
 .modal.modal-sm {
     max-width: 400px;
 }

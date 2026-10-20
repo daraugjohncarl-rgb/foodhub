@@ -4,7 +4,7 @@
  * Handles fetching, filtering, displaying, and updating incident reports
  * from the Super Admin panel via the FastAPI backend.
  */
-document.addEventListener('DOMContentLoaded', () => {
+function initReportsApp() {
 
     // ── Sidebar & Mobile Nav ──────────────────────────────────────────────
     const sidebarToggle = document.getElementById('sidebarToggle');
@@ -385,4 +385,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initial Load
     // ─────────────────────────────────────────────────────────────────────
     loadReports();
-});
+}
+
+// Fast startup: initialize immediately if DOM is already ready, or on DOMContentLoaded
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initReportsApp);
+} else {
+    initReportsApp();
+}
