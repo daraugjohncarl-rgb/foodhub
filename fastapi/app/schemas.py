@@ -685,3 +685,44 @@ class TableUpdate(BaseModel):
     status: Literal["active", "inactive"]
 
 
+# ─────────────────────────────────────────────
+# Expense Schemas
+# ─────────────────────────────────────────────
+class ExpenseCreate(BaseModel):
+    category: str = Field(..., max_length=50)
+    description: str = Field(..., max_length=255)
+    amount: Decimal = Field(..., gt=0)
+    payment_method: str = Field("Cash", max_length=50)
+    status: Literal["paid", "pending", "voided"] = "paid"
+    reference_no: Optional[str] = Field(None, max_length=50)
+    expense_date: Optional[datetime] = None
+
+class ExpenseUpdate(BaseModel):
+    category: Optional[str] = Field(None, max_length=50)
+    description: Optional[str] = Field(None, max_length=255)
+    amount: Optional[Decimal] = Field(None, gt=0)
+    payment_method: Optional[str] = Field(None, max_length=50)
+    status: Optional[Literal["paid", "pending", "voided"]] = None
+    reference_no: Optional[str] = Field(None, max_length=50)
+    expense_date: Optional[datetime] = None
+
+class ExpenseResponse(BaseModel):
+    id: int
+    tenant_id: int
+    category: str
+    description: str
+    amount: float
+    payment_method: str
+    status: str
+    reference_no: Optional[str] = None
+    expense_date: Optional[datetime] = None
+    recorded_by: Optional[int] = None
+    recorded_by_username: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
+

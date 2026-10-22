@@ -430,3 +430,28 @@ class RestaurantTable(Base):
     status = Column(String(20), default="active", nullable=False)
     
     tenant = relationship("Tenant")
+
+
+class Expense(Base):
+    """
+    Stores recognized operational business expenses (e.g., Rent, Utilities, Salaries, Supplies).
+    Separates operating expenses from inventory purchase receipts and internal cash transfers.
+    """
+    __tablename__ = "expenses"
+
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    category = Column(String(50), nullable=False, index=True)  # Rent, Utilities, Salaries, Supplies, Maintenance, Transport, Other
+    description = Column(String(255), nullable=False)
+    amount = Column(Numeric(10, 2), nullable=False)
+    payment_method = Column(String(50), default="Cash", nullable=False)
+    status = Column(String(20), default="paid", nullable=False, index=True)  # paid, pending, voided
+    reference_no = Column(String(50), nullable=True, index=True)
+    expense_date = Column(DateTime, server_default=func.now(), nullable=False, index=True)
+    recorded_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    tenant = relationship("Tenant")
+    user = relationship("User")
+

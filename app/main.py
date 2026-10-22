@@ -31,6 +31,8 @@ from app.routers.inventory import router as inventory_router
 from app.routers.analytics import router as analytics_router
 from app.routers.suppliers import router as suppliers_router
 from app.routers.purchase_orders import router as purchase_orders_router
+from app.routers.expenses import router as expenses_router
+
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -212,7 +214,9 @@ app.include_router(transactions_router, prefix="/api/v1")
 app.include_router(kitchen_router, prefix="/api/v1")
 app.include_router(suppliers_router, prefix="/api/v1")
 app.include_router(purchase_orders_router, prefix="/api/v1")
+app.include_router(expenses_router, prefix="/api/v1")
 app.include_router(customer_orders_router, prefix="/api/v1")
+
 app.include_router(shifts_router, prefix="/api/v1")
 
 from app.routers.tables import router as tables_router

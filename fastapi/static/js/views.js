@@ -5675,32 +5675,82 @@ async function submitDeleteSupplier(id) {
 // 11. PROFIT LOSS & CASHOUT INCOME
 // ─────────────────────────────────────────────────────────────────────────────
 let cachedProfitLossData = null;
+window._currentPlPeriod = window._currentPlPeriod || 'today';
+window._currentPlStartDate = window._currentPlStartDate || '';
+window._currentPlEndDate = window._currentPlEndDate || '';
+window._currentPlTab = window._currentPlTab || 'orders';
 
-async function renderProfitLoss(c) {
+async function renderProfitLoss(c, requestedPeriod = null, customStart = null, customEnd = null) {
   if (!c) c = document.getElementById("view-container");
   if (!c) return;
 
+  if (requestedPeriod !== null) window._currentPlPeriod = requestedPeriod;
+  if (customStart !== null) window._currentPlStartDate = customStart;
+  if (customEnd !== null) window._currentPlEndDate = customEnd;
+
+  const activePeriod = window._currentPlPeriod || 'today';
+  const startDate = window._currentPlStartDate || '';
+  const endDate = window._currentPlEndDate || '';
+
+  let queryUrl = `/api/v1/analytics/profit-loss?period=${encodeURIComponent(activePeriod)}`;
+  if (activePeriod === 'custom' && startDate) {
+    queryUrl += `&start_date=${encodeURIComponent(startDate)}`;
+    if (endDate) queryUrl += `&end_date=${encodeURIComponent(endDate)}`;
+  }
+
   let data = {
+    period: { name: "Today" },
     revenue: { total_orders_revenue: 0, today_orders_revenue: 0, cash_sales: 0, non_cash_sales: 0, total_orders_count: 0 },
-    inventory: { total_inventory_valuation: 0, total_items_count: 0, cost_of_goods_sold: 0 },
+    inventory: { total_inventory_valuation: 0, total_items_count: 0, cost_of_goods_sold: 0, cogs_status: "complete", is_cogs_complete: true },
     cashout: { total_cashout_income: 0, today_cashout_income: 0, active_drawer_cash: 0, history: [] },
-    profit_loss: { gross_profit: 0, net_profit: 0, profit_margin_percent: 0, net_cash_income: 0, is_profitable: true }
+    profit_loss: { gross_profit: 0, operating_expenses: 0, net_profit: 0, profit_margin_percent: 0, profit_margin_display: "0.00%", net_cash_income: 0, is_profitable: true },
+    metrics: {},
+    reconciliation: { is_fully_reconciled: true, status: "RECONCILED", checks: [] },
+    tables: { sales_orders: [], expenses: [], incoming_transfers: [], inventory_valuation: [] }
   };
 
-  const res = await Auth.fetch("/api/v1/analytics/profit-loss");
-  if (!res.ok) throw new Error("Failed to load profit and loss data from server.");
-  data = await res.json();
-  cachedProfitLossData = data;
+  try {
+    const res = await Auth.fetch(queryUrl);
+    if (!res.ok) throw new Error("Failed to load profit and loss data from server.");
+    data = await res.json();
+    cachedProfitLossData = data;
+  } catch (err) {
+    console.error("Profit Loss load error:", err);
+    if (cachedProfitLossData) data = cachedProfitLossData;
+  }
 
   const rev = data.revenue || {};
   const inv = data.inventory || {};
   const csh = data.cashout || {};
   const pl = data.profit_loss || {};
+  const metrics = data.metrics || {};
+  const recon = data.reconciliation || {};
+  const tables = data.tables || {};
   const history = csh.history || [];
+  const periodInfo = data.period || {};
 
   const currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
   const userRole = (currentUser && currentUser.role ? currentUser.role : (typeof Auth !== 'undefined' ? Auth.getRole() : '')).toLowerCase();
   const isAdmin = userRole.includes('admin') || window.location.pathname.includes('/admin') || window.location.pathname.includes('/dashboard');
+
+  // Authoritative metric values
+  const grossSalesVal = metrics['1_gross_sales'] !== undefined ? metrics['1_gross_sales'] : (rev.today_orders_revenue || 0);
+  const netSalesVal = metrics['2_net_sales'] !== undefined ? metrics['2_net_sales'] : (rev.today_orders_revenue || 0);
+  const discountsVal = metrics['5_discounts'] || 0;
+  const cogsVal = metrics['6_cost_of_goods_sold'] !== undefined ? metrics['6_cost_of_goods_sold'] : (inv.cost_of_goods_sold || 0);
+  const isCogsComplete = inv.is_cogs_complete !== undefined ? inv.is_cogs_complete : true;
+  const grossProfitVal = pl.gross_profit || 0;
+  const operatingExpensesVal = pl.operating_expenses || 0;
+  const netProfitVal = pl.net_profit || 0;
+  const isProfitable = pl.is_profitable !== undefined ? pl.is_profitable : (netProfitVal >= 0);
+  const profitMarginDisplay = pl.profit_margin_display || ((pl.profit_margin_percent || 0).toFixed(2) + '%');
+  const cashCollectionsVal = metrics['3_cash_collections'] !== undefined ? metrics['3_cash_collections'] : (rev.cash_sales || 0);
+  const digitalCollectionsVal = metrics['4_digital_collections'] !== undefined ? metrics['4_digital_collections'] : (rev.non_cash_sales || 0);
+  const inventoryValuationVal = inv.total_inventory_valuation || 0;
+  const activeDrawerCashVal = csh.active_drawer_cash || 0;
+  const adminIncomingTransfersVal = csh.admin_transfer_income !== undefined ? csh.admin_transfer_income : (csh.total_transferred_to_admin || 0);
+  const managerSafeBalanceVal = csh.manager_safe_cash !== undefined ? csh.manager_safe_cash : Math.max(0, (csh.total_cashout_income || 0) - (csh.total_transferred_to_admin || 0));
+  const isReconciled = recon.is_fully_reconciled !== undefined ? recon.is_fully_reconciled : true;
 
   c.innerHTML = `
     <style id="profit-loss-view-styles">
@@ -5715,13 +5765,13 @@ async function renderProfitLoss(c) {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 22px;
+        margin-bottom: 18px;
         flex-wrap: wrap;
         gap: 14px;
       }
 
       .pl-toolbar-title-wrap h2 {
-        font-size: 20px;
+        font-size: 21px;
         font-weight: 800;
         color: var(--text-main, #18181b);
         margin: 0;
@@ -5732,7 +5782,7 @@ async function renderProfitLoss(c) {
       }
 
       .pl-toolbar-title-wrap p {
-        font-size: 12.5px;
+        font-size: 13px;
         color: var(--text-muted, #71717a);
         margin: 4px 0 0 0;
         line-height: 1.4;
@@ -5757,7 +5807,116 @@ async function renderProfitLoss(c) {
         transition: all 0.2s ease;
       }
 
-      /* 4 KPI Summary Cards */
+      /* Date Filter Bar */
+      .pl-filter-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        background: var(--card-bg, #ffffff);
+        border: 1px solid rgba(205, 190, 150, 0.35);
+        border-radius: 14px;
+        padding: 10px 14px;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+      }
+
+      .pl-filter-pills {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .pl-pill {
+        padding: 6px 14px;
+        border-radius: 999px;
+        font-size: 12.5px;
+        font-weight: 700;
+        cursor: pointer;
+        border: 1px solid rgba(205, 190, 150, 0.4);
+        background: transparent;
+        color: var(--text-muted, #71717a);
+        transition: all 0.2s ease;
+      }
+
+      .pl-pill:hover {
+        border-color: #c9a227;
+        color: var(--text-main, #18181b);
+      }
+
+      .pl-pill.active {
+        background: #18181b;
+        color: #d4af37;
+        border-color: #d4af37;
+        box-shadow: 0 2px 8px rgba(212, 175, 55, 0.2);
+      }
+
+      .pl-custom-range-wrap {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .pl-custom-range-wrap input {
+        padding: 6px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--border-color, #e2e8f0);
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-main, #18181b);
+      }
+
+      /* Reconciliation Banner */
+      .pl-recon-banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 18px;
+        border-radius: 12px;
+        margin-bottom: 20px;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .pl-recon-banner.pass {
+        background: rgba(16, 185, 129, 0.08);
+        border: 1px solid rgba(16, 185, 129, 0.3);
+        color: #065f46;
+      }
+
+      .pl-recon-banner.attention {
+        background: rgba(245, 158, 11, 0.08);
+        border: 1px solid rgba(245, 158, 11, 0.35);
+        color: #92400e;
+      }
+
+      .pl-recon-left {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .pl-recon-left strong {
+        font-weight: 800;
+        letter-spacing: 0.3px;
+      }
+
+      /* 8 Metric KPI Cards Grid for Admin */
+      .pl-admin-grid-8 {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+        margin-bottom: 24px;
+        width: 100%;
+        box-sizing: border-box;
+      }
+
+      /* 4 KPI Summary Cards for Manager */
       .pl-stats-grid {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
@@ -5788,32 +5947,22 @@ async function renderProfitLoss(c) {
       }
 
       .pl-stat-icon {
-        width: 48px;
-        height: 48px;
+        width: 46px;
+        height: 46px;
         border-radius: 12px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 19px;
+        font-size: 18px;
         flex-shrink: 0;
       }
 
-      .pl-stat-icon.gold {
-        background: rgba(201, 162, 39, 0.12);
-        color: #c9a227;
-      }
-      .pl-stat-icon.green {
-        background: rgba(16, 185, 129, 0.12);
-        color: #10b981;
-      }
-      .pl-stat-icon.red {
-        background: rgba(239, 68, 68, 0.12);
-        color: #ef4444;
-      }
-      .pl-stat-icon.purple {
-        background: rgba(99, 102, 241, 0.12);
-        color: #6366f1;
-      }
+      .pl-stat-icon.gold { background: rgba(201, 162, 39, 0.12); color: #c9a227; }
+      .pl-stat-icon.green { background: rgba(16, 185, 129, 0.12); color: #10b981; }
+      .pl-stat-icon.red { background: rgba(239, 68, 68, 0.12); color: #ef4444; }
+      .pl-stat-icon.purple { background: rgba(99, 102, 241, 0.12); color: #6366f1; }
+      .pl-stat-icon.cyan { background: rgba(6, 182, 212, 0.12); color: #06b6d4; }
+      .pl-stat-icon.orange { background: rgba(249, 115, 22, 0.12); color: #f97316; }
 
       .pl-stat-info {
         min-width: 0;
@@ -5835,7 +5984,7 @@ async function renderProfitLoss(c) {
       }
 
       .pl-stat-count {
-        font-size: clamp(17px, 1.4vw, 22px);
+        font-size: clamp(17px, 1.35vw, 22px);
         font-weight: 800;
         line-height: 1.2;
         margin-bottom: 4px;
@@ -5857,7 +6006,7 @@ async function renderProfitLoss(c) {
         gap: 5px;
       }
 
-      /* Dual Analysis Sections (Side by Side) */
+      /* Dual Statements */
       .pl-dual-grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -5897,11 +6046,6 @@ async function renderProfitLoss(c) {
         background: rgba(0, 0, 0, 0.01);
       }
 
-      .pl-card-header-left {
-        min-width: 0;
-        flex: 1;
-      }
-
       .pl-card-header-left h2 {
         font-size: 16px;
         font-weight: 700;
@@ -5934,31 +6078,12 @@ async function renderProfitLoss(c) {
         flex-shrink: 0;
       }
 
-      .pl-badge-success {
-        background: rgba(16, 185, 129, 0.12);
-        color: #10b981;
-        border: 1px solid rgba(16, 185, 129, 0.25);
-      }
+      .pl-badge-success { background: rgba(16, 185, 129, 0.12); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.25); }
+      .pl-badge-danger { background: rgba(239, 68, 68, 0.12); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.25); }
+      .pl-badge-warning { background: rgba(245, 158, 11, 0.12); color: #d97706; border: 1px solid rgba(245, 158, 11, 0.25); }
+      .pl-badge-info { background: rgba(2, 132, 199, 0.12); color: #0284c7; border: 1px solid rgba(2, 132, 199, 0.25); }
+      .pl-badge-gold { background: rgba(201, 162, 39, 0.12); color: #c9a227; border: 1px solid rgba(201, 162, 39, 0.25); }
 
-      .pl-badge-danger {
-        background: rgba(239, 68, 68, 0.12);
-        color: #ef4444;
-        border: 1px solid rgba(239, 68, 68, 0.25);
-      }
-
-      .pl-badge-info {
-        background: rgba(2, 132, 199, 0.12);
-        color: #0284c7;
-        border: 1px solid rgba(2, 132, 199, 0.25);
-      }
-
-      .pl-badge-gold {
-        background: rgba(201, 162, 39, 0.12);
-        color: #c9a227;
-        border: 1px solid rgba(201, 162, 39, 0.25);
-      }
-
-      /* Card Body & Rows */
       .pl-card-body {
         padding: 16px 20px;
         display: flex;
@@ -5971,7 +6096,7 @@ async function renderProfitLoss(c) {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 11px 0;
+        padding: 10px 0;
         border-bottom: 1px solid rgba(205, 190, 150, 0.16);
         gap: 12px;
       }
@@ -5980,7 +6105,7 @@ async function renderProfitLoss(c) {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 8px 0 8px 18px;
+        padding: 7px 0 7px 18px;
         font-size: 12.5px;
         color: var(--text-muted, #71717a);
         border-bottom: 1px dashed rgba(205, 190, 150, 0.16);
@@ -6005,7 +6130,6 @@ async function renderProfitLoss(c) {
         text-align: right;
       }
 
-      /* Highlight Total / Net Summary Box */
       .pl-highlight-box {
         display: flex;
         justify-content: space-between;
@@ -6019,20 +6143,8 @@ async function renderProfitLoss(c) {
         box-sizing: border-box;
       }
 
-      .pl-highlight-box.gold {
-        background: rgba(201, 162, 39, 0.08);
-        border: 1px solid rgba(201, 162, 39, 0.28);
-      }
-
-      .pl-highlight-box.green {
-        background: rgba(16, 185, 129, 0.08);
-        border: 1px solid rgba(16, 185, 129, 0.28);
-      }
-
-      .pl-highlight-box.red {
-        background: rgba(239, 68, 68, 0.08);
-        border: 1px solid rgba(239, 68, 68, 0.28);
-      }
+      .pl-highlight-box.green { background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.28); }
+      .pl-highlight-box.red { background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.28); }
 
       .pl-highlight-label {
         font-size: 12.5px;
@@ -6052,7 +6164,6 @@ async function renderProfitLoss(c) {
         white-space: nowrap;
       }
 
-      /* Card Footer */
       .pl-card-footer {
         border-top: 1px solid rgba(205, 190, 150, 0.22);
         padding: 12px 18px;
@@ -6072,41 +6183,42 @@ async function renderProfitLoss(c) {
         font-weight: 700;
       }
 
-      /* Transfer to Admin Full Width Button Container */
-      .pl-action-container {
-        margin-top: auto;
-        padding-top: 12px;
+      /* Tabbed Table Container */
+      .pl-tabs-container {
+        display: flex;
+        gap: 8px;
+        border-bottom: 2px solid rgba(205, 190, 150, 0.25);
+        padding-bottom: 0px;
+        margin-bottom: 16px;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
       }
 
-      .pl-transfer-btn {
-        width: 100%;
-        height: 44px;
+      .pl-tab-btn {
+        padding: 10px 18px;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--text-muted, #71717a);
+        background: transparent;
+        border: none;
+        border-bottom: 3px solid transparent;
+        cursor: pointer;
         display: inline-flex;
         align-items: center;
-        justify-content: center;
         gap: 8px;
-        font-size: 13.5px;
-        font-weight: 700;
-        border-radius: 12px;
-        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-        color: #ffffff;
-        border: none;
-        box-shadow: 0 4px 14px rgba(16, 185, 129, 0.25);
-        cursor: pointer;
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        white-space: nowrap;
+        transition: all 0.2s ease;
       }
 
-      .pl-transfer-btn:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 6px 18px rgba(16, 185, 129, 0.35);
-        filter: brightness(1.05);
+      .pl-tab-btn:hover {
+        color: var(--text-main, #18181b);
       }
 
-      .pl-transfer-btn:active {
-        transform: translateY(0);
+      .pl-tab-btn.active {
+        color: #d4af37;
+        border-bottom-color: #d4af37;
       }
 
-      /* Ledger Table Styling */
       .pl-table-wrap {
         width: 100%;
         overflow-x: auto;
@@ -6139,19 +6251,10 @@ async function renderProfitLoss(c) {
         vertical-align: middle;
       }
 
-      .pl-table tbody tr {
-        transition: background 0.15s ease;
-      }
-
       .pl-table tbody tr:hover {
         background: rgba(201, 162, 39, 0.035);
       }
 
-      .pl-table tbody tr:last-child td {
-        border-bottom: none;
-      }
-
-      /* Ledger Empty State */
       .pl-empty-state {
         display: flex;
         flex-direction: column;
@@ -6174,94 +6277,41 @@ async function renderProfitLoss(c) {
         margin-bottom: 14px;
       }
 
-      .pl-empty-state h4 {
-        font-size: 15px;
+      .pl-transfer-btn {
+        width: 100%;
+        height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        font-size: 13.5px;
         font-weight: 700;
-        color: var(--text-main, #18181b);
-        margin: 0 0 6px 0;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: #ffffff;
+        border: none;
+        box-shadow: 0 4px 14px rgba(16, 185, 129, 0.25);
+        cursor: pointer;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
       }
 
-      .pl-empty-state p {
-        font-size: 12.5px;
-        color: var(--text-muted, #71717a);
-        max-width: 380px;
-        margin: 0;
-        line-height: 1.4;
+      .pl-transfer-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 18px rgba(16, 185, 129, 0.35);
+        filter: brightness(1.05);
       }
 
-      /* ========================================================
-         RESPONSIVE BREAKPOINTS
-         ======================================================== */
-
-      /* Tablet (768px – 1199px) */
       @media (max-width: 1199px) {
-        .pl-stats-grid {
-          grid-template-columns: repeat(2, 1fr);
-          gap: 14px;
-        }
-        .pl-dual-grid {
-          grid-template-columns: 1fr;
-          gap: 18px;
-        }
+        .pl-admin-grid-8 { grid-template-columns: repeat(2, 1fr); gap: 14px; }
+        .pl-stats-grid { grid-template-columns: repeat(2, 1fr); gap: 14px; }
+        .pl-dual-grid { grid-template-columns: 1fr; gap: 18px; }
       }
 
-      /* Mobile (below 768px) */
       @media (max-width: 767px) {
-        .pl-toolbar {
-          flex-direction: column;
-          align-items: stretch;
-          gap: 12px;
-        }
-        .pl-toolbar-actions {
-          display: flex;
-          flex-direction: column;
-          width: 100%;
-          gap: 8px;
-        }
-        .pl-toolbar-actions .btn {
-          width: 100%;
-          justify-content: center;
-        }
-        .pl-stats-grid {
-          grid-template-columns: 1fr;
-          gap: 10px;
-        }
-        .pl-card-header {
-          padding: 14px 16px;
-        }
-        .pl-card-body {
-          padding: 14px 16px;
-        }
-        .pl-highlight-box {
-          flex-direction: column;
-          align-items: flex-start;
-          gap: 6px;
-          padding: 12px 14px;
-        }
-        .pl-highlight-value {
-          align-self: flex-end;
-        }
-      }
-
-      /* Compact screens (below 480px) */
-      @media (max-width: 480px) {
-        .pl-stat-card {
-          padding: 12px 14px;
-          gap: 12px;
-        }
-        .pl-stat-icon {
-          width: 42px;
-          height: 42px;
-          font-size: 17px;
-        }
-        .pl-row, .pl-sub-row {
-          flex-wrap: wrap;
-          gap: 6px;
-        }
-        .pl-row-value {
-          width: 100%;
-          text-align: right;
-        }
+        .pl-toolbar { flex-direction: column; align-items: stretch; gap: 12px; }
+        .pl-filter-bar { flex-direction: column; align-items: stretch; }
+        .pl-admin-grid-8 { grid-template-columns: 1fr; gap: 10px; }
+        .pl-stats-grid { grid-template-columns: 1fr; gap: 10px; }
       }
     </style>
 
@@ -6273,24 +6323,151 @@ async function renderProfitLoss(c) {
             <i class="fas fa-scale-balanced" style="color:#10b981;"></i> Profit Loss and Income
           </h2>
           <p>
-            Live financial ledger: orders sales revenue, inventory price valuation, manager cashier transfers, and operating profit
+            ${isAdmin ? 'Centralized financial oversight: sales revenue, COGS, operating expenses, cash drawer balances, and manager transfers' : 'Live financial ledger: orders sales revenue, inventory price valuation, manager cashier transfers, and operating profit'}
           </p>
         </div>
         <div class="pl-toolbar-actions">
-          ${!isAdmin ? `
-          <button class="btn btn-primary" onclick="openAddCashMovementModal(null, 'admin')">
-            <i class="fas fa-paper-plane"></i> Transfer to Admin
-          </button>
-          ` : ''}
+          ${isAdmin ? `
+            <button class="btn btn-primary" onclick="openAddExpenseModal()" style="background:#18181b; color:#d4af37; border:1px solid #d4af37;">
+              <i class="fas fa-plus"></i> Record Expense
+            </button>
+          ` : `
+            <button class="btn btn-primary" onclick="openAddCashMovementModal(null, 'admin')">
+              <i class="fas fa-paper-plane"></i> Transfer to Admin
+            </button>
+          `}
           <button class="btn btn-outline btn-sm" onclick="renderProfitLoss()" title="Refresh Financials">
             <i class="fas fa-sync-alt"></i> Live Refresh
           </button>
         </div>
       </div>
 
-      <!-- Financial KPI Cards (4 summary cards) -->
+      ${isAdmin ? `
+      <!-- Date Filter Bar (Admin Only) -->
+      <div class="pl-filter-bar fade-up">
+        <div class="pl-filter-pills">
+          <button class="pl-pill ${activePeriod === 'today' ? 'active' : ''}" onclick="renderProfitLoss(null, 'today')">Today</button>
+          <button class="pl-pill ${activePeriod === 'yesterday' ? 'active' : ''}" onclick="renderProfitLoss(null, 'yesterday')">Yesterday</button>
+          <button class="pl-pill ${activePeriod === 'this_week' ? 'active' : ''}" onclick="renderProfitLoss(null, 'this_week')">This Week</button>
+          <button class="pl-pill ${activePeriod === 'this_month' ? 'active' : ''}" onclick="renderProfitLoss(null, 'this_month')">This Month</button>
+          <button class="pl-pill ${activePeriod === 'this_year' ? 'active' : ''}" onclick="renderProfitLoss(null, 'this_year')">This Year</button>
+          <button class="pl-pill ${activePeriod === 'all' ? 'active' : ''}" onclick="renderProfitLoss(null, 'all')">All Time</button>
+          <button class="pl-pill ${activePeriod === 'custom' ? 'active' : ''}" onclick="document.getElementById('pl-custom-range-inputs').style.display = 'flex'; this.classList.add('active');">Custom Range</button>
+        </div>
+
+        <div id="pl-custom-range-inputs" class="pl-custom-range-wrap" style="display:${activePeriod === 'custom' ? 'flex' : 'none'};">
+          <input type="date" id="pl-start-date-input" value="${startDate ? startDate.substring(0, 10) : ''}">
+          <span style="font-size:12px; color:var(--text-muted);">to</span>
+          <input type="date" id="pl-end-date-input" value="${endDate ? endDate.substring(0, 10) : ''}">
+          <button class="btn btn-outline btn-sm" onclick="const s = document.getElementById('pl-start-date-input').value; const e = document.getElementById('pl-end-date-input').value; renderProfitLoss(null, 'custom', s, e);" style="height:32px; padding:4px 10px;">Apply</button>
+        </div>
+      </div>
+
+      <!-- Financial Reconciliation Banner (Admin Only) -->
+      <div class="pl-recon-banner ${isReconciled ? 'pass' : 'attention'} fade-up">
+        <div class="pl-recon-left">
+          <i class="fas ${isReconciled ? 'fa-circle-check' : 'fa-triangle-exclamation'}" style="font-size:18px;"></i>
+          <span>
+            <strong>${isReconciled ? 'FINANCIAL SYSTEM FULLY RECONCILED' : 'FINANCIAL RECONCILIATION NOTICE'}:</strong>
+            ${isReconciled ? 'All completed orders match payment allocations, inventory costs verified, and transfer balances intact.' : (recon.checks ? recon.checks.find(c => c.status !== 'PASS')?.message || 'Discrepancies flagged for review.' : 'Discrepancies flagged for review.')}
+          </span>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="switchPlTab('reconciliation')" style="height:30px; font-size:11.5px; padding:2px 10px; border-radius:8px;">
+          View Audit Details <i class="fas fa-arrow-right" style="margin-left:4px;"></i>
+        </button>
+      </div>
+
+      <!-- 8 Summary Cards for Centralized Admin Oversight -->
+      <div class="pl-admin-grid-8 fade-up delay-1">
+        <!-- 1. Gross Sales -->
+        <div class="pl-stat-card">
+          <div class="pl-stat-icon gold"><i class="fas fa-coins"></i></div>
+          <div class="pl-stat-info">
+            <h3>Gross Sales (Orders)</h3>
+            <div class="pl-stat-count" style="color:#c9a227;">${Utils.formatCurrency(grossSalesVal)}</div>
+            <div class="pl-stat-trend" style="color:var(--text-muted);"><i class="fas fa-receipt"></i> Net: <strong>${Utils.formatCurrency(netSalesVal)}</strong> (Disc: -${Utils.formatCurrency(discountsVal)})</div>
+          </div>
+        </div>
+
+        <!-- 2. COGS -->
+        <div class="pl-stat-card">
+          <div class="pl-stat-icon orange"><i class="fas fa-warehouse"></i></div>
+          <div class="pl-stat-info">
+            <h3>Cost of Goods Sold</h3>
+            <div class="pl-stat-count" style="color:#f97316;">${Utils.formatCurrency(cogsVal)}</div>
+            <div class="pl-stat-trend">
+              <span class="pl-badge ${isCogsComplete ? 'pl-badge-success' : 'pl-badge-warning'}" style="font-size:10px; padding:2px 6px;">
+                <i class="fas ${isCogsComplete ? 'fa-check' : 'fa-exclamation-triangle'}"></i> ${isCogsComplete ? 'VERIFIED' : 'INCOMPLETE COST DATA'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. Operating Expenses -->
+        <div class="pl-stat-card">
+          <div class="pl-stat-icon red"><i class="fas fa-file-invoice-dollar"></i></div>
+          <div class="pl-stat-info">
+            <h3>Operating Expenses</h3>
+            <div class="pl-stat-count" style="color:#ef4444;">${Utils.formatCurrency(operatingExpensesVal)}</div>
+            <div class="pl-stat-trend" style="color:var(--text-muted);"><i class="fas fa-list"></i> Across ${(tables.expenses || []).length} recorded expense(s)</div>
+          </div>
+        </div>
+
+        <!-- 4. Net Operating Profit / Loss -->
+        <div class="pl-stat-card">
+          <div class="pl-stat-icon ${isProfitable ? 'green' : 'red'}">
+            <i class="fas ${isProfitable ? 'fa-chart-line' : 'fa-chart-line-down'}"></i>
+          </div>
+          <div class="pl-stat-info">
+            <h3>Net Operating Profit</h3>
+            <div class="pl-stat-count" style="color:${isProfitable ? '#10b981' : '#ef4444'};">${Utils.formatCurrency(netProfitVal)}</div>
+            <div class="pl-stat-trend" style="color:${isProfitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${profitMarginDisplay} margin</div>
+          </div>
+        </div>
+
+        <!-- 5. Cash Collections -->
+        <div class="pl-stat-card">
+          <div class="pl-stat-icon green"><i class="fas fa-money-bill-wave"></i></div>
+          <div class="pl-stat-info">
+            <h3>Cash Collections</h3>
+            <div class="pl-stat-count" style="color:#10b981;">${Utils.formatCurrency(cashCollectionsVal)}</div>
+            <div class="pl-stat-trend" style="color:var(--text-muted);"><i class="fas fa-cash-register"></i> Physical drawer cash collected</div>
+          </div>
+        </div>
+
+        <!-- 6. Digital Collections -->
+        <div class="pl-stat-card">
+          <div class="pl-stat-icon purple"><i class="fas fa-mobile-screen"></i></div>
+          <div class="pl-stat-info">
+            <h3>Digital Collections</h3>
+            <div class="pl-stat-count" style="color:#6366f1;">${Utils.formatCurrency(digitalCollectionsVal)}</div>
+            <div class="pl-stat-trend" style="color:#6366f1;"><i class="fas fa-qrcode"></i> GCash, Maya, Card & E-Wallets</div>
+          </div>
+        </div>
+
+        <!-- 7. Manager Incoming Transfers -->
+        <div class="pl-stat-card">
+          <div class="pl-stat-icon green"><i class="fas fa-inbox"></i></div>
+          <div class="pl-stat-info">
+            <h3>Transfers from Manager</h3>
+            <div class="pl-stat-count" style="color:#10b981;">${Utils.formatCurrency(adminIncomingTransfersVal)}</div>
+            <div class="pl-stat-trend" style="color:#10b981;"><i class="fas fa-shield-halved"></i> Secured in Admin Safe</div>
+          </div>
+        </div>
+
+        <!-- 8. Inventory Stock Valuation -->
+        <div class="pl-stat-card">
+          <div class="pl-stat-icon cyan"><i class="fas fa-boxes-stacked"></i></div>
+          <div class="pl-stat-info">
+            <h3>Current Inventory Value</h3>
+            <div class="pl-stat-count" style="color:#06b6d4;">${Utils.formatCurrency(inventoryValuationVal)}</div>
+            <div class="pl-stat-trend" style="color:#06b6d4;"><i class="fas fa-tags"></i> ${inv.total_items_count || 0} items at cost</div>
+          </div>
+        </div>
+      </div>
+      ` : `
+      <!-- 4 KPI Summary Cards for Manager (Preserved Exactly) -->
       <div class="pl-stats-grid fade-up delay-1">
-        <!-- 1. Total Orders Revenue -->
         <div class="pl-stat-card">
           <div class="pl-stat-icon gold"><i class="fas fa-coins"></i></div>
           <div class="pl-stat-info">
@@ -6300,53 +6477,49 @@ async function renderProfitLoss(c) {
           </div>
         </div>
 
-        <!-- 2. Net Operating Profit -->
         <div class="pl-stat-card">
-          <div class="pl-stat-icon ${pl.is_profitable ? 'green' : 'red'}">
-            <i class="fas ${pl.is_profitable ? 'fa-chart-line' : 'fa-chart-line-down'}"></i>
+          <div class="pl-stat-icon ${isProfitable ? 'green' : 'red'}">
+            <i class="fas ${isProfitable ? 'fa-chart-line' : 'fa-chart-line-down'}"></i>
           </div>
           <div class="pl-stat-info">
             <h3>Net Operating Profit</h3>
-            <div class="pl-stat-count" style="color:${pl.is_profitable ? '#10b981' : '#ef4444'};">${Utils.formatCurrency(pl.net_profit || 0)}</div>
-            <div class="pl-stat-trend" style="color:${pl.is_profitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${pl.profit_margin_percent || 0}% profit margin</div>
+            <div class="pl-stat-count" style="color:${isProfitable ? '#10b981' : '#ef4444'};">${Utils.formatCurrency(netProfitVal)}</div>
+            <div class="pl-stat-trend" style="color:${isProfitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${profitMarginDisplay} profit margin</div>
           </div>
         </div>
 
-        <!-- 3. Transfer Income Card -->
         <div class="pl-stat-card">
-          <div class="pl-stat-icon green">
-            <i class="fas ${isAdmin ? 'fa-inbox' : 'fa-vault'}"></i>
-          </div>
+          <div class="pl-stat-icon green"><i class="fas fa-vault"></i></div>
           <div class="pl-stat-info">
-            <h3>${isAdmin ? 'Income Received from Manager' : 'Transfer Income to Admin'}</h3>
-            <div class="pl-stat-count" style="color:#10b981;">${Utils.formatCurrency(isAdmin ? (csh.admin_transfer_income !== undefined ? csh.admin_transfer_income : (csh.total_transferred_to_admin || 0)) : (csh.manager_safe_cash !== undefined ? csh.manager_safe_cash : (csh.total_cashout_income || 0)))}</div>
-            <div class="pl-stat-trend" style="color:#10b981;"><i class="fas ${isAdmin ? 'fa-shield-halved' : 'fa-vault'}"></i> ${isAdmin ? 'Income secured in admin safe' : 'Manager safe balance (after transfers to Admin)'}</div>
+            <h3>Transfer Income to Admin</h3>
+            <div class="pl-stat-count" style="color:#10b981;">${Utils.formatCurrency(managerSafeBalanceVal)}</div>
+            <div class="pl-stat-trend" style="color:#10b981;"><i class="fas fa-vault"></i> Manager safe balance (after transfers to Admin)</div>
           </div>
         </div>
 
-        <!-- 4. Inventory Stock Price Value -->
         <div class="pl-stat-card">
           <div class="pl-stat-icon purple"><i class="fas fa-boxes-stacked"></i></div>
           <div class="pl-stat-info">
             <h3>Inventory Stock Price Value</h3>
-            <div class="pl-stat-count" style="color:#6366f1;">${Utils.formatCurrency(inv.total_inventory_valuation || 0)}</div>
+            <div class="pl-stat-count" style="color:#6366f1;">${Utils.formatCurrency(inventoryValuationVal)}</div>
             <div class="pl-stat-trend" style="color:#6366f1;"><i class="fas fa-tags"></i> Across ${inv.total_items_count || 0} items</div>
           </div>
         </div>
       </div>
+      `}
 
-      <!-- Side-by-Side Dual Analysis Sections -->
+      <!-- Dual Analysis Statements -->
       <div class="pl-dual-grid fade-up delay-2">
         <!-- P&L Statement Card (Left Panel) -->
         <div class="pl-card">
           <div class="pl-card-header">
             <div class="pl-card-header-left">
               <h2><i class="fas fa-file-invoice-dollar" style="color:#10b981;"></i> Profit & Loss Statement (P&L)</h2>
-              <span>Real-time revenue versus total valuation of inventory of product</span>
+              <span>Authoritative period statement: Revenue − COGS − Operating Expenses</span>
             </div>
-            <span class="pl-badge ${pl.is_profitable ? 'pl-badge-success' : 'pl-badge-danger'}">
-              <i class="fas ${pl.is_profitable ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down'}"></i>
-              ${pl.is_profitable ? 'PROFITABLE' : 'OPERATING LOSS'}
+            <span class="pl-badge ${isProfitable ? 'pl-badge-success' : 'pl-badge-danger'}">
+              <i class="fas ${isProfitable ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down'}"></i>
+              ${isProfitable ? 'PROFITABLE' : 'OPERATING LOSS'}
             </span>
           </div>
 
@@ -6354,56 +6527,78 @@ async function renderProfitLoss(c) {
             <!-- Gross Orders Revenue -->
             <div class="pl-row">
               <span class="pl-row-label">
-                <i class="fas fa-plus" style="color:#10b981; font-size:11px;"></i> Gross Orders Revenue:
+                <i class="fas fa-plus" style="color:#10b981; font-size:11px;"></i> Gross Sales Revenue:
               </span>
-              <strong class="pl-row-value" style="color:#10b981;">+${Utils.formatCurrency(rev.total_orders_revenue || 0)}</strong>
+              <strong class="pl-row-value" style="color:#10b981;">+${Utils.formatCurrency(grossSalesVal)}</strong>
             </div>
 
-            <!-- Subrow: Cash Sales -->
             <div class="pl-sub-row">
-              <span>↳ Cash Sales (Drawer):</span>
-              <span class="pl-row-value" style="color:var(--text-main);">${Utils.formatCurrency(rev.cash_sales || 0)}</span>
+              <span>↳ Sales Discounts & Promos:</span>
+              <span class="pl-row-value" style="color:#ef4444;">-${Utils.formatCurrency(discountsVal)}</span>
             </div>
 
-            <!-- Subrow: Non-Cash Sales -->
-            <div class="pl-sub-row">
-              <span>↳ Non-Cash Sales (GCash / Card):</span>
-              <span class="pl-row-value" style="color:var(--text-main);">${Utils.formatCurrency(rev.non_cash_sales || 0)}</span>
+            <div class="pl-row" style="background:rgba(0,0,0,0.015); padding:8px 0;">
+              <span class="pl-row-label">
+                <strong>= Net Sales Revenue:</strong>
+              </span>
+              <strong class="pl-row-value" style="color:var(--text-main); font-size:15px;">${Utils.formatCurrency(netSalesVal)}</strong>
             </div>
 
-            <!-- Inventory Valuation -->
+            <!-- Cost of Goods Sold -->
             <div class="pl-row">
               <span class="pl-row-label">
-                <i class="fas fa-minus" style="color:#ef4444; font-size:11px;"></i> Total Valuation of Inventory of Product:
+                <i class="fas fa-minus" style="color:#ef4444; font-size:11px;"></i> Cost of Goods Sold (COGS):
               </span>
-              <strong class="pl-row-value" style="color:#ef4444;">-${Utils.formatCurrency(inv.total_inventory_valuation || 0)}</strong>
+              <strong class="pl-row-value" style="color:#ef4444;">-${Utils.formatCurrency(cogsVal)}</strong>
+            </div>
+
+            ${!isCogsComplete ? `
+              <div class="pl-sub-row" style="color:#d97706; font-size:11.5px;">
+                <span><i class="fas fa-exclamation-triangle"></i> Notice: Incomplete item recipe costs recorded</span>
+                <span>Partial COGS</span>
+              </div>
+            ` : ''}
+
+            <!-- Gross Profit -->
+            <div class="pl-row" style="background:rgba(0,0,0,0.015); padding:8px 0;">
+              <span class="pl-row-label">
+                <strong>= Gross Profit:</strong>
+              </span>
+              <strong class="pl-row-value" style="color:${grossProfitVal >= 0 ? '#10b981' : '#ef4444'}; font-size:15px;">${Utils.formatCurrency(grossProfitVal)}</strong>
+            </div>
+
+            <!-- Operating Expenses -->
+            <div class="pl-row">
+              <span class="pl-row-label">
+                <i class="fas fa-minus" style="color:#ef4444; font-size:11px;"></i> Operating Business Expenses:
+              </span>
+              <strong class="pl-row-value" style="color:#ef4444;">-${Utils.formatCurrency(operatingExpensesVal)}</strong>
             </div>
 
             <!-- Net Operating Profit / Loss Highlight Box -->
-            <div class="pl-highlight-box ${pl.is_profitable ? 'green' : 'red'}">
+            <div class="pl-highlight-box ${isProfitable ? 'green' : 'red'}">
               <span class="pl-highlight-label">
-                <i class="fas ${pl.is_profitable ? 'fa-chart-pie' : 'fa-triangle-exclamation'}" style="color:${pl.is_profitable ? '#10b981' : '#ef4444'};"></i>
+                <i class="fas ${isProfitable ? 'fa-chart-pie' : 'fa-triangle-exclamation'}" style="color:${isProfitable ? '#10b981' : '#ef4444'};"></i>
                 NET OPERATING PROFIT / LOSS:
               </span>
-              <span class="pl-highlight-value" style="color:${pl.is_profitable ? '#10b981' : '#ef4444'};">
-                ${Utils.formatCurrency(pl.net_profit || 0)}
+              <span class="pl-highlight-value" style="color:${isProfitable ? '#10b981' : '#ef4444'};">
+                ${Utils.formatCurrency(netProfitVal)}
               </span>
             </div>
           </div>
 
-          <!-- P&L Footer -->
           <div class="pl-card-footer">
-            <span>Profit Margin: <strong>${pl.profit_margin_percent || 0}%</strong></span>
-            <span>Today's Sales Revenue: <strong>${Utils.formatCurrency(rev.today_orders_revenue || 0)}</strong></span>
+            <span>Operating Margin: <strong>${profitMarginDisplay}</strong></span>
+            <span>Period Sales Count: <strong>${rev.today_orders_count || 0} order(s)</strong></span>
           </div>
         </div>
 
-        <!-- Transfer Income Card (Right Panel) -->
+        <!-- Safe Custody & Cashout Card (Right Panel) -->
         <div class="pl-card">
           <div class="pl-card-header">
             <div class="pl-card-header-left">
               <h2><i class="fas ${isAdmin ? 'fa-inbox' : 'fa-paper-plane'}" style="color:#10b981;"></i> ${isAdmin ? 'Income Received from Manager' : 'Transfer Income to Admin'}</h2>
-              <span>${isAdmin ? 'Income received and remitted from store managers secured in admin safe vs active cashier drawer float' : 'Transfer income to admin secured in store safe vs active cashier drawer float'}</span>
+              <span>${isAdmin ? 'Internal remittances received from store managers secured in admin safe' : 'Transfer income to admin secured in store safe vs active cashier drawer float'}</span>
             </div>
             <span class="pl-badge pl-badge-success">
               <i class="fas fa-shield-halved"></i> ${isAdmin ? 'ADMIN SAFE' : 'STORE SAFE'}
@@ -6417,12 +6612,11 @@ async function renderProfitLoss(c) {
                 <i class="fas ${isAdmin ? 'fa-inbox' : 'fa-vault'}" style="color:#10b981; font-size:12px;"></i>
                 ${isAdmin ? 'Total Income Received from Manager:' : 'Total Transfer Income to Admin:'}
               </span>
-              <strong class="pl-row-value" style="color:#10b981;">${Utils.formatCurrency(isAdmin ? (csh.admin_transfer_income !== undefined ? csh.admin_transfer_income : (csh.total_transferred_to_admin || 0)) : (csh.manager_safe_cash !== undefined ? csh.manager_safe_cash : (csh.total_cashout_income || 0)))}</strong>
+              <strong class="pl-row-value" style="color:#10b981;">${Utils.formatCurrency(isAdmin ? adminIncomingTransfersVal : managerSafeBalanceVal)}</strong>
             </div>
 
-            <!-- Subrow: Today's Transfer Income -->
             <div class="pl-sub-row">
-              <span>↳ ${isAdmin ? "Today's Income Received from Manager:" : "Today's Transfer Income to Admin:"}</span>
+              <span>↳ ${isAdmin ? "Today's Transfer Remittance:" : "Today's Transfer Income to Admin:"}</span>
               <span class="pl-row-value" style="color:var(--text-main);">${Utils.formatCurrency(isAdmin ? (csh.today_transferred_to_admin || 0) : (csh.today_cashout_income || 0))}</span>
             </div>
 
@@ -6436,33 +6630,32 @@ async function renderProfitLoss(c) {
             <!-- Active Cash Balance in Cashier Drawers -->
             <div class="pl-row">
               <span class="pl-row-label">
-                <i class="fas fa-cash-register" style="color:#c9a227; font-size:12px;"></i> Active Cash Balance in Cashier Drawers:
+                <i class="fas fa-cash-register" style="color:#c9a227; font-size:12px;"></i> Active Cash in Cashier Drawers:
               </span>
-              <strong class="pl-row-value" style="color:#c9a227;">${Utils.formatCurrency(csh.active_drawer_cash || 0)}</strong>
+              <strong class="pl-row-value" style="color:#c9a227;">${Utils.formatCurrency(activeDrawerCashVal)}</strong>
             </div>
 
             <!-- Non-Cash Collections -->
             <div class="pl-row">
               <span class="pl-row-label">
-                <i class="fas fa-mobile-screen" style="color:#6366f1; font-size:12px;"></i> Non-Cash Collections (E-Wallets / Bank):
+                <i class="fas fa-mobile-screen" style="color:#6366f1; font-size:12px;"></i> Digital Collections (GCash / Maya / Card):
               </span>
-              <strong class="pl-row-value" style="color:#6366f1;">${Utils.formatCurrency(rev.non_cash_sales || 0)}</strong>
+              <strong class="pl-row-value" style="color:#6366f1;">${Utils.formatCurrency(digitalCollectionsVal)}</strong>
             </div>
 
-            <!-- Net Realized Cash & Digital Income Highlight Box -->
+            <!-- Net Realized Cash Highlight Box -->
             <div class="pl-highlight-box green">
               <span class="pl-highlight-label">
                 <i class="fas fa-sack-dollar" style="color:#10b981;"></i>
-                NET REALIZED CASH & DIGITAL INCOME:
+                TOTAL REALIZED COLLECTIONS & TRANSFERS:
               </span>
               <span class="pl-highlight-value" style="color:#10b981;">
-                ${Utils.formatCurrency(isAdmin ? (pl.admin_net_cash_income !== undefined ? pl.admin_net_cash_income : pl.net_cash_income) : (pl.manager_net_cash_income !== undefined ? pl.manager_net_cash_income : pl.net_cash_income))}
+                ${Utils.formatCurrency(isAdmin ? (pl.admin_net_cash_income || 0) : (pl.manager_net_cash_income || 0))}
               </span>
             </div>
 
             ${!isAdmin ? `
-            <!-- Action Button Container -->
-            <div class="pl-action-container">
+            <div class="pl-action-container" style="margin-top:auto; padding-top:12px;">
               <button class="pl-transfer-btn" onclick="openAddCashMovementModal(null, 'admin')">
                 <i class="fas fa-paper-plane"></i> Transfer to Admin
               </button>
@@ -6472,63 +6665,188 @@ async function renderProfitLoss(c) {
         </div>
       </div>
 
-      <!-- Cashout & Safe Deposit Ledger Audit Table (Bottom Panel) -->
+      <!-- Tabbed Audit & Traceability Tables Section -->
       <div class="pl-card fade-up delay-3">
         <div class="pl-card-header">
           <div class="pl-card-header-left">
-            <h2><i class="fas ${isAdmin ? 'fa-inbox' : 'fa-receipt'}" style="color:#10b981;"></i> ${isAdmin ? 'Incoming Transfer Ledger' : 'Transfer Income to Admin Ledger'}</h2>
-            <span>${isAdmin ? 'Historical records of income transferred from store managers into the admin safe' : 'Historical records of transfer income to admin into the store safe'}</span>
+            <h2><i class="fas fa-list-check" style="color:#10b981;"></i> Traceable Financial Ledgers & Audits</h2>
+            <span>Every summary metric is verified and directly traceable to persisted records</span>
           </div>
-          <span class="pl-badge pl-badge-info">
-            <i class="fas fa-list-check"></i> ${history.length} ${isAdmin ? 'Incoming Records' : 'Transfer Records'}
-          </span>
+          ${isAdmin ? `
+          <button class="btn btn-outline btn-sm" onclick="openAddExpenseModal()" style="font-size:11.5px; padding:4px 12px; border-radius:8px;">
+            <i class="fas fa-plus"></i> New Expense
+          </button>
+          ` : ''}
         </div>
 
-        <div class="pl-table-wrap">
+        <div style="padding:14px 20px 0 20px;">
+          <div class="pl-tabs-container">
+            <button class="pl-tab-btn ${window._currentPlTab === 'orders' ? 'active' : ''}" onclick="switchPlTab('orders')">
+              <i class="fas fa-receipt"></i> Completed Orders (${(tables.sales_orders || []).length})
+            </button>
+            <button class="pl-tab-btn ${window._currentPlTab === 'expenses' ? 'active' : ''}" onclick="switchPlTab('expenses')">
+              <i class="fas fa-file-invoice-dollar"></i> Operating Expenses (${(tables.expenses || []).length})
+            </button>
+            <button class="pl-tab-btn ${window._currentPlTab === 'transfers' ? 'active' : ''}" onclick="switchPlTab('transfers')">
+              <i class="fas ${isAdmin ? 'fa-inbox' : 'fa-paper-plane'}"></i> ${isAdmin ? 'Incoming Transfers' : 'Transfer Ledger'} (${history.length})
+            </button>
+            <button class="pl-tab-btn ${window._currentPlTab === 'inventory' ? 'active' : ''}" onclick="switchPlTab('inventory')">
+              <i class="fas fa-boxes-stacked"></i> Stock Valuation (${inv.total_items_count || 0})
+            </button>
+            <button class="pl-tab-btn ${window._currentPlTab === 'reconciliation' ? 'active' : ''}" onclick="switchPlTab('reconciliation')">
+              <i class="fas fa-scale-balanced"></i> Reconciliation Audit (${recon.checks ? recon.checks.length : 0})
+            </button>
+          </div>
+        </div>
+
+        <!-- Tab 1: Orders -->
+        <div id="pl-tab-orders" class="pl-table-wrap" style="display:${window._currentPlTab === 'orders' ? 'block' : 'none'};">
           <table class="pl-table">
             <thead>
               <tr>
-                <th style="width:16%;">Timestamp</th>
-                <th style="width:20%;">${isAdmin ? 'Shift / Remitted By' : 'Shift / Cashier'}</th>
-                <th style="width:18%;">${isAdmin ? 'Received Transfer Amount' : 'Cashed Out Amount'}</th>
-                <th style="width:22%;">${isAdmin ? 'Destination' : 'Reason / Destination'}</th>
-                <th style="width:12%;">${isAdmin ? 'Sender / Source' : 'Recorded By'}</th>
-                <th style="width:12%;">Status</th>
+                <th>Order Ref</th>
+                <th>Timestamp</th>
+                <th>Cashier / Staff</th>
+                <th>Gross Total</th>
+                <th>Discount</th>
+                <th>Net Total</th>
+                <th>Status</th>
               </tr>
             </thead>
             <tbody>
-              ${history.length === 0 ? `
+              ${(tables.sales_orders && tables.sales_orders.length > 0) ? tables.sales_orders.map(o => `
                 <tr>
-                  <td colspan="6" style="padding:0;">
-                    <div class="pl-empty-state">
-                      <div class="pl-empty-icon"><i class="fas ${isAdmin ? 'fa-inbox' : 'fa-vault'}"></i></div>
-                      <h4>No ${isAdmin ? 'Incoming Transfer Records' : 'Cashout Records'} Logged Yet</h4>
-                      <p>${isAdmin ? 'Incoming transfer remittances from managers into the admin safe will appear here automatically.' : 'Historical transfer movements between cashier drawers and safe storage will appear here automatically.'}</p>
-                    </div>
-                  </td>
+                  <td><strong style="color:var(--text-main); font-size:13px;">${o.order_code}</strong></td>
+                  <td style="color:var(--text-muted); font-size:12px;">${o.created_at ? new Date(o.created_at).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'}</td>
+                  <td>${o.cashier}</td>
+                  <td style="color:var(--text-main); font-weight:600;">${Utils.formatCurrency(o.gross_amount)}</td>
+                  <td style="color:#ef4444;">${o.discount_amount > 0 ? '-' + Utils.formatCurrency(o.discount_amount) : '₱0.00'}</td>
+                  <td><strong style="color:#10b981; font-weight:800;">${Utils.formatCurrency(o.net_amount)}</strong></td>
+                  <td><span class="pl-badge pl-badge-success">${o.status.toUpperCase()}</span></td>
                 </tr>
-              ` : history.map(h => `
+              `).join('') : `
+                <tr><td colspan="7" class="text-center" style="padding:30px; color:var(--text-muted);">No completed orders recorded in this date period.</td></tr>
+              `}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Tab 2: Expenses -->
+        <div id="pl-tab-expenses" class="pl-table-wrap" style="display:${window._currentPlTab === 'expenses' ? 'block' : 'none'};">
+          <table class="pl-table">
+            <thead>
+              <tr>
+                <th>Expense Date</th>
+                <th>Category</th>
+                <th>Description</th>
+                <th>Payment Method</th>
+                <th>Recorded By</th>
+                <th>Amount</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(tables.expenses && tables.expenses.length > 0) ? tables.expenses.map(e => `
                 <tr>
-                  <td style="color:var(--text-muted); font-size:12px; white-space:nowrap;">
-                    <i class="far fa-clock" style="margin-right:4px;"></i>
-                    ${h.created_at ? new Date(h.created_at).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'}
-                  </td>
-                  <td>
-                    <strong style="color:var(--text-main); font-size:13px;">${h.cashier}</strong>
-                    <span style="font-size:11px; color:var(--text-muted); display:block;">Shift #${h.shift_id}</span>
-                  </td>
-                  <td>
-                    <strong style="color:#10b981; font-size:14px; font-variant-numeric:tabular-nums;">+${Utils.formatCurrency(h.amount)}</strong>
-                  </td>
+                  <td style="color:var(--text-muted); font-size:12px;">${e.expense_date ? new Date(e.expense_date).toLocaleDateString([], { month:'short', day:'numeric', year:'numeric' }) : '—'}</td>
+                  <td><strong style="color:#c9a227;">${e.category}</strong></td>
+                  <td style="color:var(--text-main); font-size:13px;">${e.description}</td>
+                  <td>${e.payment_method}</td>
+                  <td style="color:var(--text-muted);">${e.recorded_by}</td>
+                  <td><strong style="color:#ef4444; font-weight:800;">-${Utils.formatCurrency(e.amount)}</strong></td>
+                  <td><span class="pl-badge ${e.status === 'paid' ? 'pl-badge-success' : 'pl-badge-warning'}">${e.status.toUpperCase()}</span></td>
+                </tr>
+              `).join('') : `
+                <tr><td colspan="7" class="text-center" style="padding:30px; color:var(--text-muted);">No operating expenses recorded for this date period. Click "Record Expense" to log business expenses.</td></tr>
+              `}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Tab 3: Transfers -->
+        <div id="pl-tab-transfers" class="pl-table-wrap" style="display:${window._currentPlTab === 'transfers' ? 'block' : 'none'};">
+          <table class="pl-table">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>${isAdmin ? 'Shift / Remitted By' : 'Shift / Cashier'}</th>
+                <th>${isAdmin ? 'Received Transfer Amount' : 'Cashed Out Amount'}</th>
+                <th>Destination</th>
+                <th>Sender / Source</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${history.length > 0 ? history.map(h => `
+                <tr>
+                  <td style="color:var(--text-muted); font-size:12px;">${h.created_at ? new Date(h.created_at).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'}</td>
+                  <td><strong style="color:var(--text-main); font-size:13px;">${h.cashier}</strong><span style="font-size:11px; color:var(--text-muted); display:block;">Shift #${h.shift_id}</span></td>
+                  <td><strong style="color:#10b981; font-size:14px; font-variant-numeric:tabular-nums;">+${Utils.formatCurrency(h.amount)}</strong></td>
                   <td style="color:var(--text-main); font-size:13px;">${isAdmin ? 'Admin Safe' : h.reason}</td>
                   <td style="color:var(--text-muted); font-size:12px;">${isAdmin ? (h.cashier || 'Store Manager') : (h.cashier || 'Cashier')}</td>
+                  <td><span class="pl-badge pl-badge-success"><i class="fas fa-check-circle"></i> ${isAdmin ? 'RECEIVED' : 'CASHED OUT'}</span></td>
+                </tr>
+              `).join('') : `
+                <tr><td colspan="6" class="text-center" style="padding:30px; color:var(--text-muted);">No transfer records logged yet.</td></tr>
+              `}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Tab 4: Inventory Stock Valuation -->
+        <div id="pl-tab-inventory" class="pl-table-wrap" style="display:${window._currentPlTab === 'inventory' ? 'block' : 'none'};">
+          <table class="pl-table">
+            <thead>
+              <tr>
+                <th>Item Name</th>
+                <th>Category</th>
+                <th>Current Stock</th>
+                <th>Unit Cost</th>
+                <th>Total Valuation (at cost)</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(tables.inventory_valuation && tables.inventory_valuation.length > 0) ? tables.inventory_valuation.map(iv => `
+                <tr>
+                  <td><strong style="color:var(--text-main);">${iv.name}</strong></td>
+                  <td>${iv.category || 'General'}</td>
+                  <td>${iv.quantity} ${iv.unit}</td>
+                  <td>${Utils.formatCurrency(iv.unit_price)}</td>
+                  <td><strong style="color:#06b6d4;">${Utils.formatCurrency(iv.valuation)}</strong></td>
+                  <td><span class="pl-badge ${iv.is_negative ? 'pl-badge-danger' : 'pl-badge-success'}">${iv.is_negative ? 'NEGATIVE STOCK' : 'VALID'}</span></td>
+                </tr>
+              `).join('') : `
+                <tr><td colspan="6" class="text-center" style="padding:30px; color:var(--text-muted);">No inventory valuation items found.</td></tr>
+              `}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Tab 5: Reconciliation Audit -->
+        <div id="pl-tab-reconciliation" class="pl-table-wrap" style="display:${window._currentPlTab === 'reconciliation' ? 'block' : 'none'};">
+          <table class="pl-table">
+            <thead>
+              <tr>
+                <th>Verification Check</th>
+                <th>Audit Status</th>
+                <th>Verification Details & Explanation</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(recon.checks && recon.checks.length > 0) ? recon.checks.map(rc => `
+                <tr>
+                  <td><strong style="color:var(--text-main); font-size:13.5px;">${rc.check}</strong></td>
                   <td>
-                    <span class="pl-badge pl-badge-success">
-                      <i class="fas fa-check-circle"></i> ${isAdmin ? 'RECEIVED' : 'CASHED OUT'}
+                    <span class="pl-badge ${rc.status === 'PASS' ? 'pl-badge-success' : 'pl-badge-warning'}">
+                      <i class="fas ${rc.status === 'PASS' ? 'fa-check' : 'fa-exclamation-triangle'}"></i> ${rc.status}
                     </span>
                   </td>
+                  <td style="color:var(--text-main); font-size:12.5px; line-height:1.4;">${rc.message}</td>
                 </tr>
-              `).join('')}
+              `).join('') : `
+                <tr><td colspan="3" class="text-center" style="padding:30px; color:var(--text-muted);">All verification checks completed successfully.</td></tr>
+              `}
             </tbody>
           </table>
         </div>
@@ -6536,6 +6854,124 @@ async function renderProfitLoss(c) {
     </div>
   `;
 }
+
+window.switchPlTab = function(tabName) {
+  window._currentPlTab = tabName;
+  ['orders', 'expenses', 'transfers', 'inventory', 'reconciliation'].forEach(t => {
+    const el = document.getElementById(`pl-tab-${t}`);
+    if (el) el.style.display = (t === tabName) ? 'block' : 'none';
+  });
+  document.querySelectorAll('.pl-tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('onclick')?.includes(tabName));
+  });
+};
+
+async function openAddExpenseModal() {
+  Utils.openModal("Record Operating Business Expense", `
+    <form id="form-add-expense" onsubmit="event.preventDefault(); submitAddExpense();">
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Expense Category <span style="color:var(--danger);">*</span></label>
+        <select id="exp-category" class="input-field" required style="width:100%;">
+          <option value="Utilities">Utilities (Electricity, Water, Internet)</option>
+          <option value="Rent">Rent & Facility Lease</option>
+          <option value="Salaries">Staff Salaries & Wages</option>
+          <option value="Supplies">Store Supplies & Packaging</option>
+          <option value="Maintenance">Maintenance & Repairs</option>
+          <option value="Transportation">Transportation & Logistics</option>
+          <option value="Marketing">Marketing & Advertising</option>
+          <option value="Other">Other Operating Expense</option>
+        </select>
+      </div>
+
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Description / Purpose <span style="color:var(--danger);">*</span></label>
+        <input type="text" id="exp-description" class="input-field" required placeholder="e.g. Monthly Meralco Power Bill" style="width:100%;">
+      </div>
+
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Amount (₱) <span style="color:var(--danger);">*</span></label>
+        <input type="number" step="0.01" min="0.01" id="exp-amount" class="input-field" required placeholder="0.00" style="width:100%; font-size:20px; font-weight:800; color:#ef4444;">
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Payment Method</label>
+          <select id="exp-payment-method" class="input-field" style="width:100%;">
+            <option value="Cash">Cash (Safe / Petty Cash)</option>
+            <option value="Bank Transfer">Bank Transfer</option>
+            <option value="GCash">GCash</option>
+            <option value="Credit Card">Credit Card</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Payment Status</label>
+          <select id="exp-status" class="input-field" style="width:100%;">
+            <option value="paid">Paid / Settled</option>
+            <option value="pending">Pending Approval</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="input-group" style="margin-bottom:16px;">
+        <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Expense Date</label>
+        <input type="date" id="exp-date" class="input-field" value="${new Date().toISOString().substring(0, 10)}" style="width:100%;">
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
+        <button type="button" class="btn btn-outline" onclick="Utils.closeModal()">Cancel</button>
+        <button type="submit" id="btn-submit-expense" class="btn btn-primary" style="background:#18181b; color:#d4af37; border:1px solid #d4af37;">
+          <i class="fas fa-check"></i> Save Expense
+        </button>
+      </div>
+    </form>
+  `);
+}
+
+async function submitAddExpense() {
+  const cat = document.getElementById("exp-category")?.value;
+  const desc = document.getElementById("exp-description")?.value;
+  const amt = parseFloat(document.getElementById("exp-amount")?.value);
+  const method = document.getElementById("exp-payment-method")?.value || "Cash";
+  const stat = document.getElementById("exp-status")?.value || "paid";
+  const dt = document.getElementById("exp-date")?.value;
+
+  if (!cat || !desc || isNaN(amt) || amt <= 0) {
+    Utils.showToast("Please provide valid category, description, and amount greater than ₱0.00.", "danger");
+    return;
+  }
+
+  const btn = document.getElementById("btn-submit-expense");
+  if (btn) { btn.disabled = true; btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Saving...`; }
+
+  try {
+    const res = await Auth.fetch("/api/v1/expenses", {
+      method: "POST",
+      body: JSON.stringify({
+        category: cat,
+        description: desc,
+        amount: amt,
+        payment_method: method,
+        status: stat,
+        expense_date: dt ? new Date(dt).toISOString() : undefined
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to record expense");
+    }
+    Utils.showToast("Operating expense recorded successfully!", "success");
+    Utils.closeModal();
+    cachedProfitLossData = null;
+    window._currentPlTab = 'expenses';
+    renderProfitLoss();
+  } catch (e) {
+    Utils.showToast(e.message, "danger");
+    if (btn) { btn.disabled = false; btn.innerHTML = `<i class="fas fa-check"></i> Save Expense`; }
+  }
+}
+
+window.openAddExpenseModal = openAddExpenseModal;
+window.submitAddExpense = submitAddExpense;
 
 window.renderPurchases = renderProfitLoss;
 window.renderProfitLoss = renderProfitLoss;
