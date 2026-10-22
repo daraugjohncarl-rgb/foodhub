@@ -22,7 +22,7 @@ async function renderView(viewId, container) {
       sessionStorage.setItem("active_feature", viewId);
     } catch (e) {}
 
-    // Synchronize active sidebar navigation link and header title
+    // Synchronize active sidebar navigation link, bottom navigation, and header title
     document.querySelectorAll("aside.sidebar .nav-link").forEach(link => {
       const href = (link.getAttribute("href") || "").replace("#", "");
       if (href === viewId) {
@@ -34,6 +34,11 @@ async function renderView(viewId, container) {
       } else {
         link.classList.remove("active");
       }
+    });
+
+    document.querySelectorAll(".mobile-bottom-nav-item[data-nav-id]").forEach(item => {
+      const nid = item.getAttribute("data-nav-id");
+      item.classList.toggle("active", nid === viewId);
     });
   }
 
@@ -2550,9 +2555,27 @@ function updateCartUI() {
   if (subtotalEl) subtotalEl.textContent = Utils.formatCurrency(total);
   if (totalEl) totalEl.textContent = Utils.formatCurrency(total);
 
-  // Clean up floating bottom bar
-  const floatBar = document.getElementById("mobile-cart-float-bar");
-  if (floatBar) {
+  // Manage mobile floating bottom bar
+  const count = posCart.reduce((sum, i) => sum + i.quantity, 0);
+  let floatBar = document.getElementById("mobile-cart-float-bar");
+  if (window.innerWidth <= 1024 && count > 0) {
+    if (!floatBar) {
+      floatBar = document.createElement("div");
+      floatBar.id = "mobile-cart-float-bar";
+      floatBar.className = "mobile-cart-float-bar";
+      document.body.appendChild(floatBar);
+    }
+    floatBar.innerHTML = `
+      <div class="mobile-cart-float-info" onclick="document.querySelector('.pos-cart')?.scrollIntoView({behavior:'smooth'});">
+        <i class="fas fa-shopping-bag"></i>
+        <span><strong>${count} items</strong> • ${Utils.formatCurrency(total)}</span>
+      </div>
+      <button class="mobile-cart-float-btn" onclick="document.querySelector('.pos-cart')?.scrollIntoView({behavior:'smooth'});">
+        View Cart <i class="fas fa-arrow-down"></i>
+      </button>
+    `;
+    floatBar.style.display = "flex";
+  } else if (floatBar) {
     floatBar.remove();
   }
 }

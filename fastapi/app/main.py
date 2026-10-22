@@ -280,6 +280,26 @@ def get_login_page(request: Request, db: Session = Depends(get_db)):
     return FileResponse(os.path.join(STATIC_DIR, "index.html"), headers=NO_CACHE_HEADERS)
 
 
+# PWA & Home Screen Icon Root Endpoints
+@app.get("/manifest.webmanifest")
+@app.get("/manifest.json")
+def get_manifest():
+    manifest_path = os.path.join(STATIC_DIR, "manifest.webmanifest")
+    return FileResponse(manifest_path, media_type="application/manifest+json")
+
+@app.get("/favicon.ico")
+def get_favicon():
+    favicon_path = os.path.join(STATIC_DIR, "images", "favicon.ico")
+    return FileResponse(favicon_path, media_type="image/x-icon")
+
+@app.get("/apple-touch-icon.png")
+@app.get("/apple-touch-icon-precomposed.png")
+@app.get("/apple-touch-icon-180x180.png")
+def get_apple_touch_icon():
+    icon_path = os.path.join(STATIC_DIR, "images", "apple-touch-icon.png")
+    return FileResponse(icon_path, media_type="image/png")
+
+
 # Role-Protected HTML Page Routes
 @app.get("/admin", response_class=FileResponse)
 @app.get("/admin.html", response_class=FileResponse)

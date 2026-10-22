@@ -99,6 +99,10 @@ function buildSidebarMenu(role, onNavigate) {
         document.getElementById("sidebarOverlay")?.classList.remove("open");
       }
 
+      if (window.innerWidth <= 1024 && typeof window.toggleMobileSidebar === "function") {
+        window.toggleMobileSidebar(false);
+      }
+
       if (typeof onNavigate === "function") {
         onNavigate(item.id, item.label);
       }
@@ -107,7 +111,99 @@ function buildSidebarMenu(role, onNavigate) {
     li.appendChild(a);
     if (menuEl) menuEl.appendChild(li);
   });
+
+  buildMobileBottomNav(role, onNavigate);
 }
 
 window.ROLE_NAV_CONFIG = ROLE_NAV_CONFIG;
+
+function buildMobileBottomNav(role, onNavigate) {
+  let nav = document.getElementById("mobileBottomNav");
+  if (!nav) {
+    nav = document.createElement("nav");
+    nav.id = "mobileBottomNav";
+    nav.className = "mobile-bottom-nav";
+    document.body.appendChild(nav);
+  }
+
+  const r = (role || "").toLowerCase();
+  const normalizedRole = r === "super_admin" ? "admin" : r;
+  const items = ROLE_NAV_CONFIG[normalizedRole] || ROLE_NAV_CONFIG.admin;
+  const primaryItems = items.slice(0, 4);
+
+  const currentSaved = (window.location.hash ? window.location.hash.replace("#", "") : "") || sessionStorage.getItem("active_feature") || "";
+  const activeId = items.some(it => it.id === currentSaved) ? currentSaved : (items[0] ? items[0].id : "");
+
+  let html = "";
+  primaryItems.forEach(item => {
+    const isActive = item.id === activeId;
+    const shortLabel = item.label.split(" ")[0].substring(0, 9);
+    html += `
+      <a href="#${item.id}" class="mobile-bottom-nav-item ${isActive ? 'active' : ''}" data-nav-id="${item.id}" data-title="${item.label}">
+        <i class="${item.icon}"></i>
+        <span>${shortLabel}</span>
+      </a>
+    `;
+  });
+
+  html += `
+    <button type="button" class="mobile-bottom-nav-item" id="mobileNavMoreBtn" title="Open Full Menu">
+      <i class="fas fa-bars"></i>
+      <span>Menu</span>
+    </button>
+  `;
+
+  nav.innerHTML = html;
+
+  nav.querySelectorAll(".mobile-bottom-nav-item[data-nav-id]").forEach(btn => {
+    btn.onclick = (e) => {
+      e.preventDefault();
+      const targetId = btn.getAttribute("data-nav-id");
+      const targetTitle = btn.getAttribute("data-title") || targetId;
+
+      nav.querySelectorAll(".mobile-bottom-nav-item").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+
+      document.querySelectorAll("aside.sidebar .nav-link").forEach(el => {
+        const h = (el.getAttribute("href") || "").replace("#", "");
+        el.classList.toggle("active", h === targetId);
+      });
+
+      const pageTitle = document.getElementById("current-page-title");
+      if (pageTitle) pageTitle.innerText = targetTitle;
+
+      if (typeof window.toggleMobileSidebar === "function") {
+        window.toggleMobileSidebar(false);
+      }
+
+      if (typeof onNavigate === "function") {
+        onNavigate(targetId, targetTitle);
+      }
+    };
+  });
+
+  const moreBtn = document.getElementById("mobileNavMoreBtn");
+  if (moreBtn) {
+    moreBtn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof window.toggleMobileSidebar === "function") {
+        window.toggleMobileSidebar();
+      } else {
+        const sidebar = document.getElementById("sidebar");
+        const overlay = document.getElementById("sidebarOverlay");
+        if (sidebar) {
+          sidebar.classList.toggle("open");
+          if (overlay) overlay.classList.toggle("open", sidebar.classList.contains("open"));
+        }
+      }
+    };
+  }
+
+  if (typeof window.bindMobileNavTriggers === "function") {
+    window.bindMobileNavTriggers();
+  }
+}
+
 window.buildSidebarMenu = buildSidebarMenu;
+window.buildMobileBottomNav = buildMobileBottomNav;

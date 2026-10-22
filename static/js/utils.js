@@ -237,20 +237,80 @@ generateReceiptHTML(order) {
     }
   },
 
+  toggleMobileSidebar(forceState) {
+    const sidebar = document.getElementById("sidebar");
+    let sidebarOverlay = document.getElementById("sidebarOverlay");
+    if (!sidebarOverlay) {
+      sidebarOverlay = document.createElement("div");
+      sidebarOverlay.id = "sidebarOverlay";
+      sidebarOverlay.className = "sidebar-overlay";
+      document.body.appendChild(sidebarOverlay);
+    }
+    const mobileMenuBtns = document.querySelectorAll(".mobile-menu-btn, #mobileMenuBtn");
+    const sidebarToggle = document.getElementById("sidebarToggle");
+    if (!sidebar) return;
+
+    const isMobile = window.innerWidth <= 1024;
+    const currentState = sidebar.classList.contains("open");
+    const isOpen = typeof forceState === "boolean" ? forceState : !currentState;
+
+    sidebar.classList.toggle("open", isOpen);
+    if (sidebarOverlay) sidebarOverlay.classList.toggle("open", isOpen);
+
+    if (isOpen && isMobile) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+
+    // Synchronize all hamburger / close trigger icons
+    mobileMenuBtns.forEach(btn => {
+      btn.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+      btn.setAttribute('title', isOpen ? 'Close Menu' : 'Open Menu');
+      btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    });
+
+    if (sidebarToggle) {
+      if (isMobile) {
+        sidebarToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+        sidebarToggle.setAttribute('title', isOpen ? 'Close Menu' : 'Open Menu');
+      } else {
+        const isCollapsed = sidebar.classList.contains("collapsed");
+        sidebarToggle.innerHTML = '<i class="fas fa-bars"></i>';
+        sidebarToggle.setAttribute('title', isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar');
+      }
+    }
+  },
+
   initSidebar() {
     const sidebar = document.getElementById("sidebar");
     const sidebarToggle = document.getElementById("sidebarToggle");
-    const mobileMenuBtn = document.getElementById("mobileMenuBtn");
-    const sidebarOverlay = document.getElementById("sidebarOverlay");
+    let sidebarOverlay = document.getElementById("sidebarOverlay");
     const mainContent = document.querySelector(".main-content") || document.getElementById("mainContent");
 
     if (!sidebar) return;
 
+    // Guarantee that an overlay exists in the DOM for mobile dismissal
+    if (!sidebarOverlay) {
+      sidebarOverlay = document.createElement("div");
+      sidebarOverlay.id = "sidebarOverlay";
+      sidebarOverlay.className = "sidebar-overlay";
+      document.body.appendChild(sidebarOverlay);
+    }
+
+    window.toggleMobileSidebar = (forceState) => this.toggleMobileSidebar(forceState);
+
     const isMobile = () => window.innerWidth <= 1024;
+
     const updateIcon = (collapsed) => {
       if (!sidebarToggle) return;
-      sidebarToggle.innerHTML = '<i class="fas fa-bars"></i>';
-      sidebarToggle.setAttribute('title', collapsed ? 'Expand Sidebar' : 'Collapse Sidebar');
+      if (isMobile()) {
+        sidebarToggle.innerHTML = sidebar.classList.contains('open') ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+        sidebarToggle.setAttribute('title', sidebar.classList.contains('open') ? 'Close Menu' : 'Open Menu');
+      } else {
+        sidebarToggle.innerHTML = '<i class="fas fa-bars"></i>';
+        sidebarToggle.setAttribute('title', collapsed ? 'Expand Sidebar' : 'Collapse Sidebar');
+      }
     };
 
     // Apply saved state on load (desktop only)
@@ -267,7 +327,7 @@ generateReceiptHTML(order) {
       updateIcon(false);
     }
 
-    // Bind sidebarToggle with guard against duplicate handlers
+    // Bind sidebarToggle (desktop collapse or mobile close)
     if (sidebarToggle && !sidebarToggle.dataset.bound) {
       sidebarToggle.dataset.bound = "true";
       sidebarToggle.addEventListener("click", (e) => {
@@ -275,8 +335,7 @@ generateReceiptHTML(order) {
         e.stopPropagation();
 
         if (isMobile()) {
-          sidebar.classList.remove('open');
-          if (sidebarOverlay) sidebarOverlay.classList.remove('open');
+          this.toggleMobileSidebar();
         } else {
           const isCollapsed = sidebar.classList.toggle('collapsed');
           document.body.classList.toggle('sidebar-collapsed', isCollapsed);
@@ -287,30 +346,63 @@ generateReceiptHTML(order) {
       });
     }
 
-    // Bind mobile menu button
-    if (mobileMenuBtn && !mobileMenuBtn.dataset.bound) {
-      mobileMenuBtn.dataset.bound = "true";
-      mobileMenuBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        sidebar.classList.add("open");
-        if (sidebarOverlay) sidebarOverlay.classList.add("open");
+    // Bind all mobile menu trigger buttons (in header or mobile bottom nav)
+    const bindTriggers = () => {
+      document.querySelectorAll(".mobile-menu-btn, #mobileMenuBtn, #mobileNavMoreBtn").forEach(btn => {
+        if (!btn.dataset.bound) {
+          btn.dataset.bound = "true";
+          btn.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.toggleMobileSidebar();
+          });
+        }
       });
-    }
+    };
+    bindTriggers();
+    window.bindMobileNavTriggers = bindTriggers;
 
     // Overlay click to close
     if (sidebarOverlay && !sidebarOverlay.dataset.bound) {
       sidebarOverlay.dataset.bound = "true";
-      sidebarOverlay.addEventListener("click", () => {
-        sidebar.classList.remove("open");
-        sidebarOverlay.classList.remove("open");
+      sidebarOverlay.addEventListener("click", (e) => {
+        e.preventDefault();
+        this.toggleMobileSidebar(false);
       });
     }
 
+    // Auto-close on nav-link clicks on mobile
+    sidebar.querySelectorAll(".nav-link, .logout-btn").forEach(link => {
+      if (!link.dataset.boundMobileClose) {
+        link.dataset.boundMobileClose = "true";
+        link.addEventListener("click", () => {
+          if (isMobile()) {
+            this.toggleMobileSidebar(false);
+          }
+        });
+      }
+    });
+
+    // Mobile Swipe Left to Close gesture
+    let touchStartX = 0;
+    let touchStartY = 0;
+    sidebar.addEventListener("touchstart", (e) => {
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+    }, { passive: true });
+
+    sidebar.addEventListener("touchend", (e) => {
+      const deltaX = e.changedTouches[0].clientX - touchStartX;
+      const deltaY = Math.abs(e.changedTouches[0].clientY - touchStartY);
+      if (deltaX < -45 && deltaY < 80) {
+        this.toggleMobileSidebar(false);
+      }
+    }, { passive: true });
+
     window.addEventListener("resize", () => {
       if (!isMobile()) {
-        sidebar.classList.remove("open");
-        if (sidebarOverlay) sidebarOverlay.classList.remove("open");
+        this.toggleMobileSidebar(false);
+        document.body.style.overflow = "";
       }
     });
   }
