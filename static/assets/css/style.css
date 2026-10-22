@@ -531,17 +531,7 @@ body.sidebar-collapsed .sidebar .logout-btn i {
 }
 
 .mobile-menu-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: none;
-    font-size: 18px;
-    color: var(--text-main);
-    cursor: pointer;
-    padding: 6px;
-    border-radius: var(--radius-sm);
-    transition: var(--transition);
+    display: none !important;
 }
 
 .mobile-menu-btn:hover {
@@ -1586,8 +1576,8 @@ tbody tr:hover {
     }
 
     .mobile-menu-btn {
-        display: block;
-    }
+    display: none !important;
+}
 
     .sidebar-overlay {
         display: none;
@@ -2307,8 +2297,8 @@ td {
     }
     
     .mobile-menu-btn {
-        display: flex !important;
-    }
+    display: none !important;
+}
     
     .sidebar-overlay {
         display: none;
@@ -2671,4 +2661,4 @@ td {
     .table-wrap table {
         min-width: 440px;
     }
-}
+}

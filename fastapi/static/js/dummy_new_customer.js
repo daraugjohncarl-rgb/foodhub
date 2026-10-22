@@ -5,7 +5,7 @@
 const menu = [
 
     /* =========================
-       SNACKS
+       SNACKS (MATCHING CASHIER POS)
     ========================= */
 
     {
@@ -97,62 +97,39 @@ const menu = [
     },
 
     {
-        name: "Lumpia Shanghai",
-        category: "Snacks",
-        description: "Crispy Filipino spring rolls.",
-        image: "images/lumpia shanghai.jpg",
-        options: [
-            ["5 pcs", 65]
-        ]
-    },
-
-    {
         name: "Burger Solo",
         category: "Snacks",
-        description: "Classic burger with cheese.",
+        description: "Classic solo burger patty.",
         image: "images/burger solo.png",
         options: [
-            ["w/ Cheese", 65]
+            ["Regular", 40],
+            ["w/ Cheese", 50],
+            ["w/ Egg", 55],
+            ["Special", 65]
         ]
     },
 
     {
         name: "Tuna Sandwich",
         category: "Snacks",
-        description: "Savory tuna sandwich.",
+        description: "Freshly prepared tuna sandwich.",
         image: "images/tuna sandwich.png",
         options: [
-            ["Regular", 90]
-        ]
-    },
-
-    {
-        name: "Chicken Sandwich",
-        category: "Snacks",
-        description: "Savory chicken sandwich.",
-        image: "images/snacks/chicken-sandwich.jpg",
-        options: [
-            ["Regular", 70]
-        ]
-    },
-
-    {
-        name: "Egg Sandwich",
-        category: "Snacks",
-        description: "Simple egg sandwich.",
-        image: "images/snacks/egg-sandwich.jpg",
-        options: [
-            ["Regular", 60]
+            ["Regular", 45],
+            ["w/ Cheese", 55],
+            ["w/ Egg", 60],
+            ["Special", 70]
         ]
     },
 
     {
         name: "Nachos",
         category: "Snacks",
-        description: "Crispy nachos.",
+        description: "Crispy nachos with savory toppings.",
         image: "images/nachos.png",
         options: [
-            ["Regular", 90]
+            ["Single", 85],
+            ["Barkada", 180]
         ]
     },
 
@@ -170,7 +147,7 @@ const menu = [
         name: "Sotanghon w/ Toasted Bread",
         category: "Snacks",
         description: "Sotanghon served with toasted bread.",
-        image: "images/Sotanghon wuth Toasted Bread.png",
+        image: "images/sotanghon guisado.png",
         options: [
             ["Single", 90],
             ["Barkada", 300]
@@ -202,7 +179,7 @@ const menu = [
         name: "Sotanghon Guisado w/ Lumpia Shanghai",
         category: "Snacks",
         description: "Sotanghon served with lumpia Shanghai.",
-        image: "images/sotanghon lumpia.png",
+        image: "images/sotanghon guisado.png",
         options: [
             ["Regular", 140]
         ]
@@ -210,454 +187,39 @@ const menu = [
 
 
     /* =========================
-       BILAO
-    ========================= */
-
-    {
-        name: "Bilao 1",
-        category: "Bilao Snacks",
-        description: "Blessie Food Hub Bilao.",
-        image: "images/bilao/bilao-1.jpg",
-        options: [
-            ["Regular", 199]
-        ]
-    },
-
-    {
-        name: "Bilao 2",
-        category: "Bilao Snacks",
-        description: "Blessie Food Hub Bilao.",
-        image: "images/bilao/bilao-2.jpg",
-        options: [
-            ["Regular", 199]
-        ]
-    },
-
-    {
-        name: "Bilao 3",
-        category: "Bilao Snacks",
-        description: "Blessie Food Hub Bilao.",
-        image: "images/bilao/bilao-3.jpg",
-        options: [
-            ["Regular", 249]
-        ]
-    },
-
-
-    /* =========================
-       NON-ALCOHOLIC
-    ========================= */
-
-    {
-        name: "Mt. Dew",
-        category: "Non-Alcoholic Drinks",
-        description: "Refreshing soft drink.",
-        image: "images/drinks/mountain-dew.jpg",
-        options: [
-            ["Regular", 25]
-        ]
-    },
-
-    {
-        name: "Sting",
-        category: "Non-Alcoholic Drinks",
-        description: "Refreshing energy drink.",
-        image: "images/drinks/sting.jpg",
-        options: [
-            ["Regular", 25]
-        ]
-    },
-
-    {
-        name: "Royal",
-        category: "Non-Alcoholic Drinks",
-        description: "Refreshing soft drink.",
-        image: "images/drinks/royal.jpg",
-        options: [
-            ["Regular", 25]
-        ]
-    },
-
-    {
-        name: "Water",
-        category: "Non-Alcoholic Drinks",
-        description: "Bottled drinking water.",
-        image: "images/drinks/water.jpg",
-        options: [
-            ["Regular", 20]
-        ]
-    },
-
-    {
-        name: "Coke",
-        category: "Non-Alcoholic Drinks",
-        description: "Classic Coca-Cola.",
-        image: "images/drinks/coke.jpg",
-        options: [
-            ["12 oz", 25],
-            ["Litro", 50]
-        ]
-    },
-
-
-    /* =========================
-       ALCOHOLIC
-    ========================= */
-
-    {
-        name: "Red Horse",
-        category: "Alcoholic Drinks",
-        description: "Choose your preferred Red Horse size.",
-        image: "images/alcoholic/red-horse.jpg",
-        options: [
-            ["Litro", 180],
-            ["500 ml", 90]
-        ]
-    },
-
-    {
-        name: "Red Horse Stallion",
-        category: "Alcoholic Drinks",
-        description: "Red Horse Stallion.",
-        image: "images/alcoholic/red-horse-stallion.jpg",
-        options: [
-            ["Regular", 75]
-        ]
-    },
-
-    {
-        name: "San Mig",
-        category: "Alcoholic Drinks",
-        description: "Choose your preferred San Mig variant.",
-        image: "images/alcoholic/san-mig.jpg",
-        options: [
-            ["Light", 75],
-            ["Apple", 75]
-        ]
-    },
-
-    {
-        name: "Pelsin",
-        category: "Alcoholic Drinks",
-        description: "Pelsin.",
-        image: "images/alcoholic/pelsin.jpg",
-        options: [
-            ["Regular", 65]
-        ]
-    },
-
-    {
-        name: "Eagle",
-        category: "Alcoholic Drinks",
-        description: "Eagle beer.",
-        image: "images/alcoholic/eagle.jpg",
-        options: [
-            ["Regular", 60]
-        ]
-    },
-
-    {
-        name: "Tanduay",
-        category: "Alcoholic Drinks",
-        description: "Choose your preferred Tanduay variant.",
-        image: "images/alcoholic/tanduay.jpg",
-        options: [
-            ["Light", 195],
-            ["Dark", 200]
-        ]
-    },
-
-    {
-        name: "Smirnoff",
-        category: "Alcoholic Drinks",
-        description: "Smirnoff.",
-        image: "images/alcoholic/smirnoff.jpg",
-        options: [
-            ["Regular", 80]
-        ]
-    },
-
-    {
-        name: "CLVB",
-        category: "Alcoholic Drinks",
-        description: "CLVB.",
-        image: "images/alcoholic/clvb.jpg",
-        options: [
-            ["Regular", 250]
-        ]
-    },
-
-
-    /* =========================
-       GEN-Z TOWER
-    ========================= */
-
-    {
-        name: "Gen-Z Tower",
-        category: "Gen-Z Tower",
-        description: "Gin, ice and juice tower.",
-        image: "images/gen-z/gen-z-tower.jpg",
-        options: [
-            ["1.5 L — Gin, Ice, Juice", 190],
-            ["2 L — Gin, Ice, Juice", 220],
-            ["3 L — Gin, Ice, Juice", 440],
-            ["1.5 L — Gin, Ice, Juice + Kropek", 220],
-            ["2 L — Gin, Ice, Juice + 2 Kropek", 380],
-            ["3 L — Gin, Ice, Juice + 2 Kropek", 500]
-        ]
-    },
-
-
-    /* =========================
-       ADD-ONS
-    ========================= */
-
-    {
-        name: "Kropek",
-        category: "Add-ons",
-        description: "Crispy shrimp crackers.",
-        image: "images/addons/kropek.jpg",
-        options: [
-            ["Regular", 60]
-        ]
-    },
-
-    {
-        name: "Bucket Ice",
-        category: "Add-ons",
-        description: "One bucket of ice.",
-        image: "images/addons/ice.jpg",
-        options: [
-            ["1 Bucket", 15]
-        ]
-    },
-
-
-    /* =========================
-       MILKTEA
-    ========================= */
-
-    {
-        name: "Okinawa",
-        category: "Milktea w/ Boba Pearls",
-        description: "Okinawa milk tea with boba pearls.",
-        image: "images/milktea/okinawa.jpg",
-        options: [
-            ["16 oz", 65],
-            ["22 oz", 75]
-        ]
-    },
-
-    {
-        name: "Taro",
-        category: "Milktea w/ Boba Pearls",
-        description: "Taro milk tea with boba pearls.",
-        image: "images/milktea/taro.jpg",
-        options: [
-            ["16 oz", 65],
-            ["22 oz", 75]
-        ]
-    },
-
-    {
-        name: "Watermelon",
-        category: "Milktea w/ Boba Pearls",
-        description: "Watermelon milk tea with boba pearls.",
-        image: "images/milktea/watermelon.jpg",
-        options: [
-            ["16 oz", 65],
-            ["22 oz", 75]
-        ]
-    },
-
-    {
-        name: "Cookies & Cream",
-        category: "Milktea w/ Boba Pearls",
-        description: "Cookies and cream milk tea.",
-        image: "images/milktea/cookies-cream.jpg",
-        options: [
-            ["16 oz", 70],
-            ["22 oz", 80]
-        ]
-    },
-
-    {
-        name: "Caramelized Sugar",
-        category: "Milktea w/ Boba Pearls",
-        description: "Caramelized sugar milk tea.",
-        image: "images/milktea/caramelized-sugar.jpg",
-        options: [
-            ["16 oz", 65],
-            ["22 oz", 75]
-        ]
-    },
-
-
-    /* =========================
-       STICKY MILK
-    ========================= */
-
-    {
-        name: "Buko",
-        category: "Sticky Milk",
-        description: "Creamy buko sticky milk.",
-        image: "images/sticky-milk/buko.jpg",
-        options: [
-            ["16 oz", 75],
-            ["22 oz", 85]
-        ]
-    },
-
-    {
-        name: "Mango",
-        category: "Sticky Milk",
-        description: "Creamy mango sticky milk.",
-        image: "images/sticky-milk/mango.jpg",
-        options: [
-            ["16 oz", 75],
-            ["22 oz", 85]
-        ]
-    },
-
-    {
-        name: "Choco",
-        category: "Sticky Milk",
-        description: "Chocolate sticky milk.",
-        image: "images/sticky-milk/choco.jpg",
-        options: [
-            ["16 oz", 80],
-            ["22 oz", 90]
-        ]
-    },
-
-    {
-        name: "Melon",
-        category: "Sticky Milk",
-        description: "Creamy melon sticky milk.",
-        image: "images/sticky-milk/melon.jpg",
-        options: [
-            ["16 oz", 75],
-            ["22 oz", 85]
-        ]
-    },
-
-    {
-        name: "Red Velvet",
-        category: "Sticky Milk",
-        description: "Red velvet sticky milk.",
-        image: "images/sticky-milk/red-velvet.jpg",
-        options: [
-            ["16 oz", 85],
-            ["22 oz", 95]
-        ]
-    },
-
-
-    /* =========================
-       FRAPPE
-    ========================= */
-
-    {
-        name: "Mango",
-        category: "Milky Shake Frappe",
-        description: "Creamy mango frappe.",
-        image: "images/frappe/mango.jpg",
-        options: [
-            ["16 oz", 80],
-            ["22 oz", 100]
-        ]
-    },
-
-    {
-        name: "Choco",
-        category: "Milky Shake Frappe",
-        description: "Creamy chocolate frappe.",
-        image: "images/frappe/choco.jpg",
-        options: [
-            ["16 oz", 85],
-            ["22 oz", 105]
-        ]
-    },
-
-    {
-        name: "Caramel Macchiato",
-        category: "Milky Shake Frappe",
-        description: "Caramel macchiato frappe.",
-        image: "images/frappe/caramel-macchiato.jpg",
-        options: [
-            ["16 oz", 85],
-            ["22 oz", 105]
-        ]
-    },
-
-    {
-        name: "Coffee Crumble",
-        category: "Milky Shake Frappe",
-        description: "Creamy coffee crumble frappe.",
-        image: "images/frappe/coffee-crumble.jpg",
-        options: [
-            ["16 oz", 80],
-            ["22 oz", 100]
-        ]
-    },
-
-    {
-        name: "Melon",
-        category: "Milky Shake Frappe",
-        description: "Creamy melon frappe.",
-        image: "images/frappe/melon.jpg",
-        options: [
-            ["16 oz", 80],
-            ["22 oz", 100]
-        ]
-    },
-
-    {
-        name: "Buko",
-        category: "Milky Shake Frappe",
-        description: "Creamy buko frappe.",
-        image: "images/frappe/buko.jpg",
-        options: [
-            ["16 oz", 80],
-            ["22 oz", 100]
-        ]
-    },
-
-
-    /* =========================
-       COLD COFFEE
+       COLD COFFEE & DRINKS (MATCHING CASHIER POS)
     ========================= */
 
     {
         name: "Spanish Latte",
         category: "Cold Coffee",
-        description: "Smooth and creamy Spanish latte.",
+        description: "Creamy iced Spanish latte.",
         image: "images/coffee/spanish latte.png",
         options: [
-            ["16 oz", 50],
-            ["22 oz", 65]
+            ["16 oz", 75],
+            ["22 oz", 85]
         ]
     },
 
     {
-        name: "French",
+        name: "French Vanilla",
         category: "Cold Coffee",
         description: "French-style iced coffee.",
         image: "images/coffee/french vanill.png",
         options: [
-            ["16 oz", 60],
-            ["22 oz", 75]
+            ["16 oz", 75],
+            ["22 oz", 85]
         ]
     },
 
     {
         name: "Salted Caramel",
         category: "Cold Coffee",
-        description: "Sweet and salty caramel coffee.",
+        description: "Salted caramel iced coffee.",
         image: "images/coffee/salted caramel.png",
         options: [
-            ["16 oz", 65],
-            ["22 oz", 80]
+            ["16 oz", 75],
+            ["22 oz", 85]
         ]
     },
 
@@ -667,19 +229,19 @@ const menu = [
         description: "Caramel macchiato iced coffee.",
         image: "images/coffee/caramel macchiato.png",
         options: [
-            ["16 oz", 60],
-            ["22 oz", 75]
+            ["16 oz", 75],
+            ["22 oz", 85]
         ]
     },
 
     {
         name: "Iced Americano",
         category: "Cold Coffee",
-        description: "Refreshing iced americano.",
+        description: "Bold and crisp iced Americano.",
         image: "images/coffee/iced americano.png",
         options: [
-            ["16 oz", 50],
-            ["22 oz", 65]
+            ["16 oz", 75],
+            ["22 oz", 85]
         ]
     },
 
@@ -689,183 +251,55 @@ const menu = [
         description: "Vietnamese-style iced coffee.",
         image: "images/coffee/vietnamese coffee.png",
         options: [
-            ["16 oz", 55],
-            ["22 oz", 70]
+            ["16 oz", 75],
+            ["22 oz", 85]
         ]
     },
 
     {
         name: "Dirty Matcha",
         category: "Cold Coffee",
-        description: "Matcha combined with coffee.",
+        description: "Matcha infused with espresso.",
         image: "images/coffee/dirty matcha.png",
         options: [
-            ["16 oz", 55],
-            ["22 oz", 70]
+            ["16 oz", 80],
+            ["22 oz", 90]
         ]
     },
 
     {
         name: "Matcha Milk",
         category: "Cold Coffee",
-        description: "Creamy matcha milk.",
+        description: "Smooth matcha milk drink.",
         image: "images/coffee/matcha milk.png",
         options: [
-            ["16 oz", 55],
-            ["22 oz", 70]
+            ["16 oz", 75],
+            ["22 oz", 85]
         ]
     },
 
     {
-        name: "Matcha Latte",
+        name: "Coffee Jelly",
         category: "Cold Coffee",
-        description: "Creamy matcha latte.",
-        image: "images/coffee/matcha latte.png",
+        description: "Refreshing iced coffee infused with jelly.",
+        image: "images/coffee/coffee jelly.png",
         options: [
-            ["16 oz", 60],
-            ["22 oz", 75]
-        ]
-    },
-
-
-    /* =========================
-       HOT COFFEE
-    ========================= */
-
-    {
-        name: "Native Coffee",
-        category: "Hot Coffee",
-        description: "Traditional native coffee.",
-        image: "images/coffee/native.jpg",
-        options: [
-            ["Regular", 25]
+            ["16 oz", 75],
+            ["22 oz", 85]
         ]
     },
 
     {
-        name: "Native with Milk",
-        category: "Hot Coffee",
-        description: "Native coffee with milk.",
-        image: "images/coffee/native-milk.jpg",
+        name: "Iced Coffee",
+        category: "Cold Coffee",
+        description: "Signature cold brew iced coffee.",
+        image: "images/coffee/iced coffe.png",
         options: [
-            ["Regular", 35]
-        ]
-    },
-
-    {
-        name: "Barako",
-        category: "Hot Coffee",
-        description: "Strong Filipino Barako coffee.",
-        image: "images/coffee/barako.jpg",
-        options: [
-            ["Regular", 35]
-        ]
-    },
-
-    {
-        name: "Brewed",
-        category: "Hot Coffee",
-        description: "Freshly brewed coffee.",
-        image: "images/coffee/brewed.jpg",
-        options: [
-            ["Regular", 30]
-        ]
-    },
-
-    {
-        name: "Americano",
-        category: "Hot Coffee",
-        description: "Classic hot americano.",
-        image: "images/coffee/americano.jpg",
-        options: [
-            ["Regular", 30]
-        ]
-    },
-
-    {
-        name: "Spanish Latte",
-        category: "Hot Coffee",
-        description: "Hot Spanish latte.",
-        image: "images/coffee/spanish-hot.jpg",
-        options: [
-            ["Regular", 45]
-        ]
-    },
-
-    {
-        name: "French Vanilla",
-        category: "Hot Coffee",
-        description: "Sweet French vanilla coffee.",
-        image: "images/coffee/french-vanilla.jpg",
-        options: [
-            ["Regular", 55]
-        ]
-    },
-
-    {
-        name: "Salted Caramel Latte",
-        category: "Hot Coffee",
-        description: "Salted caramel latte.",
-        image: "images/coffee/salted-caramel-latte.jpg",
-        options: [
-            ["Regular", 60]
-        ]
-    },
-
-    {
-        name: "Caramel Macchiato",
-        category: "Hot Coffee",
-        description: "Hot caramel macchiato.",
-        image: "images/coffee/hot-caramel-macchiato.jpg",
-        options: [
-            ["Regular", 55]
-        ]
-    },
-
-    {
-        name: "Hot Matcha Latte",
-        category: "Hot Coffee",
-        description: "Warm creamy matcha latte.",
-        image: "images/coffee/hot-matcha.jpg",
-        options: [
-            ["Regular", 50]
-        ]
-    },
-
-
-    /* =========================
-       SAMGYUPSAL
-    ========================= */
-
-    {
-        name: "Unli Samgyupsal",
-        category: "Unli Samgyupsal",
-        description: "Unlimited samgyupsal with your choice of meat.",
-        image: "images/samgyupsal/samgyupsal.jpg",
-        options: [
-            ["Pork", 249],
-            ["Chicken", 240],
-            ["Chicken & Pork", 299],
-            ["Beef", 299]
-        ]
-    },
-
-    {
-        name: "Samgyupsal Add-ons",
-        category: "Unli Samgyupsal",
-        description: "Additional samgyupsal sides and add-ons.",
-        image: "images/samgyupsal/addons.jpg",
-        options: [
-            ["Lettuce (70g)", 50],
-            ["Cheese (Dipping)", 50],
-            ["Sesame Oil + Salt", 30],
-            ["Seaweed", 35]
+            ["16 oz", 75],
+            ["22 oz", 85]
         ]
     }
-
 ];
-
-
 /* =========================================================
    STATE
 ========================================================= */
