@@ -1,5 +1,6 @@
 /**
  * Notifications & Live Clock Module (notifications.js)
+ * Live notifications connected to /api/v1/activity-logs
  */
 function initNotificationsApp() {
     // 1. Live Date & Clock
@@ -19,7 +20,7 @@ function initNotificationsApp() {
     updateClock();
     setInterval(updateClock, 1000);
 
-    // 2. Notification Dropdown Toggle
+    // 2. Notification Dropdown Toggle & Live Feed
     const notifBell = document.getElementById('notifBell');
     const notifDropdown = document.getElementById('notifDropdown');
     const notifBadge = document.getElementById('notifBadge');
@@ -27,11 +28,35 @@ function initNotificationsApp() {
     const markAllRead = document.getElementById('markAllRead');
     const clearNotifs = document.getElementById('clearNotifs');
 
-    let notifications = [
-        { id: 1, text: 'Super Admin logged into the platform.', time: 'Just now', unread: true },
-        { id: 2, text: 'Database tables verified and operational.', time: '5m ago', unread: true },
-        { id: 3, text: 'FastAPI Backend connected successfully.', time: '10m ago', unread: false }
-    ];
+    let notifications = [];
+
+    function timeAgo(dateString) {
+        if (!dateString) return '';
+        const date = new Date(dateString);
+        const now = new Date();
+        const diffSec = Math.floor((now - date) / 1000);
+        if (diffSec < 60) return 'Just now';
+        const diffMin = Math.floor(diffSec / 60);
+        if (diffMin < 60) return `${diffMin}m ago`;
+        const diffHr = Math.floor(diffMin / 60);
+        if (diffHr < 24) return `${diffHr}h ago`;
+        const diffDays = Math.floor(diffHr / 24);
+        return `${diffDays}d ago`;
+    }
+
+    function getReadIds() {
+        try {
+            return JSON.parse(localStorage.getItem('pos_read_notifications') || '[]');
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function saveReadIds(ids) {
+        try {
+            localStorage.setItem('pos_read_notifications', JSON.stringify(ids));
+        } catch (e) {}
+    }
 
     function renderNotifications() {
         if (!notifList) return;
@@ -59,10 +84,52 @@ function initNotificationsApp() {
         `).join('');
     }
 
+    async function loadNotifications() {
+        if (!notifList) return;
+        notifList.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 13px;"><i class="fas fa-spinner fa-spin" style="margin-right:6px;"></i>Loading notifications...</div>';
+
+        try {
+            const fetchFn = (typeof Auth !== 'undefined' && Auth.fetch) ? Auth.fetch.bind(Auth) : fetch;
+            const res = await fetchFn('/api/v1/activity-logs?limit=8');
+            if (!res.ok) {
+                throw new Error('Failed to load notifications');
+            }
+            const logs = await res.json();
+            const readIds = getReadIds();
+
+            notifications = logs.map(l => ({
+                id: l.id,
+                text: `${l.performed_by ? '<strong>' + (l.performed_by || '') + ':</strong> ' : ''}${l.action || l.details || 'System event'}`,
+                time: timeAgo(l.created_at),
+                unread: !readIds.includes(l.id)
+            }));
+
+            renderNotifications();
+        } catch (err) {
+            console.warn('Failed to load live notifications:', err);
+            if (notifBadge) notifBadge.style.display = 'none';
+            notifList.innerHTML = `
+                <div style="padding: 20px; text-align: center; color: var(--danger); font-size: 13px;">
+                    <i class="fas fa-exclamation-triangle" style="margin-right:6px;"></i>Failed to load notifications.<br>
+                    <button class="btn btn-outline btn-sm" id="retryNotifsBtn" style="margin-top:8px; font-size:11px; padding:4px 10px;">
+                        <i class="fas fa-redo"></i> Retry
+                    </button>
+                </div>
+            `;
+            const retryBtn = document.getElementById('retryNotifsBtn');
+            if (retryBtn) retryBtn.addEventListener('click', loadNotifications);
+        }
+    }
+
+    window.loadNotifications = loadNotifications;
+
     if (notifBell && notifDropdown) {
         notifBell.addEventListener('click', (e) => {
             e.stopPropagation();
             notifDropdown.classList.toggle('show');
+            if (notifDropdown.classList.contains('show')) {
+                loadNotifications();
+            }
         });
 
         document.addEventListener('click', (e) => {
@@ -74,6 +141,9 @@ function initNotificationsApp() {
 
     if (markAllRead) {
         markAllRead.addEventListener('click', () => {
+            const allIds = notifications.map(n => n.id);
+            const readIds = Array.from(new Set([...getReadIds(), ...allIds]));
+            saveReadIds(readIds);
             notifications.forEach(n => n.unread = false);
             renderNotifications();
         });
@@ -81,12 +151,14 @@ function initNotificationsApp() {
 
     if (clearNotifs) {
         clearNotifs.addEventListener('click', () => {
+            const allIds = notifications.map(n => n.id);
+            saveReadIds(Array.from(new Set([...getReadIds(), ...allIds])));
             notifications = [];
             renderNotifications();
         });
     }
 
-    renderNotifications();
+    loadNotifications();
 }
 
 // Fast startup: initialize immediately if DOM is already ready, or on DOMContentLoaded

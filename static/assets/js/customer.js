@@ -404,6 +404,14 @@ async function fetchMenu() {
             lp.classList.add("is-hidden");
             lp.style.display = "none";
         }
+        if (menuList) {
+            menuList.innerHTML = `<div style="text-align:center; padding: 48px 20px; color: var(--danger, #ef4444); font-size: 14px; grid-column: 1 / -1; width: 100%;">
+                <div style="font-size: 36px; margin-bottom: 8px;"><i class="fas fa-exclamation-triangle"></i></div>
+                <strong style="font-size:16px;">Unable to load menu from server</strong>
+                <p style="font-size: 13px; margin-top: 6px; color: #a1a1aa;">Please check server connection and retry.</p>
+                <button type="button" class="btn" onclick="fetchMenu()" style="margin-top:14px; padding:8px 18px; background:var(--accent, #c9a227); color:#fff; border:none; border-radius:8px; cursor:pointer; font-weight:600;"><i class="fas fa-redo"></i> Retry</button>
+            </div>`;
+        }
     }
 }
 

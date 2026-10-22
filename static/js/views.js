@@ -152,27 +152,29 @@ async function renderDashboard(c) {
     inventory: { total_inventory_valuation: 0 }
   };
 
-  try {
-    const [res, drawerRes, invRes, plRes] = await Promise.all([
-      Auth.fetch("/api/v1/analytics/dashboard"),
-      Auth.fetch("/api/v1/shifts/drawer-summary"),
-      Auth.fetch("/api/v1/inventory?low_stock_only=true"),
-      Auth.fetch("/api/v1/analytics/profit-loss")
-    ]);
-    if (res.ok) stats = await res.json();
-    if (drawerRes.ok) {
-      drawerSummary = await drawerRes.json();
-      cachedDrawerData = drawerSummary;
-    }
-    if (invRes.ok) lowStockItems = await invRes.json();
-    if (plRes && plRes.ok) plStats = await plRes.json();
-  } catch (e) {
-    console.warn("Analytics endpoint unavailable, using defaults", e);
-  }
+  const [res, drawerRes, invRes, plRes] = await Promise.all([
+    Auth.fetch("/api/v1/analytics/dashboard"),
+    Auth.fetch("/api/v1/shifts/drawer-summary"),
+    Auth.fetch("/api/v1/inventory?low_stock_only=true"),
+    Auth.fetch("/api/v1/analytics/profit-loss")
+  ]);
+  if (!res.ok) throw new Error("Failed to load dashboard analytics from server.");
+  stats = await res.json();
+  if (!drawerRes.ok) throw new Error("Failed to load cashier drawer data from server.");
+  drawerSummary = await drawerRes.json();
+  cachedDrawerData = drawerSummary;
+  if (!invRes.ok) throw new Error("Failed to load inventory status from server.");
+  lowStockItems = await invRes.json();
+  if (!plRes.ok) throw new Error("Failed to load financial profit & loss data from server.");
+  plStats = await plRes.json();
 
   const liveDrawerCash = (drawerSummary && typeof drawerSummary.total_cash_in_drawers === 'number')
     ? drawerSummary.total_cash_in_drawers
     : (stats.cash_in_drawer || 0);
+
+  const currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
+  const userRole = (currentUser && currentUser.role ? currentUser.role : (typeof Auth !== 'undefined' ? Auth.getRole() : '')).toLowerCase();
+  const isAdmin = userRole.includes('admin') || window.location.pathname.includes('/admin') || window.location.pathname.includes('/dashboard');
 
   c.innerHTML = `
     <div class="stats-grid">
@@ -192,12 +194,12 @@ async function renderDashboard(c) {
           <div class="stat-trend" style="color:${plStats.profit_loss?.is_profitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${plStats.profit_loss?.profit_margin_percent || 0}% margin</div>
         </div>
       </div>
-      <div class="stat-card" style="cursor:pointer;" onclick="renderView('profit_loss')" title="Click to view Transfer Income to Admin">
-        <div class="stat-icon emerald" style="background:rgba(16,185,129,0.12); color:#10b981;"><i class="fas fa-paper-plane"></i></div>
+      <div class="stat-card" style="cursor:pointer;" onclick="renderView('profit_loss')" title="Click to view ${isAdmin ? 'Income Received from Manager' : 'Transfer Income to Admin'}">
+        <div class="stat-icon emerald" style="background:rgba(16,185,129,0.12); color:#10b981;"><i class="fas ${isAdmin ? 'fa-inbox' : 'fa-paper-plane'}"></i></div>
         <div class="stat-info">
-          <h3>Transfer Income to Admin</h3>
+          <h3>${isAdmin ? 'Income Received from Manager' : 'Transfer Income to Admin'}</h3>
           <div class="stat-count" style="color:#10b981;">${Utils.formatCurrency((plStats.cashout?.admin_transfer_income !== undefined ? plStats.cashout?.admin_transfer_income : plStats.cashout?.total_transferred_to_admin) || plStats.cashout?.total_cashout_income || 0)}</div>
-          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-vault"></i> Transfer income to admin</div>
+          <div class="stat-trend" style="color:#10b981;"><i class="fas ${isAdmin ? 'fa-shield-halved' : 'fa-vault'}"></i> ${isAdmin ? 'Income secured in admin safe' : 'Transfer income to admin'}</div>
         </div>
       </div>
       <div class="stat-card">
@@ -274,12 +276,12 @@ async function renderInventory(c) {
     Auth.fetch("/api/v1/inventory/analytics")
   ]);
 
-  const items = invRes.ok ? await invRes.json() : [];
+  if (!invRes.ok) throw new Error("Failed to load inventory items from server.");
+  const items = await invRes.json();
   cachedInventory = items;
-  cachedAnalytics = analyticsRes.ok ? await analyticsRes.json() : {
-    health_score: 100, healthy_count: 0, low_stock_count: 0, out_of_stock_count: 0, total_items: 0,
-    total_valuation: 0, urgent_restock: [], category_summary: {}
-  };
+
+  if (!analyticsRes.ok) throw new Error("Failed to load inventory analytics from server.");
+  cachedAnalytics = await analyticsRes.json();
 
   const totalValuation = (cachedAnalytics && cachedAnalytics.total_valuation) || items.reduce((sum, i) => sum + (Number(i.quantity) || 0) * (Number(i.unit_price) || 0), 0);
   const uniqueCats = Array.from(new Set(cachedInventory.map(i => i.category || 'Uncategorized'))).sort();
@@ -1064,8 +1066,10 @@ async function renderProducts(c) {
     Auth.fetch("/api/v1/categories")
   ]);
 
-  const products = prodRes.ok ? await prodRes.json() : [];
-  const categories = catRes.ok ? await catRes.json() : [];
+  if (!prodRes.ok) throw new Error("Failed to load products from server.");
+  if (!catRes.ok) throw new Error("Failed to load categories from server.");
+  const products = await prodRes.json();
+  const categories = await catRes.json();
   cachedProducts = products;
   window.cachedCategories = categories;
 
@@ -2266,9 +2270,12 @@ async function renderPOS(c) {
     Auth.fetch("/api/v1/shifts/drawer-summary")
   ]);
 
-  const rawProducts = prodRes.ok ? await prodRes.json() : [];
-  const categories = catRes.ok ? await catRes.json() : [];
-  const drawerData = drawerRes.ok ? await drawerRes.json() : { shifts: [], total_cash_in_drawers: 0, today_total_orders_amount: 0 };
+  if (!prodRes.ok) throw new Error("Failed to load products for POS.");
+  if (!catRes.ok) throw new Error("Failed to load menu categories for POS.");
+  if (!drawerRes.ok) throw new Error("Failed to load drawer summary for POS.");
+  const rawProducts = await prodRes.json();
+  const categories = await catRes.json();
+  const drawerData = await drawerRes.json();
   const currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
   const myShift = (drawerData.shifts || []).find(s => s.status === 'open' && (currentUser ? s.cashier_id === currentUser.id : true))
                || (drawerData.shifts || []).find(s => s.status === 'open');
@@ -3607,7 +3614,8 @@ async function submitCheckout() {
 async function renderKitchen(c) {
   c = c || document.getElementById('view-container');
   const res = await Auth.fetch(`/api/v1/kitchen/orders?type=food&_t=${Date.now()}`);
-  const orders = res.ok ? await res.json() : [];
+  if (!res.ok) throw new Error("Failed to load kitchen orders from server.");
+  const orders = await res.json();
 
   if (window.kitchenOrdersInterval) {
     clearInterval(window.kitchenOrdersInterval);
@@ -3878,7 +3886,8 @@ async function renderDrinksStation(c) {
   if (!c) return;
 
   const res = await Auth.fetch(`/api/v1/kitchen/drinks-orders?_t=${Date.now()}`);
-  const orders = res.ok ? await res.json() : [];
+  if (!res.ok) throw new Error("Failed to load drinks station orders from server.");
+  const orders = await res.json();
 
   pollDrinksBadge();
 
@@ -4130,7 +4139,8 @@ async function renderTransactions(c) {
   const isCashier = (currentUser && (currentUser.role || "").toLowerCase() === "cashier") || (window.location.pathname || "").toLowerCase().includes("cashier");
 
   const res = await Auth.fetch("/api/v1/transactions?limit=50");
-  const list = res.ok ? await res.json() : [];
+  if (!res.ok) throw new Error("Failed to load transactions from server.");
+  const list = await res.json();
 
   // Cache for quick modal lookups
   window._recentTransactionsCache = list;
@@ -4423,12 +4433,14 @@ async function renderUsers(c) {
     Auth.fetch("/api/v1/users/stats")
   ]);
 
-  const rawUsers = usersRes.ok ? await usersRes.json() : [];
+  if (!usersRes.ok) throw new Error("Failed to load users from server.");
+  if (!statsRes.ok) throw new Error("Failed to load user statistics from server.");
+  const rawUsers = await usersRes.json();
   const users = rawUsers.filter(u => {
     const r = (u.role || "").toUpperCase();
     return r !== "SUPER_ADMIN" && r !== "ADMIN";
   });
-  const stats = statsRes.ok ? await statsRes.json() : {};
+  const stats = await statsRes.json();
 
   c.innerHTML = `
     <div class="stats-grid">
@@ -4665,7 +4677,8 @@ async function submitAddStaff() {
 // ─────────────────────────────────────────────────────────────────────────────
 async function renderLogs(c) {
   const res = await Auth.fetch("/api/v1/activity-logs?limit=50");
-  const logs = res.ok ? await res.json() : [];
+  if (!res.ok) throw new Error("Failed to load activity logs from server.");
+  const logs = await res.json();
 
   c.innerHTML = `
     <div class="section-card">
@@ -4706,7 +4719,8 @@ async function renderLogs(c) {
 // ─────────────────────────────────────────────────────────────────────────────
 async function renderReports(c) {
   const txRes = await Auth.fetch("/api/v1/transactions?limit=100");
-  const transactions = txRes.ok ? await txRes.json() : [];
+  if (!txRes.ok) throw new Error("Failed to load sales report transactions from server.");
+  const transactions = await txRes.json();
 
   const totalSales = transactions.reduce((acc, t) => acc + (t.net_amount || 0), 0);
 
@@ -4859,6 +4873,7 @@ async function renderSuppliers(c) {
                 <th>Category Supplied</th>
                 <th>Terms</th>
                 <th>Status</th>
+                <th style="text-align:right; width:150px;">ACTIONS</th>
               </tr>
             </thead>
             <tbody id="supp-tbody">
@@ -4881,7 +4896,7 @@ async function renderSuppliers(c) {
 
 function renderSupplierRows(suppliers) {
   if (!suppliers || !suppliers.length) {
-    return `<tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-muted);">No suppliers found.</td></tr>`;
+    return `<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--text-muted);">No suppliers found.</td></tr>`;
   }
   return suppliers.map(s => `
     <tr>
@@ -4895,6 +4910,16 @@ function renderSupplierRows(suppliers) {
         <span class="badge ${s.status === 'Active' ? 'badge-success' : 'badge-danger'}" style="font-size:11px; font-weight:700;">
           ${s.status || 'Active'}
         </span>
+      </td>
+      <td style="text-align:right; white-space:nowrap;">
+        <div style="display:inline-flex; gap:6px; justify-content:flex-end;">
+          <button class="btn btn-outline" style="padding:4px 9px; font-size:12px; border-radius:6px; color:#c9a227; border-color:rgba(201,162,39,0.35); display:inline-flex; align-items:center; gap:5px;" onclick="openEditSupplierModal(${s.id})" title="Edit Supplier">
+            <i class="fas fa-pencil-alt"></i> Edit
+          </button>
+          <button class="btn btn-outline" style="padding:4px 9px; font-size:12px; border-radius:6px; color:var(--danger, #ef4444); border-color:rgba(239,68,68,0.35); display:inline-flex; align-items:center; gap:5px;" onclick="confirmDeleteSupplier(${s.id})" title="Delete Supplier">
+            <i class="fas fa-trash-alt"></i> Delete
+          </button>
+        </div>
       </td>
     </tr>
   `).join('');
@@ -4940,8 +4965,17 @@ function openAddSupplierModal() {
           <input id="sp-category" class="input-field" placeholder="e.g. Poultry, Dairy, Packaging" style="width:100%;">
         </div>
       </div>
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Payment Terms / Notes</label>
+        <input id="sp-notes" class="input-field" placeholder="e.g. Net 30, COD, Weekly" style="width:100%;">
+      </div>
     </form>
-  `, `<button class="btn btn-primary" onclick="submitAddSupplier()"><i class="fas fa-save"></i> Save Supplier</button>`);
+  `, `
+    <button type="button" class="btn btn-outline" onclick="Utils.closeModal()">Cancel</button>
+    <button type="button" class="btn btn-primary" id="btn-save-add-supplier" onclick="submitAddSupplier()">
+      <i class="fas fa-save"></i> Save Supplier
+    </button>
+  `);
 }
 
 async function submitAddSupplier() {
@@ -4950,18 +4984,26 @@ async function submitAddSupplier() {
   const phone = document.getElementById("sp-phone")?.value.trim();
   const email = document.getElementById("sp-email")?.value.trim();
   const category = document.getElementById("sp-category")?.value.trim();
+  const notes = document.getElementById("sp-notes")?.value.trim();
 
   if (!name || !phone) {
     Utils.showToast("Company name and phone number are required.", "danger");
     return;
   }
 
+  const btn = document.getElementById("btn-save-add-supplier");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Saving...`;
+  }
+
   const payload = {
     supplier_name: name,
-    contact_person: contact,
+    contact_person: contact || null,
     contact_number: phone,
-    email: email,
+    email: email || null,
     category: category || "General",
+    notes: notes || null,
     status: "Active"
   };
 
@@ -4972,16 +5014,209 @@ async function submitAddSupplier() {
     });
 
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || "Failed to add supplier");
+      let errMsg = "Failed to add supplier";
+      try {
+        const err = await res.json();
+        if (err && err.detail) errMsg = err.detail;
+      } catch (_) {}
+      throw new Error(errMsg);
     }
 
     Utils.showToast("Supplier registered successfully!", "success");
     Utils.closeModal();
-    renderSuppliers();
+    await renderSuppliers();
   } catch (error) {
     console.error(error);
     Utils.showToast(error.message, "danger");
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<i class="fas fa-save"></i> Save Supplier`;
+    }
+  }
+}
+
+function openEditSupplierModal(id) {
+  const s = (globalSuppliers || []).find(x => x.id === id);
+  if (!s) {
+    Utils.showToast("Supplier details could not be found.", "danger");
+    return;
+  }
+
+  const escapeAttr = (str) => (str ? String(str).replace(/"/g, '&quot;') : '');
+
+  Utils.openModal("Edit Vendor Supplier", `
+    <form id="form-edit-supp" onsubmit="event.preventDefault(); submitEditSupplier(${s.id});">
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Supplier / Company Name <span style="color:var(--danger);">*</span></label>
+        <input id="edit-sp-name" class="input-field" required value="${escapeAttr(s.supplier_name)}" placeholder="e.g. San Miguel Foods Inc." style="width:100%;">
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Contact Person</label>
+          <input id="edit-sp-contact" class="input-field" value="${escapeAttr(s.contact_person)}" placeholder="e.g. Mario Batali" style="width:100%;">
+        </div>
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Phone Number <span style="color:var(--danger);">*</span></label>
+          <input id="edit-sp-phone" class="input-field" required value="${escapeAttr(s.contact_number)}" placeholder="09XX-XXX-XXXX" style="width:100%;">
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Email Address</label>
+          <input type="email" id="edit-sp-email" class="input-field" value="${escapeAttr(s.email)}" placeholder="orders@supplier.com" style="width:100%;">
+        </div>
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Supply Category</label>
+          <input id="edit-sp-category" class="input-field" value="${escapeAttr(s.category)}" placeholder="e.g. Poultry, Dairy, Packaging" style="width:100%;">
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Payment Terms / Notes</label>
+          <input id="edit-sp-notes" class="input-field" value="${escapeAttr(s.notes)}" placeholder="e.g. Net 30, COD, Weekly" style="width:100%;">
+        </div>
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Status <span style="color:var(--danger);">*</span></label>
+          <select id="edit-sp-status" class="input-field" style="width:100%;">
+            <option value="Active" ${s.status === 'Active' ? 'selected' : ''}>Active</option>
+            <option value="Inactive" ${s.status === 'Inactive' ? 'selected' : ''}>Inactive</option>
+          </select>
+        </div>
+      </div>
+    </form>
+  `, `
+    <button type="button" class="btn btn-outline" onclick="Utils.closeModal()">Cancel</button>
+    <button type="button" class="btn btn-primary" id="btn-save-edit-supplier" onclick="submitEditSupplier(${s.id})">
+      <i class="fas fa-save"></i> Save Changes
+    </button>
+  `);
+}
+
+async function submitEditSupplier(id) {
+  const name = document.getElementById("edit-sp-name")?.value.trim();
+  const contact = document.getElementById("edit-sp-contact")?.value.trim();
+  const phone = document.getElementById("edit-sp-phone")?.value.trim();
+  const email = document.getElementById("edit-sp-email")?.value.trim();
+  const category = document.getElementById("edit-sp-category")?.value.trim();
+  const notes = document.getElementById("edit-sp-notes")?.value.trim();
+  const status = document.getElementById("edit-sp-status")?.value;
+
+  if (!name || !phone) {
+    Utils.showToast("Company name and phone number are required.", "danger");
+    return;
+  }
+
+  const btn = document.getElementById("btn-save-edit-supplier");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Saving...`;
+  }
+
+  const payload = {
+    supplier_name: name,
+    contact_person: contact || null,
+    contact_number: phone,
+    email: email || null,
+    category: category || "General",
+    notes: notes || null,
+    status: status || "Active"
+  };
+
+  try {
+    const res = await Auth.fetch(`/api/v1/suppliers/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      let errMsg = "Failed to update supplier";
+      try {
+        const err = await res.json();
+        if (err && err.detail) errMsg = err.detail;
+      } catch (_) {}
+      throw new Error(errMsg);
+    }
+
+    Utils.showToast("Supplier updated successfully!", "success");
+    Utils.closeModal();
+    await renderSuppliers();
+  } catch (error) {
+    console.error("Update supplier error:", error);
+    Utils.showToast(error.message, "danger");
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<i class="fas fa-save"></i> Save Changes`;
+    }
+  }
+}
+
+function confirmDeleteSupplier(id) {
+  const s = (globalSuppliers || []).find(x => x.id === id);
+  const safeName = s ? s.supplier_name : `Supplier #${id}`;
+
+  Utils.openModal(
+    "Delete Supplier Confirmation",
+    `
+      <div style="font-size:14px; line-height:1.6; color:var(--text-main);">
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px; padding:12px; border-radius:8px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25);">
+          <i class="fas fa-exclamation-triangle" style="font-size:24px; color:var(--danger, #ef4444); flex-shrink:0;"></i>
+          <div>
+            <strong>Are you sure you want to delete <span style="color:var(--danger, #ef4444);">${safeName}</span>?</strong>
+          </div>
+        </div>
+        <p style="margin-bottom:10px; color:var(--text-muted);">
+          This action will permanently remove the supplier from the database. Deletion may affect related purchase orders, inventory shipments, or historical vendor records.
+        </p>
+        <p style="margin-bottom:0; font-size:12px; color:var(--text-muted);">
+          <em>Note: If this supplier has linked purchase orders, deletion is prevented to protect record integrity. In that case, please change its status to 'Inactive' instead.</em>
+        </p>
+      </div>
+    `,
+    `
+      <button type="button" class="btn btn-outline" onclick="Utils.closeModal()">Cancel</button>
+      <button type="button" class="btn btn-danger" id="btn-confirm-delete-supplier" onclick="submitDeleteSupplier(${id})">
+        <i class="fas fa-trash-alt"></i> Confirm Delete
+      </button>
+    `
+  );
+}
+
+async function submitDeleteSupplier(id) {
+  const btn = document.getElementById("btn-confirm-delete-supplier");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Deleting...`;
+  }
+
+  try {
+    const res = await Auth.fetch(`/api/v1/suppliers/${id}`, {
+      method: "DELETE"
+    });
+
+    if (res.status === 204 || res.ok) {
+      Utils.showToast("Supplier deleted successfully.", "success");
+      Utils.closeModal();
+      await renderSuppliers();
+    } else {
+      let errMsg = "Failed to delete supplier.";
+      try {
+        const err = await res.json();
+        if (err && err.detail) errMsg = err.detail;
+      } catch (_) {}
+      
+      Utils.showToast(errMsg, "danger");
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = `<i class="fas fa-trash-alt"></i> Confirm Delete`;
+      }
+    }
+  } catch (error) {
+    console.error("Delete supplier error:", error);
+    Utils.showToast(error.message || "Network error while deleting supplier.", "danger");
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<i class="fas fa-trash-alt"></i> Confirm Delete`;
+    }
   }
 }
 
@@ -5001,15 +5236,10 @@ async function renderProfitLoss(c) {
     profit_loss: { gross_profit: 0, net_profit: 0, profit_margin_percent: 0, net_cash_income: 0, is_profitable: true }
   };
 
-  try {
-    const res = await Auth.fetch("/api/v1/analytics/profit-loss");
-    if (res.ok) {
-      data = await res.json();
-      cachedProfitLossData = data;
-    }
-  } catch (err) {
-    console.error("Failed to load profit-loss data:", err);
-  }
+  const res = await Auth.fetch("/api/v1/analytics/profit-loss");
+  if (!res.ok) throw new Error("Failed to load profit and loss data from server.");
+  data = await res.json();
+  cachedProfitLossData = data;
 
   const rev = data.revenue || {};
   const inv = data.inventory || {};
@@ -5018,191 +5248,839 @@ async function renderProfitLoss(c) {
   const history = csh.history || [];
 
   const currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
-  const userRole = (currentUser && currentUser.role ? currentUser.role : '').toLowerCase();
-  const isAdmin = userRole.includes('admin') || window.location.pathname.includes('/admin');
+  const userRole = (currentUser && currentUser.role ? currentUser.role : (typeof Auth !== 'undefined' ? Auth.getRole() : '')).toLowerCase();
+  const isAdmin = userRole.includes('admin') || window.location.pathname.includes('/admin') || window.location.pathname.includes('/dashboard');
 
   c.innerHTML = `
-    <!-- Top Toolbar -->
-    <div class="toolbar fade-up" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
-      <div>
-        <h2 style="font-size:20px; font-weight:800; color:var(--text-main); margin:0; display:flex; align-items:center; gap:8px;">
-          <i class="fas fa-scale-balanced" style="color:#10b981;"></i> Profit Loss and Income
-        </h2>
-        <p style="font-size:12px; color:var(--text-muted); margin:4px 0 0 0;">
-          Live financial ledger: orders sales revenue, inventory price valuation, manager cashier transfers, and operating profit
-        </p>
-      </div>
-      <div style="display:flex; gap:10px; align-items:center;">
-        <button class="btn btn-primary" onclick="openAddCashMovementModal(null, 'admin')" style="display:inline-flex; align-items:center; gap:8px; font-weight:700; border-radius:10px;">
-          <i class="fas fa-paper-plane"></i> Transfer to Admin
-        </button>
-        <button class="btn btn-outline btn-sm" onclick="renderProfitLoss()" title="Refresh Financials" style="border-radius:10px;">
-          <i class="fas fa-sync-alt"></i> Live Refresh
-        </button>
-      </div>
-    </div>
+    <style id="profit-loss-view-styles">
+      .pl-dashboard-container {
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
 
-    <!-- Financial KPI Cards -->
-    <div class="stats-grid fade-up delay-1" style="margin-bottom:24px;">
-      <div class="stat-card">
-        <div class="stat-icon gold"><i class="fas fa-coins"></i></div>
-        <div class="stat-info">
-          <h3>Total Orders Revenue</h3>
-          <div class="stat-count" style="color:#c9a227;">${Utils.formatCurrency(rev.total_orders_revenue || 0)}</div>
-          <div class="stat-trend" style="color:var(--success, #10b981);"><i class="fas fa-receipt"></i> ${rev.total_orders_count || 0} completed order(s)</div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon green"><i class="fas fa-chart-line"></i></div>
-        <div class="stat-info">
-          <h3>Net Operating Profit</h3>
-          <div class="stat-count" style="color:${pl.is_profitable ? '#10b981' : '#ef4444'};">${Utils.formatCurrency(pl.net_profit || 0)}</div>
-          <div class="stat-trend" style="color:${pl.is_profitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${pl.profit_margin_percent || 0}% profit margin</div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon emerald" style="background:rgba(16,185,129,0.12); color:#10b981;"><i class="fas fa-paper-plane"></i></div>
-        <div class="stat-info">
-          <h3>${isAdmin ? 'Transfer Income from Manager' : 'Transfer Income to Admin'}</h3>
-          <div class="stat-count" style="color:#10b981;">${Utils.formatCurrency(isAdmin ? (csh.admin_transfer_income !== undefined ? csh.admin_transfer_income : (csh.total_transferred_to_admin || 0)) : (csh.manager_safe_cash !== undefined ? csh.manager_safe_cash : (csh.total_cashout_income || 0)))}</div>
-          <div class="stat-trend" style="color:#10b981;"><i class="fas ${isAdmin ? 'fa-paper-plane' : 'fa-vault'}"></i> ${isAdmin ? 'Transferred to admin safe' : 'Manager safe balance (after transfers to Admin)'}</div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon purple" style="background:rgba(99,102,241,0.12); color:#6366f1;"><i class="fas fa-boxes-stacked"></i></div>
-        <div class="stat-info">
-          <h3>Inventory Stock Price Value</h3>
-          <div class="stat-count" style="color:#6366f1;">${Utils.formatCurrency(inv.total_inventory_valuation || 0)}</div>
-          <div class="stat-trend" style="color:#6366f1;"><i class="fas fa-tags"></i> Across ${inv.total_items_count || 0} items</div>
-        </div>
-      </div>
-    </div>
+      /* Top Toolbar */
+      .pl-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 22px;
+        flex-wrap: wrap;
+        gap: 14px;
+      }
 
-    <!-- Side-by-Side Dual Analysis Sections -->
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:24px;" class="fade-up delay-2">
-      <!-- P&L Statement Card -->
-      <div class="section-card" style="margin-bottom:0;">
-        <div class="section-head" style="border-bottom:1px solid rgba(205,190,150,0.25); padding-bottom:12px;">
-          <div>
-            <h2 style="font-size:16px; margin:0;"><i class="fas fa-file-invoice-dollar" style="color:#10b981; margin-right:8px;"></i> Profit & Loss Statement (P&L)</h2>
-            <span style="font-size:12px; color:var(--text-muted);">Real-time revenue versus total valuation of inventory of product</span>
-          </div>
-          <span class="badge ${pl.is_profitable ? 'badge-success' : 'badge-danger'}" style="font-size:11px; font-weight:700;">
-            ${pl.is_profitable ? 'PROFITABLE' : 'OPERATING LOSS'}
-          </span>
+      .pl-toolbar-title-wrap h2 {
+        font-size: 20px;
+        font-weight: 800;
+        color: var(--text-main, #18181b);
+        margin: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        line-height: 1.2;
+      }
+
+      .pl-toolbar-title-wrap p {
+        font-size: 12.5px;
+        color: var(--text-muted, #71717a);
+        margin: 4px 0 0 0;
+        line-height: 1.4;
+      }
+
+      .pl-toolbar-actions {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .pl-toolbar-actions .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 700;
+        border-radius: 10px;
+        padding: 8px 16px;
+        height: 40px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      /* 4 KPI Summary Cards */
+      .pl-stats-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+        margin-bottom: 24px;
+        width: 100%;
+        box-sizing: border-box;
+      }
+
+      .pl-stat-card {
+        background: var(--card-bg, #ffffff);
+        border: 1px solid rgba(205, 190, 150, 0.35);
+        border-radius: 16px;
+        padding: 16px 18px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03);
+        transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.2s ease;
+        min-width: 0;
+        box-sizing: border-box;
+      }
+
+      .pl-stat-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 24px rgba(180, 140, 50, 0.12);
+        border-color: rgba(201, 162, 39, 0.55);
+      }
+
+      .pl-stat-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 19px;
+        flex-shrink: 0;
+      }
+
+      .pl-stat-icon.gold {
+        background: rgba(201, 162, 39, 0.12);
+        color: #c9a227;
+      }
+      .pl-stat-icon.green {
+        background: rgba(16, 185, 129, 0.12);
+        color: #10b981;
+      }
+      .pl-stat-icon.red {
+        background: rgba(239, 68, 68, 0.12);
+        color: #ef4444;
+      }
+      .pl-stat-icon.purple {
+        background: rgba(99, 102, 241, 0.12);
+        color: #6366f1;
+      }
+
+      .pl-stat-info {
+        min-width: 0;
+        flex: 1;
+        overflow: hidden;
+      }
+
+      .pl-stat-info h3 {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--text-muted, #71717a);
+        margin: 0 0 4px 0;
+        line-height: 1.2;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .pl-stat-count {
+        font-size: clamp(17px, 1.4vw, 22px);
+        font-weight: 800;
+        line-height: 1.2;
+        margin-bottom: 4px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .pl-stat-trend {
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 1.2;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      /* Dual Analysis Sections (Side by Side) */
+      .pl-dual-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        margin-bottom: 24px;
+        width: 100%;
+        align-items: stretch;
+        box-sizing: border-box;
+      }
+
+      .pl-card {
+        background: var(--card-bg, #ffffff);
+        border: 1px solid rgba(205, 190, 150, 0.35);
+        border-radius: 16px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        box-sizing: border-box;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .pl-card:hover {
+        border-color: rgba(201, 162, 39, 0.45);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+      }
+
+      .pl-card-header {
+        padding: 16px 20px;
+        border-bottom: 1px solid rgba(205, 190, 150, 0.25);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+        background: rgba(0, 0, 0, 0.01);
+      }
+
+      .pl-card-header-left {
+        min-width: 0;
+        flex: 1;
+      }
+
+      .pl-card-header-left h2 {
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--text-main, #18181b);
+        margin: 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        line-height: 1.2;
+      }
+
+      .pl-card-header-left span {
+        font-size: 12px;
+        color: var(--text-muted, #71717a);
+        display: block;
+        margin-top: 3px;
+        line-height: 1.35;
+      }
+
+      .pl-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 4px 10px;
+        border-radius: 999px;
+        letter-spacing: 0.4px;
+        text-transform: uppercase;
+        flex-shrink: 0;
+      }
+
+      .pl-badge-success {
+        background: rgba(16, 185, 129, 0.12);
+        color: #10b981;
+        border: 1px solid rgba(16, 185, 129, 0.25);
+      }
+
+      .pl-badge-danger {
+        background: rgba(239, 68, 68, 0.12);
+        color: #ef4444;
+        border: 1px solid rgba(239, 68, 68, 0.25);
+      }
+
+      .pl-badge-info {
+        background: rgba(2, 132, 199, 0.12);
+        color: #0284c7;
+        border: 1px solid rgba(2, 132, 199, 0.25);
+      }
+
+      .pl-badge-gold {
+        background: rgba(201, 162, 39, 0.12);
+        color: #c9a227;
+        border: 1px solid rgba(201, 162, 39, 0.25);
+      }
+
+      /* Card Body & Rows */
+      .pl-card-body {
+        padding: 16px 20px;
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        box-sizing: border-box;
+      }
+
+      .pl-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 11px 0;
+        border-bottom: 1px solid rgba(205, 190, 150, 0.16);
+        gap: 12px;
+      }
+
+      .pl-sub-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0 8px 18px;
+        font-size: 12.5px;
+        color: var(--text-muted, #71717a);
+        border-bottom: 1px dashed rgba(205, 190, 150, 0.16);
+        gap: 12px;
+      }
+
+      .pl-row-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-main, #18181b);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .pl-row-value {
+        font-size: 14px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        text-align: right;
+      }
+
+      /* Highlight Total / Net Summary Box */
+      .pl-highlight-box {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 14px 18px;
+        border-radius: 12px;
+        margin-top: 14px;
+        margin-bottom: 14px;
+        gap: 12px;
+        flex-wrap: wrap;
+        box-sizing: border-box;
+      }
+
+      .pl-highlight-box.gold {
+        background: rgba(201, 162, 39, 0.08);
+        border: 1px solid rgba(201, 162, 39, 0.28);
+      }
+
+      .pl-highlight-box.green {
+        background: rgba(16, 185, 129, 0.08);
+        border: 1px solid rgba(16, 185, 129, 0.28);
+      }
+
+      .pl-highlight-box.red {
+        background: rgba(239, 68, 68, 0.08);
+        border: 1px solid rgba(239, 68, 68, 0.28);
+      }
+
+      .pl-highlight-label {
+        font-size: 12.5px;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: var(--text-main, #18181b);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .pl-highlight-value {
+        font-size: clamp(18px, 1.7vw, 22px);
+        font-weight: 900;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      /* Card Footer */
+      .pl-card-footer {
+        border-top: 1px solid rgba(205, 190, 150, 0.22);
+        padding: 12px 18px;
+        background: rgba(0, 0, 0, 0.015);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        font-size: 11.5px;
+        color: var(--text-muted, #71717a);
+        flex-wrap: wrap;
+        margin-top: auto;
+      }
+
+      .pl-card-footer strong {
+        color: var(--text-main, #18181b);
+        font-weight: 700;
+      }
+
+      /* Transfer to Admin Full Width Button Container */
+      .pl-action-container {
+        margin-top: auto;
+        padding-top: 12px;
+      }
+
+      .pl-transfer-btn {
+        width: 100%;
+        height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        font-size: 13.5px;
+        font-weight: 700;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: #ffffff;
+        border: none;
+        box-shadow: 0 4px 14px rgba(16, 185, 129, 0.25);
+        cursor: pointer;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      .pl-transfer-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 18px rgba(16, 185, 129, 0.35);
+        filter: brightness(1.05);
+      }
+
+      .pl-transfer-btn:active {
+        transform: translateY(0);
+      }
+
+      /* Ledger Table Styling */
+      .pl-table-wrap {
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .pl-table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 680px;
+        text-align: left;
+      }
+
+      .pl-table th {
+        padding: 12px 16px;
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--text-muted, #71717a);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        border-bottom: 1px solid rgba(205, 190, 150, 0.25);
+        background: rgba(0, 0, 0, 0.02);
+        white-space: nowrap;
+      }
+
+      .pl-table td {
+        padding: 13px 16px;
+        border-bottom: 1px solid rgba(205, 190, 150, 0.15);
+        font-size: 13px;
+        vertical-align: middle;
+      }
+
+      .pl-table tbody tr {
+        transition: background 0.15s ease;
+      }
+
+      .pl-table tbody tr:hover {
+        background: rgba(201, 162, 39, 0.035);
+      }
+
+      .pl-table tbody tr:last-child td {
+        border-bottom: none;
+      }
+
+      /* Ledger Empty State */
+      .pl-empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 40px 20px;
+        text-align: center;
+      }
+
+      .pl-empty-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        background: rgba(201, 162, 39, 0.1);
+        color: #c9a227;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 22px;
+        margin-bottom: 14px;
+      }
+
+      .pl-empty-state h4 {
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--text-main, #18181b);
+        margin: 0 0 6px 0;
+      }
+
+      .pl-empty-state p {
+        font-size: 12.5px;
+        color: var(--text-muted, #71717a);
+        max-width: 380px;
+        margin: 0;
+        line-height: 1.4;
+      }
+
+      /* ========================================================
+         RESPONSIVE BREAKPOINTS
+         ======================================================== */
+
+      /* Tablet (768px – 1199px) */
+      @media (max-width: 1199px) {
+        .pl-stats-grid {
+          grid-template-columns: repeat(2, 1fr);
+          gap: 14px;
+        }
+        .pl-dual-grid {
+          grid-template-columns: 1fr;
+          gap: 18px;
+        }
+      }
+
+      /* Mobile (below 768px) */
+      @media (max-width: 767px) {
+        .pl-toolbar {
+          flex-direction: column;
+          align-items: stretch;
+          gap: 12px;
+        }
+        .pl-toolbar-actions {
+          display: flex;
+          flex-direction: column;
+          width: 100%;
+          gap: 8px;
+        }
+        .pl-toolbar-actions .btn {
+          width: 100%;
+          justify-content: center;
+        }
+        .pl-stats-grid {
+          grid-template-columns: 1fr;
+          gap: 10px;
+        }
+        .pl-card-header {
+          padding: 14px 16px;
+        }
+        .pl-card-body {
+          padding: 14px 16px;
+        }
+        .pl-highlight-box {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 6px;
+          padding: 12px 14px;
+        }
+        .pl-highlight-value {
+          align-self: flex-end;
+        }
+      }
+
+      /* Compact screens (below 480px) */
+      @media (max-width: 480px) {
+        .pl-stat-card {
+          padding: 12px 14px;
+          gap: 12px;
+        }
+        .pl-stat-icon {
+          width: 42px;
+          height: 42px;
+          font-size: 17px;
+        }
+        .pl-row, .pl-sub-row {
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+        .pl-row-value {
+          width: 100%;
+          text-align: right;
+        }
+      }
+    </style>
+
+    <div class="pl-dashboard-container">
+      <!-- Top Toolbar -->
+      <div class="pl-toolbar fade-up">
+        <div class="pl-toolbar-title-wrap">
+          <h2>
+            <i class="fas fa-scale-balanced" style="color:#10b981;"></i> Profit Loss and Income
+          </h2>
+          <p>
+            Live financial ledger: orders sales revenue, inventory price valuation, manager cashier transfers, and operating profit
+          </p>
         </div>
-        <div style="padding:16px 0;">
-          <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(205,190,150,0.15);">
-            <span style="font-weight:600; color:var(--text-main); font-size:13px;"><i class="fas fa-plus" style="color:#10b981; margin-right:6px;"></i> Gross Orders Revenue:</span>
-            <strong style="color:#10b981; font-size:14px;">+${Utils.formatCurrency(rev.total_orders_revenue || 0)}</strong>
+        <div class="pl-toolbar-actions">
+          ${!isAdmin ? `
+          <button class="btn btn-primary" onclick="openAddCashMovementModal(null, 'admin')">
+            <i class="fas fa-paper-plane"></i> Transfer to Admin
+          </button>
+          ` : ''}
+          <button class="btn btn-outline btn-sm" onclick="renderProfitLoss()" title="Refresh Financials">
+            <i class="fas fa-sync-alt"></i> Live Refresh
+          </button>
+        </div>
+      </div>
+
+      <!-- Financial KPI Cards (4 summary cards) -->
+      <div class="pl-stats-grid fade-up delay-1">
+        <!-- 1. Total Orders Revenue -->
+        <div class="pl-stat-card">
+          <div class="pl-stat-icon gold"><i class="fas fa-coins"></i></div>
+          <div class="pl-stat-info">
+            <h3>Total Orders Revenue</h3>
+            <div class="pl-stat-count" style="color:#c9a227;">${Utils.formatCurrency(rev.total_orders_revenue || 0)}</div>
+            <div class="pl-stat-trend" style="color:var(--success, #10b981);"><i class="fas fa-receipt"></i> ${rev.total_orders_count || 0} completed order(s)</div>
           </div>
-          <div style="display:flex; justify-content:space-between; padding:8px 0 8px 20px; font-size:12px; color:var(--text-muted); border-bottom:1px dashed rgba(205,190,150,0.15);">
-            <span>↳ Cash Sales (Drawer):</span>
-            <span>${Utils.formatCurrency(rev.cash_sales || 0)}</span>
+        </div>
+
+        <!-- 2. Net Operating Profit -->
+        <div class="pl-stat-card">
+          <div class="pl-stat-icon ${pl.is_profitable ? 'green' : 'red'}">
+            <i class="fas ${pl.is_profitable ? 'fa-chart-line' : 'fa-chart-line-down'}"></i>
           </div>
-          <div style="display:flex; justify-content:space-between; padding:8px 0 8px 20px; font-size:12px; color:var(--text-muted); border-bottom:1px solid rgba(205,190,150,0.15);">
-            <span>↳ Non-Cash Sales (GCash / Card):</span>
-            <span>${Utils.formatCurrency(rev.non_cash_sales || 0)}</span>
+          <div class="pl-stat-info">
+            <h3>Net Operating Profit</h3>
+            <div class="pl-stat-count" style="color:${pl.is_profitable ? '#10b981' : '#ef4444'};">${Utils.formatCurrency(pl.net_profit || 0)}</div>
+            <div class="pl-stat-trend" style="color:${pl.is_profitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${pl.profit_margin_percent || 0}% profit margin</div>
           </div>
-          <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(205,190,150,0.15);">
-            <span style="font-weight:600; color:var(--text-main); font-size:13px;"><i class="fas fa-minus" style="color:#ef4444; margin-right:6px;"></i> Total Valuation of Inventory of Product:</span>
-            <strong style="color:#ef4444; font-size:14px;">-${Utils.formatCurrency(inv.total_inventory_valuation || 0)}</strong>
+        </div>
+
+        <!-- 3. Transfer Income Card -->
+        <div class="pl-stat-card">
+          <div class="pl-stat-icon green">
+            <i class="fas ${isAdmin ? 'fa-inbox' : 'fa-vault'}"></i>
           </div>
-          <div style="display:flex; justify-content:space-between; padding:12px 0; background:rgba(201,162,39,0.06); border-radius:8px; margin-top:12px; padding:12px 14px;">
-            <span style="font-weight:800; font-size:14px; color:var(--text-main);">NET OPERATING PROFIT / LOSS:</span>
-            <span style="font-weight:800; font-size:18px; color:${pl.is_profitable ? '#10b981' : '#ef4444'};">
-              ${Utils.formatCurrency(pl.net_profit || 0)}
+          <div class="pl-stat-info">
+            <h3>${isAdmin ? 'Income Received from Manager' : 'Transfer Income to Admin'}</h3>
+            <div class="pl-stat-count" style="color:#10b981;">${Utils.formatCurrency(isAdmin ? (csh.admin_transfer_income !== undefined ? csh.admin_transfer_income : (csh.total_transferred_to_admin || 0)) : (csh.manager_safe_cash !== undefined ? csh.manager_safe_cash : (csh.total_cashout_income || 0)))}</div>
+            <div class="pl-stat-trend" style="color:#10b981;"><i class="fas ${isAdmin ? 'fa-shield-halved' : 'fa-vault'}"></i> ${isAdmin ? 'Income secured in admin safe' : 'Manager safe balance (after transfers to Admin)'}</div>
+          </div>
+        </div>
+
+        <!-- 4. Inventory Stock Price Value -->
+        <div class="pl-stat-card">
+          <div class="pl-stat-icon purple"><i class="fas fa-boxes-stacked"></i></div>
+          <div class="pl-stat-info">
+            <h3>Inventory Stock Price Value</h3>
+            <div class="pl-stat-count" style="color:#6366f1;">${Utils.formatCurrency(inv.total_inventory_valuation || 0)}</div>
+            <div class="pl-stat-trend" style="color:#6366f1;"><i class="fas fa-tags"></i> Across ${inv.total_items_count || 0} items</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Side-by-Side Dual Analysis Sections -->
+      <div class="pl-dual-grid fade-up delay-2">
+        <!-- P&L Statement Card (Left Panel) -->
+        <div class="pl-card">
+          <div class="pl-card-header">
+            <div class="pl-card-header-left">
+              <h2><i class="fas fa-file-invoice-dollar" style="color:#10b981;"></i> Profit & Loss Statement (P&L)</h2>
+              <span>Real-time revenue versus total valuation of inventory of product</span>
+            </div>
+            <span class="pl-badge ${pl.is_profitable ? 'pl-badge-success' : 'pl-badge-danger'}">
+              <i class="fas ${pl.is_profitable ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down'}"></i>
+              ${pl.is_profitable ? 'PROFITABLE' : 'OPERATING LOSS'}
             </span>
           </div>
-          <div style="margin-top:10px; font-size:11px; color:var(--text-muted); display:flex; justify-content:space-between;">
+
+          <div class="pl-card-body">
+            <!-- Gross Orders Revenue -->
+            <div class="pl-row">
+              <span class="pl-row-label">
+                <i class="fas fa-plus" style="color:#10b981; font-size:11px;"></i> Gross Orders Revenue:
+              </span>
+              <strong class="pl-row-value" style="color:#10b981;">+${Utils.formatCurrency(rev.total_orders_revenue || 0)}</strong>
+            </div>
+
+            <!-- Subrow: Cash Sales -->
+            <div class="pl-sub-row">
+              <span>↳ Cash Sales (Drawer):</span>
+              <span class="pl-row-value" style="color:var(--text-main);">${Utils.formatCurrency(rev.cash_sales || 0)}</span>
+            </div>
+
+            <!-- Subrow: Non-Cash Sales -->
+            <div class="pl-sub-row">
+              <span>↳ Non-Cash Sales (GCash / Card):</span>
+              <span class="pl-row-value" style="color:var(--text-main);">${Utils.formatCurrency(rev.non_cash_sales || 0)}</span>
+            </div>
+
+            <!-- Inventory Valuation -->
+            <div class="pl-row">
+              <span class="pl-row-label">
+                <i class="fas fa-minus" style="color:#ef4444; font-size:11px;"></i> Total Valuation of Inventory of Product:
+              </span>
+              <strong class="pl-row-value" style="color:#ef4444;">-${Utils.formatCurrency(inv.total_inventory_valuation || 0)}</strong>
+            </div>
+
+            <!-- Net Operating Profit / Loss Highlight Box -->
+            <div class="pl-highlight-box ${pl.is_profitable ? 'green' : 'red'}">
+              <span class="pl-highlight-label">
+                <i class="fas ${pl.is_profitable ? 'fa-chart-pie' : 'fa-triangle-exclamation'}" style="color:${pl.is_profitable ? '#10b981' : '#ef4444'};"></i>
+                NET OPERATING PROFIT / LOSS:
+              </span>
+              <span class="pl-highlight-value" style="color:${pl.is_profitable ? '#10b981' : '#ef4444'};">
+                ${Utils.formatCurrency(pl.net_profit || 0)}
+              </span>
+            </div>
+          </div>
+
+          <!-- P&L Footer -->
+          <div class="pl-card-footer">
             <span>Profit Margin: <strong>${pl.profit_margin_percent || 0}%</strong></span>
             <span>Today's Sales Revenue: <strong>${Utils.formatCurrency(rev.today_orders_revenue || 0)}</strong></span>
           </div>
         </div>
-      </div>
 
-      <!-- Transfer Income to Admin Card -->
-      <div class="section-card" style="margin-bottom:0;">
-        <div class="section-head" style="border-bottom:1px solid rgba(205,190,150,0.25); padding-bottom:12px;">
-          <div>
-            <h2 style="font-size:16px; margin:0;"><i class="fas fa-paper-plane" style="color:#10b981; margin-right:8px;"></i> ${isAdmin ? 'Transfer Income from Manager' : 'Transfer Income to Admin'}</h2>
-            <span style="font-size:12px; color:var(--text-muted);">${isAdmin ? 'Transfer income received from manager secured in admin safe vs active cashier drawer float' : 'Transfer income to admin secured in store safe vs active cashier drawer float'}</span>
-          </div>
-        </div>
-        <div style="padding:16px 0;">
-          <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(205,190,150,0.15);">
-            <span style="font-weight:600; color:var(--text-main); font-size:13px;"><i class="fas ${isAdmin ? 'fa-paper-plane' : 'fa-vault'}" style="color:#10b981; margin-right:6px;"></i> ${isAdmin ? 'Total Transfer Income from Manager (In Admin Safe):' : 'Total Transfer Income to Admin:'}</span>
-            <strong style="color:#10b981; font-size:14px;">${Utils.formatCurrency(isAdmin ? (csh.admin_transfer_income !== undefined ? csh.admin_transfer_income : (csh.total_transferred_to_admin || 0)) : (csh.manager_safe_cash !== undefined ? csh.manager_safe_cash : (csh.total_cashout_income || 0)))}</strong>
-          </div>
-          <div style="display:flex; justify-content:space-between; padding:8px 0 8px 20px; font-size:12px; color:var(--text-muted); border-bottom:1px dashed rgba(205,190,150,0.15);">
-            <span>↳ ${isAdmin ? "Today's Transfer Income from Manager:" : "Today's Transfer Income to Admin:"}</span>
-            <span>${Utils.formatCurrency(isAdmin ? (csh.today_transferred_to_admin || 0) : (csh.today_cashout_income || 0))}</span>
-          </div>
-          ${!isAdmin && (csh.total_transferred_to_admin || 0) > 0 ? `
-            <div style="display:flex; justify-content:space-between; padding:8px 0 8px 20px; font-size:12px; color:#ef4444; border-bottom:1px dashed rgba(205,190,150,0.15);">
-              <span>↳ Transferred to Admin:</span>
-              <strong style="color:#ef4444;">-${Utils.formatCurrency(csh.total_transferred_to_admin || 0)}</strong>
+        <!-- Transfer Income Card (Right Panel) -->
+        <div class="pl-card">
+          <div class="pl-card-header">
+            <div class="pl-card-header-left">
+              <h2><i class="fas ${isAdmin ? 'fa-inbox' : 'fa-paper-plane'}" style="color:#10b981;"></i> ${isAdmin ? 'Income Received from Manager' : 'Transfer Income to Admin'}</h2>
+              <span>${isAdmin ? 'Income received and remitted from store managers secured in admin safe vs active cashier drawer float' : 'Transfer income to admin secured in store safe vs active cashier drawer float'}</span>
             </div>
-          ` : ''}
-          <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(205,190,150,0.15);">
-            <span style="font-weight:600; color:var(--text-main); font-size:13px;"><i class="fas fa-cash-register" style="color:#c9a227; margin-right:6px;"></i> Active Cash Balance in Cashier Drawers:</span>
-            <strong style="color:#c9a227; font-size:14px;">${Utils.formatCurrency(csh.active_drawer_cash || 0)}</strong>
-          </div>
-          <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(205,190,150,0.15);">
-            <span style="font-weight:600; color:var(--text-main); font-size:13px;"><i class="fas fa-mobile-screen" style="color:#6366f1; margin-right:6px;"></i> Non-Cash Collections (E-Wallets / Bank):</span>
-            <strong style="color:#6366f1; font-size:14px;">${Utils.formatCurrency(rev.non_cash_sales || 0)}</strong>
-          </div>
-          <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; background:rgba(16,185,129,0.06); border-radius:8px; margin-top:12px; padding:12px 14px;">
-            <span style="font-weight:800; font-size:14px; color:var(--text-main);">NET REALIZED CASH & DIGITAL INCOME:</span>
-            <span style="font-weight:800; font-size:18px; color:#10b981;">
-              ${Utils.formatCurrency(isAdmin ? (pl.admin_net_cash_income !== undefined ? pl.admin_net_cash_income : pl.net_cash_income) : (pl.manager_net_cash_income !== undefined ? pl.manager_net_cash_income : pl.net_cash_income))}
+            <span class="pl-badge pl-badge-success">
+              <i class="fas fa-shield-halved"></i> ${isAdmin ? 'ADMIN SAFE' : 'STORE SAFE'}
             </span>
           </div>
-          <div style="margin-top:12px;">
-            <button class="btn btn-primary btn-sm" onclick="openAddCashMovementModal(null, 'admin')" style="width:100%; justify-content:center; padding:8px 12px; font-weight:700;">
-              <i class="fas fa-paper-plane"></i> Transfer to Admin
-            </button>
+
+          <div class="pl-card-body">
+            <!-- Total Transfer Income -->
+            <div class="pl-row">
+              <span class="pl-row-label">
+                <i class="fas ${isAdmin ? 'fa-inbox' : 'fa-vault'}" style="color:#10b981; font-size:12px;"></i>
+                ${isAdmin ? 'Total Income Received from Manager:' : 'Total Transfer Income to Admin:'}
+              </span>
+              <strong class="pl-row-value" style="color:#10b981;">${Utils.formatCurrency(isAdmin ? (csh.admin_transfer_income !== undefined ? csh.admin_transfer_income : (csh.total_transferred_to_admin || 0)) : (csh.manager_safe_cash !== undefined ? csh.manager_safe_cash : (csh.total_cashout_income || 0)))}</strong>
+            </div>
+
+            <!-- Subrow: Today's Transfer Income -->
+            <div class="pl-sub-row">
+              <span>↳ ${isAdmin ? "Today's Income Received from Manager:" : "Today's Transfer Income to Admin:"}</span>
+              <span class="pl-row-value" style="color:var(--text-main);">${Utils.formatCurrency(isAdmin ? (csh.today_transferred_to_admin || 0) : (csh.today_cashout_income || 0))}</span>
+            </div>
+
+            ${!isAdmin && (csh.total_transferred_to_admin || 0) > 0 ? `
+              <div class="pl-sub-row" style="color:#ef4444;">
+                <span>↳ Transferred to Admin:</span>
+                <strong class="pl-row-value" style="color:#ef4444;">-${Utils.formatCurrency(csh.total_transferred_to_admin || 0)}</strong>
+              </div>
+            ` : ''}
+
+            <!-- Active Cash Balance in Cashier Drawers -->
+            <div class="pl-row">
+              <span class="pl-row-label">
+                <i class="fas fa-cash-register" style="color:#c9a227; font-size:12px;"></i> Active Cash Balance in Cashier Drawers:
+              </span>
+              <strong class="pl-row-value" style="color:#c9a227;">${Utils.formatCurrency(csh.active_drawer_cash || 0)}</strong>
+            </div>
+
+            <!-- Non-Cash Collections -->
+            <div class="pl-row">
+              <span class="pl-row-label">
+                <i class="fas fa-mobile-screen" style="color:#6366f1; font-size:12px;"></i> Non-Cash Collections (E-Wallets / Bank):
+              </span>
+              <strong class="pl-row-value" style="color:#6366f1;">${Utils.formatCurrency(rev.non_cash_sales || 0)}</strong>
+            </div>
+
+            <!-- Net Realized Cash & Digital Income Highlight Box -->
+            <div class="pl-highlight-box green">
+              <span class="pl-highlight-label">
+                <i class="fas fa-sack-dollar" style="color:#10b981;"></i>
+                NET REALIZED CASH & DIGITAL INCOME:
+              </span>
+              <span class="pl-highlight-value" style="color:#10b981;">
+                ${Utils.formatCurrency(isAdmin ? (pl.admin_net_cash_income !== undefined ? pl.admin_net_cash_income : pl.net_cash_income) : (pl.manager_net_cash_income !== undefined ? pl.manager_net_cash_income : pl.net_cash_income))}
+              </span>
+            </div>
+
+            ${!isAdmin ? `
+            <!-- Action Button Container -->
+            <div class="pl-action-container">
+              <button class="pl-transfer-btn" onclick="openAddCashMovementModal(null, 'admin')">
+                <i class="fas fa-paper-plane"></i> Transfer to Admin
+              </button>
+            </div>
+            ` : ''}
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- Cashout & Safe Deposit Ledger Audit Table -->
-    <div class="section-card fade-up delay-3">
-      <div class="section-head">
-        <div>
-          <h2><i class="fas fa-receipt" style="color:#10b981; margin-right:8px;"></i> ${isAdmin ? 'Transfer Income from Manager Ledger' : 'Transfer Income to Admin Ledger'}</h2>
-          <span style="font-size:12px; color:var(--text-muted);">${isAdmin ? 'Historical records of transfer income received from manager into the admin safe' : 'Historical records of transfer income to admin into the store safe'}</span>
+      <!-- Cashout & Safe Deposit Ledger Audit Table (Bottom Panel) -->
+      <div class="pl-card fade-up delay-3">
+        <div class="pl-card-header">
+          <div class="pl-card-header-left">
+            <h2><i class="fas ${isAdmin ? 'fa-inbox' : 'fa-receipt'}" style="color:#10b981;"></i> ${isAdmin ? 'Incoming Transfer Ledger' : 'Transfer Income to Admin Ledger'}</h2>
+            <span>${isAdmin ? 'Historical records of income transferred from store managers into the admin safe' : 'Historical records of transfer income to admin into the store safe'}</span>
+          </div>
+          <span class="pl-badge pl-badge-info">
+            <i class="fas fa-list-check"></i> ${history.length} ${isAdmin ? 'Incoming Records' : 'Transfer Records'}
+          </span>
         </div>
-        <span class="badge badge-info" style="font-size:11px; font-weight:700;">${history.length} Transfer Records</span>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Timestamp</th>
-              <th>Shift / Cashier</th>
-              <th>${isAdmin ? 'Transfer Income from Manager' : 'Cashed Out Amount'}</th>
-              <th>Reason / Destination</th>
-              <th>Recorded By</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${history.length === 0 ? `
-              <tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-muted);"><i class="fas fa-info-circle"></i> No ${isAdmin ? 'transfer records from manager' : 'cashout records'} logged yet.</td></tr>
-            ` : history.map(h => `
+
+        <div class="pl-table-wrap">
+          <table class="pl-table">
+            <thead>
               <tr>
-                <td style="color:var(--text-muted); font-size:12px;">${h.created_at ? new Date(h.created_at).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'}</td>
-                <td><strong style="color:var(--text-main); font-size:13px;">${h.cashier}</strong> <span style="font-size:11px; color:var(--text-muted);">(Shift #${h.shift_id})</span></td>
-                <td><strong style="color:#10b981; font-size:14px;">+${Utils.formatCurrency(h.amount)}</strong></td>
-                <td style="color:var(--text-main); font-size:13px;">${h.reason}</td>
-                <td style="color:var(--text-muted); font-size:12px;">${isAdmin ? 'Transferred from Manager' : (h.cashier || 'Cashier')}</td>
-                <td><span class="badge badge-success" style="font-size:11px; font-weight:700;"><i class="fas fa-check-circle"></i> ${isAdmin ? 'RECEIVED' : 'CASHED OUT'}</span></td>
+                <th style="width:16%;">Timestamp</th>
+                <th style="width:20%;">${isAdmin ? 'Shift / Remitted By' : 'Shift / Cashier'}</th>
+                <th style="width:18%;">${isAdmin ? 'Received Transfer Amount' : 'Cashed Out Amount'}</th>
+                <th style="width:22%;">${isAdmin ? 'Destination' : 'Reason / Destination'}</th>
+                <th style="width:12%;">${isAdmin ? 'Sender / Source' : 'Recorded By'}</th>
+                <th style="width:12%;">Status</th>
               </tr>
-            `).join('')}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              ${history.length === 0 ? `
+                <tr>
+                  <td colspan="6" style="padding:0;">
+                    <div class="pl-empty-state">
+                      <div class="pl-empty-icon"><i class="fas ${isAdmin ? 'fa-inbox' : 'fa-vault'}"></i></div>
+                      <h4>No ${isAdmin ? 'Incoming Transfer Records' : 'Cashout Records'} Logged Yet</h4>
+                      <p>${isAdmin ? 'Incoming transfer remittances from managers into the admin safe will appear here automatically.' : 'Historical transfer movements between cashier drawers and safe storage will appear here automatically.'}</p>
+                    </div>
+                  </td>
+                </tr>
+              ` : history.map(h => `
+                <tr>
+                  <td style="color:var(--text-muted); font-size:12px; white-space:nowrap;">
+                    <i class="far fa-clock" style="margin-right:4px;"></i>
+                    ${h.created_at ? new Date(h.created_at).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'}
+                  </td>
+                  <td>
+                    <strong style="color:var(--text-main); font-size:13px;">${h.cashier}</strong>
+                    <span style="font-size:11px; color:var(--text-muted); display:block;">Shift #${h.shift_id}</span>
+                  </td>
+                  <td>
+                    <strong style="color:#10b981; font-size:14px; font-variant-numeric:tabular-nums;">+${Utils.formatCurrency(h.amount)}</strong>
+                  </td>
+                  <td style="color:var(--text-main); font-size:13px;">${isAdmin ? 'Admin Safe' : h.reason}</td>
+                  <td style="color:var(--text-muted); font-size:12px;">${isAdmin ? (h.cashier || 'Store Manager') : (h.cashier || 'Cashier')}</td>
+                  <td>
+                    <span class="pl-badge pl-badge-success">
+                      <i class="fas fa-check-circle"></i> ${isAdmin ? 'RECEIVED' : 'CASHED OUT'}
+                    </span>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   `;
@@ -5214,14 +6092,19 @@ window.renderProfitLoss = renderProfitLoss;
 // ─────────────────────────────────────────────────────────────────────────────
 // 12. WASTAGE & SPOILAGE TRACKING
 // ─────────────────────────────────────────────────────────────────────────────
-let cachedWastageLogs = [
-  { id: 1, item: "Fresh Chicken Fillet", qty: "3.5 kg", reason: "Expired shelf-life", cost: 595.00, logged_by: "Inventory Staff", date: "2026-08-24 10:15" },
-  { id: 2, item: "Cooking Oil (Palm)", qty: "2.0 L", reason: "Accidental Kitchen Spill", cost: 180.00, logged_by: "Chef Marcus", date: "2026-08-23 18:30" },
-  { id: 3, item: "Fresh Tomatoes", qty: "5.0 kg", reason: "Overripe / Spoiled produce", cost: 350.00, logged_by: "Inventory Staff", date: "2026-08-22 14:00" }
-];
+let cachedWastageLogs = (() => {
+  try {
+    const raw = localStorage.getItem("pos_wastage_records");
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+})();
 
 async function renderWastage(c) {
-  const totalCost = cachedWastageLogs.reduce((sum, w) => sum + w.cost, 0);
+  c = c || document.getElementById("view-container") || document.getElementById("content-area");
+  if (!c) return;
+  const totalCost = cachedWastageLogs.reduce((sum, w) => sum + (Number(w.cost) || 0), 0);
 
   c.innerHTML = `
     <div class="stats-grid">
@@ -5284,7 +6167,7 @@ async function renderWastage(c) {
             </tr>
           </thead>
           <tbody>
-            ${cachedWastageLogs.map(w => `
+            ${cachedWastageLogs.length ? cachedWastageLogs.map(w => `
               <tr>
                 <td><strong style="color:var(--text-main); font-size:13px;">${w.item}</strong></td>
                 <td><span style="font-weight:700; color:var(--danger);">${w.qty}</span></td>
@@ -5293,7 +6176,14 @@ async function renderWastage(c) {
                 <td style="color:var(--text-muted); font-size:13px;">${w.logged_by}</td>
                 <td style="color:var(--text-muted); font-size:13px;">${w.date}</td>
               </tr>
-            `).join('')}
+            `).join('') : `
+              <tr>
+                <td colspan="6" style="text-align:center; padding:36px; color:var(--text-muted);">
+                  <i class="fas fa-trash-alt" style="font-size:24px; margin-bottom:8px; opacity:0.4; display:block;"></i>
+                  No wastage or spoilage incidents logged yet.
+                </td>
+              </tr>
+            `}
           </tbody>
         </table>
       </div>
@@ -5352,6 +6242,9 @@ function submitLogWastage() {
   };
 
   cachedWastageLogs.unshift(newLog);
+  try {
+    localStorage.setItem("pos_wastage_records", JSON.stringify(cachedWastageLogs));
+  } catch (e) {}
   Utils.showToast("Wastage incident logged and stock deducted.", "success");
   Utils.closeModal();
   renderWastage();
@@ -5570,8 +6463,10 @@ async function loadCustomerOrdersTable() {
       Auth.fetch("/api/v1/customer-orders/history?limit=15")
     ]);
 
-    const pending = pendingRes.ok ? await pendingRes.json() : [];
-    const history = historyRes.ok ? await historyRes.json() : [];
+    if (!pendingRes.ok) throw new Error("Failed to load pending customer orders.");
+    if (!historyRes.ok) throw new Error("Failed to load customer order history.");
+    const pending = await pendingRes.json();
+    const history = await historyRes.json();
     
     pendingOnlineOrders = pending;
     updateOnlineOrdersBadge();

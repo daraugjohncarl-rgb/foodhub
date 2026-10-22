@@ -259,8 +259,6 @@ def get_profit_loss(
     ).scalar() or Decimal("0.0")
 
     cost_of_goods_sold = Decimal(str(cogs_val))
-    if cost_of_goods_sold == 0 and total_orders_revenue > 0:
-        cost_of_goods_sold = total_orders_revenue * Decimal("0.40")
 
     user_role_str = str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role).upper()
     is_admin = user_role_str in ["ADMIN", "SUPER_ADMIN"]

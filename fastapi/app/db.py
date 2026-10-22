@@ -16,14 +16,16 @@ if parent_dir not in sys.path:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("pos_db")
 
-# Load environment variables from .env file (checks fastapi/.env first, then workspace root .env)
-fastapi_env = os.path.join(parent_dir, ".env")
-root_env = os.path.join(os.path.dirname(parent_dir), ".env")
-
-if os.path.exists(fastapi_env):
-    load_dotenv(fastapi_env)
-if os.path.exists(root_env):
-    load_dotenv(root_env)
+# Load environment variables from .env file (checks root .env, app/.env, and fastapi/.env)
+env_candidates = [
+    os.path.join(parent_dir, ".env"),
+    os.path.join(current_dir, ".env"),
+    os.path.join(parent_dir, "fastapi", ".env"),
+    os.path.join(os.path.dirname(parent_dir), ".env"),
+]
+for env_path in env_candidates:
+    if os.path.isfile(env_path):
+        load_dotenv(env_path)
 load_dotenv()
 
 # Determine DB Engine (defaulting to MySQL for phpMyAdmin / XAMPP, or PostgreSQL if specified)

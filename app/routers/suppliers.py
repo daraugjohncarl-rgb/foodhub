@@ -150,6 +150,25 @@ def delete_supplier(
     if not supplier:
         raise HTTPException(status_code=404, detail="Supplier not found")
 
-    db.delete(supplier)
-    db.commit()
+    # Safety check: Prevent deletion if supplier has linked purchase orders
+    po_count = db.query(models.PurchaseOrder).filter(
+        models.PurchaseOrder.supplier_id == supplier_id,
+        models.PurchaseOrder.tenant_id == tenant_id
+    ).count()
+    if po_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot delete supplier '{supplier.supplier_name}' because it has {po_count} associated purchase order(s). Please set the supplier status to 'Inactive' instead."
+        )
+
+    try:
+        db.delete(supplier)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot delete supplier '{supplier.supplier_name}' due to linked historical records. Please set the supplier status to 'Inactive' instead."
+        )
     return None
+

@@ -143,8 +143,8 @@ function renderSupplierRows(suppliers) {
             <button class="btn btn-primary btn-sm" style="padding:4px 8px; font-size:11px;" onclick="renderView('purchases'); setTimeout(() => openCreatePOModal(\${s.id}), 500);" title="Create PO">
               <i class="fas fa-file-invoice"></i> Create PO
             </button>
-            <button class="btn btn-outline btn-sm" style="padding:4px 8px; font-size:11px; color:var(--danger);" onclick="deactivateSupplier(\${s.id}, '\${s.supplier_name.replace(/'/g, "\\'")}', \${isActive})" title="Toggle Status">
-              <i class="fas \${isActive ? 'fa-ban' : 'fa-check'}"></i>
+            <button class="btn btn-outline btn-sm" style="padding:4px 8px; font-size:11px; color:var(--danger);" onclick="confirmDeleteSupplier(\${s.id})" title="Delete Supplier">
+              <i class="fas fa-trash-alt"></i> Delete
             </button>
           </div>
         </td>
@@ -381,3 +381,74 @@ async function deactivateSupplier(id, name, isActive) {
     Utils.showToast(err.message, "danger");
   }
 }
+
+function confirmDeleteSupplier(id) {
+  const s = (cachedSuppliers || []).find(x => x.id === id) || (typeof globalSuppliers !== 'undefined' ? globalSuppliers.find(x => x.id === id) : null);
+  const safeName = s ? s.supplier_name : `Supplier #${id}`;
+
+  Utils.openModal(
+    "Delete Supplier Confirmation",
+    `
+      <div style="font-size:14px; line-height:1.6; color:var(--text-main);">
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px; padding:12px; border-radius:8px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25);">
+          <i class="fas fa-exclamation-triangle" style="font-size:24px; color:var(--danger, #ef4444); flex-shrink:0;"></i>
+          <div>
+            <strong>Are you sure you want to delete <span style="color:var(--danger, #ef4444);">${safeName}</span>?</strong>
+          </div>
+        </div>
+        <p style="margin-bottom:10px; color:var(--text-muted);">
+          This action will permanently remove the supplier from the database. Deletion may affect related purchase orders, inventory shipments, or historical vendor records.
+        </p>
+        <p style="margin-bottom:0; font-size:12px; color:var(--text-muted);">
+          <em>Note: If this supplier has linked purchase orders, deletion is prevented to protect record integrity. In that case, please change its status to 'Inactive' instead.</em>
+        </p>
+      </div>
+    `,
+    `
+      <button type="button" class="btn btn-outline" onclick="Utils.closeModal()">Cancel</button>
+      <button type="button" class="btn btn-danger" id="btn-confirm-delete-supplier" onclick="submitDeleteSupplier(${id})">
+        <i class="fas fa-trash-alt"></i> Confirm Delete
+      </button>
+    `
+  );
+}
+
+async function submitDeleteSupplier(id) {
+  const btn = document.getElementById("btn-confirm-delete-supplier");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Deleting...`;
+  }
+
+  try {
+    const res = await Auth.fetch(`/api/v1/suppliers/${id}`, {
+      method: "DELETE"
+    });
+
+    if (res.status === 204 || res.ok) {
+      Utils.showToast("Supplier deleted successfully.", "success");
+      Utils.closeModal();
+      await renderSuppliers();
+    } else {
+      let errMsg = "Failed to delete supplier.";
+      try {
+        const err = await res.json();
+        if (err && err.detail) errMsg = err.detail;
+      } catch (_) {}
+      
+      Utils.showToast(errMsg, "danger");
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = `<i class="fas fa-trash-alt"></i> Confirm Delete`;
+      }
+    }
+  } catch (error) {
+    console.error("Delete supplier error:", error);
+    Utils.showToast(error.message || "Network error while deleting supplier.", "danger");
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<i class="fas fa-trash-alt"></i> Confirm Delete`;
+    }
+  }
+}
+

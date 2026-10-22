@@ -136,8 +136,10 @@ async function initDashboardApp() {
 
         try {
             const res = await Auth.fetch('/api/v1/users?role=ADMIN&exclude_self=true&limit=6');
-            if (res.ok) {
-                const users = await res.json();
+            if (!res.ok) {
+                throw new Error("Failed to load Branch Admin registrations.");
+            }
+            const users = await res.json();
                 
                 if (users.length === 0) {
                     recentUsersBody.innerHTML = `
@@ -204,8 +206,10 @@ async function initDashboardApp() {
 
         try {
             const res = await Auth.fetch('/api/v1/super-admin/reports?limit=5');
-            if (res.ok) {
-                const reports = await res.json();
+            if (!res.ok) {
+                throw new Error("Failed to load incident reports from server.");
+            }
+            const reports = await res.json();
                 if (reports.length === 0) {
                     recentReportsBody.innerHTML = `
                         <tr>
@@ -240,8 +244,8 @@ async function initDashboardApp() {
             console.error('Failed to load reports:', err);
             recentReportsBody.innerHTML = `
                 <tr>
-                    <td colspan="5" style="text-align:center; color:var(--text-muted); padding:20px;">
-                        No system reports available.
+                    <td colspan="5" style="text-align:center; color:var(--danger); padding:20px;">
+                        <i class="fas fa-exclamation-triangle"></i> Failed to load system incident reports from server.
                     </td>
                 </tr>
             `;
