@@ -427,6 +427,17 @@ class InventoryItemCreate(BaseModel):
     unit_price: Optional[Decimal] = Field(0.0, ge=0, description="Price or cost per unit")
 
 
+class InventoryItemUpdate(BaseModel):
+    """Request body to edit an existing inventory item."""
+    name: Optional[str] = Field(None, max_length=100, description="Item name")
+    category: Optional[str] = Field(None, max_length=100, description="Department category")
+    sku: Optional[str] = Field(None, max_length=50)
+    quantity: Optional[Decimal] = Field(None, ge=0, description="Stock quantity")
+    unit: Optional[str] = Field(None, max_length=20, description="Unit of measure")
+    min_stock: Optional[Decimal] = Field(None, ge=0, description="Low-stock threshold")
+    unit_price: Optional[Decimal] = Field(None, ge=0, description="Price per unit")
+
+
 class InventoryStockAdjust(BaseModel):
     """
     Delta-based stock adjustment.
@@ -466,6 +477,20 @@ class InventoryItemResponse(BaseModel):
             obj["total_value"] = Decimal(str(round(float(data.quantity) * unit_p, 2)))
             return obj
         return data
+
+
+class BulkDeleteInventoryRequest(BaseModel):
+    item_ids: List[int] = Field(..., min_length=1, description="List of inventory item IDs to delete")
+
+
+class BulkDeleteInventoryResponse(BaseModel):
+    success: bool
+    deleted_ids: List[int]
+    failed_ids: List[int] = []
+    deleted_count: int
+    message: str
+    errors: List[dict] = []
+
 
 
 # ─────────────────────────────────────────────

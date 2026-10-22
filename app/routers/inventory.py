@@ -797,6 +797,96 @@ async def import_inventory_file(
     }
 
 
+@router.post(
+    "/inventory/bulk-delete",
+    summary="Bulk delete multiple inventory items",
+    response_model=schemas.BulkDeleteInventoryResponse
+)
+def bulk_delete_inventory(
+    payload: schemas.BulkDeleteInventoryRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_inventory_access),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    if not payload.item_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No inventory item IDs specified for deletion."
+        )
+
+    from sqlalchemy import text
+
+    # Remove duplicates while preserving order
+    unique_ids = list(dict.fromkeys(payload.item_ids))
+
+    # Fetch existing items for this tenant
+    items = db.query(models.InventoryItem).filter(
+        models.InventoryItem.id.in_(unique_ids),
+        models.InventoryItem.tenant_id == tenant_id
+    ).all()
+
+    found_map = {item.id: item for item in items}
+    deleted_ids = []
+    failed_ids = []
+    errors = []
+
+    for item_id in unique_ids:
+        if item_id not in found_map:
+            failed_ids.append(item_id)
+            errors.append({"id": item_id, "reason": "Item not found or unauthorized."})
+            continue
+
+        item = found_map[item_id]
+        item_name = item.name
+
+        try:
+            # Clean up foreign key references in child tables
+            db.execute(text("DELETE FROM purchase_order_items WHERE inventory_item_id = :item_id"), {"item_id": item_id})
+            db.execute(text("DELETE FROM product_recipes WHERE inventory_item_id = :item_id"), {"item_id": item_id})
+            db.flush()
+
+            db.delete(item)
+            db.flush()
+            deleted_ids.append(item_id)
+        except Exception as ex:
+            failed_ids.append(item_id)
+            errors.append({"id": item_id, "name": item_name, "reason": str(ex)})
+
+    # Commit all successful deletions in this batch
+    if deleted_ids:
+        db.commit()
+        try:
+            from app.core.websocket import notify_realtime_event
+            notify_realtime_event(tenant_id, "INVENTORY_UPDATED", {
+                "action": "bulk_deleted",
+                "deleted_ids": deleted_ids,
+                "count": len(deleted_ids)
+            })
+        except Exception:
+            pass
+    else:
+        db.rollback()
+
+    if not deleted_ids and failed_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to delete items: {'; '.join(e.get('reason', '') for e in errors)}"
+        )
+
+    msg = f"Successfully deleted {len(deleted_ids)} inventory item(s)."
+    if failed_ids:
+        msg += f" {len(failed_ids)} item(s) could not be deleted."
+
+    return {
+        "success": True,
+        "deleted_ids": deleted_ids,
+        "failed_ids": failed_ids,
+        "deleted_count": len(deleted_ids),
+        "message": msg,
+        "errors": errors
+    }
+
+
 @router.delete(
     "/inventory/{item_id}",
     summary="Delete an inventory item"
@@ -978,3 +1068,110 @@ def adjust_stock(
         pass
 
     return item
+
+
+@router.get(
+    "/inventory/{item_id}",
+    response_model=schemas.InventoryItemResponse,
+    summary="Get a single inventory item by ID"
+)
+def get_inventory_item(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_inventory_access),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    item = db.query(models.InventoryItem).filter(
+        models.InventoryItem.id == item_id,
+        models.InventoryItem.tenant_id == tenant_id
+    ).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found.")
+    return item
+
+
+@router.put(
+    "/inventory/{item_id}",
+    response_model=schemas.InventoryItemResponse,
+    summary="Update an existing inventory item"
+)
+def update_inventory_item(
+    item_id: int,
+    body: schemas.InventoryItemUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_inventory_access),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    item = db.query(models.InventoryItem).filter(
+        models.InventoryItem.id == item_id,
+        models.InventoryItem.tenant_id == tenant_id
+    ).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found.")
+
+    if body.name is not None:
+        name_clean = body.name.strip()
+        if not name_clean:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item name cannot be empty.")
+        # Check unique constraint within same tenant
+        existing = db.query(models.InventoryItem).filter(
+            models.InventoryItem.tenant_id == tenant_id,
+            models.InventoryItem.name == name_clean,
+            models.InventoryItem.id != item_id
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"An inventory item named '{name_clean}' already exists in your catalog."
+            )
+        item.name = name_clean
+
+    if body.category is not None:
+        item.category = body.category.strip() if body.category.strip() else "Kitchen"
+
+    if body.sku is not None:
+        item.sku = body.sku.strip() if body.sku.strip() else None
+
+    if body.quantity is not None:
+        if body.quantity < 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Stock quantity cannot be negative.")
+        item.quantity = body.quantity
+
+    if body.unit is not None:
+        unit_clean = body.unit.strip()
+        if not unit_clean:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit of measure cannot be empty.")
+        item.unit = unit_clean
+
+    if body.min_stock is not None:
+        if body.min_stock < 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Minimum stock threshold cannot be negative.")
+        item.min_stock = body.min_stock
+
+    if body.unit_price is not None:
+        if body.unit_price < 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit price cannot be negative.")
+        item.unit_price = body.unit_price
+
+    try:
+        db.commit()
+        db.refresh(item)
+        try:
+            from app.core.websocket import notify_realtime_event
+            notify_realtime_event(tenant_id, "INVENTORY_UPDATED", {
+                "action": "updated",
+                "item_id": item.id,
+                "name": item.name,
+                "quantity": float(item.quantity)
+            })
+        except Exception:
+            pass
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Failed to update item: database constraint violation."
+        )
+
+    return item
+

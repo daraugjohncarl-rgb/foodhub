@@ -262,10 +262,12 @@ async function renderDashboard(c) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // 2. INVENTORY MANAGEMENT (Masterlist & Automated Analytics)
 // ─────────────────────────────────────────────────────────────────────────────
 let currentInvCategory = "ALL";
 let cachedAnalytics = null;
+let selectedInventoryIds = new Set();
 
 async function renderInventory(c) {
   if (!c) c = document.getElementById("view-container");
@@ -279,6 +281,14 @@ async function renderInventory(c) {
   if (!invRes.ok) throw new Error("Failed to load inventory items from server.");
   const items = await invRes.json();
   cachedInventory = items;
+
+  // Prune any deleted or non-existent IDs from selectedInventoryIds
+  const currentItemIds = new Set(items.map(i => Number(i.id)));
+  for (const id of selectedInventoryIds) {
+    if (!currentItemIds.has(id)) {
+      selectedInventoryIds.delete(id);
+    }
+  }
 
   if (!analyticsRes.ok) throw new Error("Failed to load inventory analytics from server.");
   cachedAnalytics = await analyticsRes.json();
@@ -361,6 +371,34 @@ async function renderInventory(c) {
       `).join('')}
     </div>
 
+    <!-- Bulk Action Toolbar (Displays when >= 1 item is selected) -->
+    <div id="inv-bulk-toolbar" class="inv-bulk-toolbar" style="display:${selectedInventoryIds.size > 0 ? 'flex' : 'none'};">
+      <div class="inv-bulk-left">
+        <span class="inv-bulk-count-badge">
+          <i class="fas fa-check-circle"></i>
+          <span><strong id="inv-selected-count">${selectedInventoryIds.size}</strong> selected</span>
+        </span>
+        <div class="inv-bulk-actions">
+          <button type="button" class="inv-bulk-link" onclick="selectAllDisplayedInventory()" title="Select all items matching current view">
+            <i class="fas fa-check-double" style="color:#fbbf24;"></i> Select All Visible
+          </button>
+          <span style="color:rgba(255,255,255,0.25);">|</span>
+          <button type="button" class="inv-bulk-link" onclick="clearInventorySelection()" title="Clear current selection">
+            <i class="fas fa-xmark"></i> Clear Selection
+          </button>
+        </div>
+      </div>
+      <div class="inv-bulk-right">
+        <button type="button" class="btn-bulk-clear" onclick="clearInventorySelection()">
+          <i class="fas fa-rotate-left"></i> Cancel
+        </button>
+        <button type="button" class="btn-bulk-delete" onclick="openBulkDeleteModal()" id="btn-bulk-delete-action">
+          <i class="fas fa-trash-can"></i>
+          <span>Delete Selected (<span id="inv-delete-count">${selectedInventoryIds.size}</span>)</span>
+        </button>
+      </div>
+    </div>
+
     <!-- Inventory Table Card -->
     <div class="section-card fade-up delay-2">
       <div class="section-head">
@@ -371,6 +409,13 @@ async function renderInventory(c) {
         <table>
           <thead>
             <tr>
+              <th style="width:48px; text-align:center; padding-left:14px; padding-right:14px;">
+                <input type="checkbox" 
+                       id="inv-select-all" 
+                       class="inv-checkbox" 
+                       onchange="toggleSelectAllInventory(this.checked)" 
+                       title="Select all displayed items">
+              </th>
               <th>Item Name</th>
               <th>Department / Category</th>
               <th>Current Stock</th>
@@ -387,11 +432,14 @@ async function renderInventory(c) {
       </div>
     </div>
   `;
+
+  updateSelectAllHeaderState();
+  updateInventoryBulkToolbar();
 }
 
 function renderInventoryRows(items) {
   if (!items || !items.length) {
-    return `<tr><td colspan="7" style="text-align:center; padding:40px; color:var(--text-muted);"><i class="fas fa-boxes" style="font-size:24px; margin-bottom:8px; display:block; opacity:0.5;"></i>No inventory items match the criteria.<br><button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="openImportMasterlistModal()"><i class="fas fa-file-import"></i> Import Official Master List</button></td></tr>`;
+    return `<tr><td colspan="8" style="text-align:center; padding:40px; color:var(--text-muted);"><i class="fas fa-boxes" style="font-size:24px; margin-bottom:8px; display:block; opacity:0.5;"></i>No inventory items match the criteria.<br><button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="openImportMasterlistModal()"><i class="fas fa-file-import"></i> Import Official Master List</button></td></tr>`;
   }
   return items.map(i => {
     const isOut = Number(i.quantity) <= 0;
@@ -401,9 +449,20 @@ function renderInventoryRows(items) {
     const catName = i.category || 'Kitchen';
     const unitPrice = Number(i.unit_price) || 0;
     const totalVal = (Number(i.quantity) || 0) * unitPrice;
+    const isSelected = selectedInventoryIds.has(Number(i.id));
 
     return `
-      <tr>
+      <tr id="inv-row-${i.id}" class="${isSelected ? 'row-selected' : ''}">
+        <td style="width:48px; text-align:center; padding-left:14px; padding-right:14px;">
+          <input type="checkbox" 
+                 class="inv-checkbox inv-item-checkbox" 
+                 id="inv-chk-${i.id}"
+                 data-id="${i.id}" 
+                 value="${i.id}" 
+                 ${isSelected ? 'checked' : ''} 
+                 onchange="toggleSelectInventoryItem(${Number(i.id)}, this.checked)"
+                 title="Select ${i.name.replace(/"/g, '&quot;')}">
+        </td>
         <td>
           <strong style="color:var(--text-main); font-size:13px;">${i.name}</strong>
           ${i.sku ? `<span style="font-size:10px; font-family:monospace; background:rgba(0,0,0,0.06); padding:2px 5px; border-radius:4px; margin-left:6px; color:var(--text-muted); font-weight:600;">${i.sku}</span>` : ''}
@@ -438,14 +497,252 @@ function renderInventoryRows(items) {
         </td>
         <td style="background:rgba(16,185,129,0.04);"><strong id="inv-val-${i.id}" style="color:#10b981; font-size:13px; font-weight:700;">${Utils.formatCurrency(totalVal)}</strong></td>
         <td><span class="badge ${badgeClass}" style="font-size:11px; font-weight:700;">${badgeText}</span></td>
-        <td style="text-align:right;">
-          <button class="btn btn-outline btn-sm" style="padding:5px 9px; font-size:12px; color:var(--danger); border-radius:8px;" onclick="deleteInventoryItem(${i.id}, '${i.name.replace(/'/g, "\\'")}')" title="Delete Item">
-            <i class="fas fa-trash"></i>
-          </button>
+        <td style="text-align:right; white-space:nowrap;">
+          <div style="display:inline-flex; align-items:center; justify-content:flex-end; gap:6px;">
+            <button class="btn btn-outline btn-sm inv-action-btn inv-edit-btn" 
+                    style="padding:5px 9px; font-size:12px; color:#c9a227; border-color:rgba(201,162,39,0.45); background:rgba(201,162,39,0.06); border-radius:8px;" 
+                    onclick="openEditInventoryModal(${i.id})" 
+                    title="Edit Item" 
+                    aria-label="Edit ${i.name.replace(/"/g, '&quot;')}">
+              <i class="fas fa-pen"></i>
+            </button>
+            <button class="btn btn-outline btn-sm inv-action-btn inv-delete-btn" 
+                    style="padding:5px 9px; font-size:12px; color:var(--danger, #ef4444); border-color:rgba(239,68,68,0.4); background:rgba(239,68,68,0.06); border-radius:8px;" 
+                    onclick="deleteInventoryItem(${i.id}, '${i.name.replace(/'/g, "\\'")}')" 
+                    title="Delete Item" 
+                    aria-label="Delete ${i.name.replace(/"/g, '&quot;')}">
+              <i class="fas fa-trash"></i>
+            </button>
+          </div>
         </td>
       </tr>
     `;
   }).join('');
+}
+
+function getCurrentlyDisplayedInventory() {
+  if (!cachedInventory || !cachedInventory.length) return [];
+  const q = (document.getElementById("inv-search")?.value || "").toLowerCase().trim();
+  return cachedInventory.filter(i => {
+    const matchCat = currentInvCategory === "ALL" || (i.category && i.category.toLowerCase() === currentInvCategory.toLowerCase());
+    const matchSearch = !q || 
+      (i.name && i.name.toLowerCase().includes(q)) || 
+      (i.sku && i.sku.toLowerCase().includes(q)) ||
+      (i.category && i.category.toLowerCase().includes(q));
+    return matchCat && matchSearch;
+  });
+}
+
+function updateInventoryBulkToolbar() {
+  const toolbar = document.getElementById("inv-bulk-toolbar");
+  const countSpan = document.getElementById("inv-selected-count");
+  const deleteCountSpan = document.getElementById("inv-delete-count");
+  const count = selectedInventoryIds.size;
+
+  if (toolbar) {
+    if (count > 0) {
+      toolbar.style.display = "flex";
+      if (countSpan) countSpan.textContent = count;
+      if (deleteCountSpan) deleteCountSpan.textContent = count;
+    } else {
+      toolbar.style.display = "none";
+    }
+  }
+}
+
+function updateSelectAllHeaderState() {
+  const headerCheckbox = document.getElementById("inv-select-all");
+  if (!headerCheckbox) return;
+
+  const displayed = getCurrentlyDisplayedInventory();
+  if (!displayed.length) {
+    headerCheckbox.checked = false;
+    headerCheckbox.indeterminate = false;
+    return;
+  }
+
+  const selectedInDisplayed = displayed.filter(i => selectedInventoryIds.has(Number(i.id)));
+  if (selectedInDisplayed.length === 0) {
+    headerCheckbox.checked = false;
+    headerCheckbox.indeterminate = false;
+  } else if (selectedInDisplayed.length === displayed.length) {
+    headerCheckbox.checked = true;
+    headerCheckbox.indeterminate = false;
+  } else {
+    headerCheckbox.checked = false;
+    headerCheckbox.indeterminate = true;
+  }
+}
+
+function toggleSelectInventoryItem(itemId, isChecked) {
+  const idNum = Number(itemId);
+  if (isChecked) {
+    selectedInventoryIds.add(idNum);
+  } else {
+    selectedInventoryIds.delete(idNum);
+  }
+
+  const row = document.getElementById(`inv-row-${idNum}`);
+  if (row) {
+    if (isChecked) row.classList.add("row-selected");
+    else row.classList.remove("row-selected");
+  }
+
+  updateSelectAllHeaderState();
+  updateInventoryBulkToolbar();
+}
+
+function toggleSelectAllInventory(isChecked) {
+  const displayed = getCurrentlyDisplayedInventory();
+  displayed.forEach(item => {
+    const idNum = Number(item.id);
+    if (isChecked) {
+      selectedInventoryIds.add(idNum);
+    } else {
+      selectedInventoryIds.delete(idNum);
+    }
+    const chk = document.getElementById(`inv-chk-${idNum}`);
+    if (chk) chk.checked = isChecked;
+    const row = document.getElementById(`inv-row-${idNum}`);
+    if (row) {
+      if (isChecked) row.classList.add("row-selected");
+      else row.classList.remove("row-selected");
+    }
+  });
+
+  updateSelectAllHeaderState();
+  updateInventoryBulkToolbar();
+}
+
+function selectAllDisplayedInventory() {
+  toggleSelectAllInventory(true);
+}
+
+function clearInventorySelection() {
+  selectedInventoryIds.clear();
+  const checkboxes = document.querySelectorAll(".inv-item-checkbox");
+  checkboxes.forEach(c => { c.checked = false; });
+  const rows = document.querySelectorAll("#inv-tbody tr.row-selected");
+  rows.forEach(r => r.classList.remove("row-selected"));
+
+  updateSelectAllHeaderState();
+  updateInventoryBulkToolbar();
+}
+
+function openBulkDeleteModal() {
+  const count = selectedInventoryIds.size;
+  if (count === 0) {
+    Utils.showToast("No inventory items selected for deletion.", "warning");
+    return;
+  }
+
+  // Get details of selected items
+  const selectedItems = cachedInventory.filter(i => selectedInventoryIds.has(Number(i.id)));
+  const previewListHtml = selectedItems.slice(0, 10).map(item => `
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 10px; background:rgba(0,0,0,0.03); border-radius:6px; font-size:12px; margin-bottom:4px;">
+      <div>
+        <strong style="color:var(--text-main);">${item.name}</strong>
+        <span style="color:var(--text-muted); font-size:11px; margin-left:6px;">(${item.category || 'Kitchen'})</span>
+      </div>
+      <span style="font-weight:700; color:var(--text-muted); font-size:11px;">${Number(item.quantity)} ${item.unit}</span>
+    </div>
+  `).join('');
+
+  const overflowText = selectedItems.length > 10 
+    ? `<div style="text-align:center; font-size:11px; color:var(--text-muted); margin-top:6px;">...and ${selectedItems.length - 10} more item(s)</div>` 
+    : '';
+
+  Utils.openModal(`
+    <i class="fas fa-triangle-exclamation" style="color:#ef4444; margin-right:8px;"></i> Confirm Bulk Inventory Deletion
+  `, `
+    <div style="padding:6px 0;">
+      <div style="background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.3); border-radius:8px; padding:12px 14px; margin-bottom:16px;">
+        <div style="display:flex; align-items:center; gap:10px; color:#ef4444; font-weight:700; font-size:14px; margin-bottom:4px;">
+          <i class="fas fa-trash-can" style="font-size:16px;"></i>
+          <span>Are you sure you want to delete ${count} inventory item(s)?</span>
+        </div>
+        <div style="font-size:12px; color:var(--text-main); line-height:1.5;">
+          This will permanently remove the selected records from the inventory master catalog and recalculate stock asset valuation. This action cannot be undone.
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <label style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:6px;">
+          Selected Records Preview (${count} total):
+        </label>
+        <div style="max-height:160px; overflow-y:auto; border:1px solid rgba(205,190,150,0.35); border-radius:8px; padding:6px; background:#fff;">
+          ${previewListHtml}
+          ${overflowText}
+        </div>
+      </div>
+
+      <div id="bulk-delete-error" style="display:none; color:#ef4444; font-size:12px; background:rgba(239,68,68,0.08); border-radius:6px; padding:8px 12px; margin-bottom:14px;"></div>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
+        <button type="button" class="btn btn-outline" onclick="Utils.closeModal()">
+          Cancel
+        </button>
+        <button type="button" id="btn-confirm-bulk-delete" class="btn btn-danger" onclick="executeBulkDeleteInventory()" style="display:inline-flex; align-items:center; gap:8px;">
+          <i class="fas fa-trash-can"></i> Confirm Delete (${count})
+        </button>
+      </div>
+    </div>
+  `);
+}
+
+async function executeBulkDeleteInventory() {
+  const confirmBtn = document.getElementById("btn-confirm-bulk-delete");
+  const errBox = document.getElementById("bulk-delete-error");
+  const itemIds = Array.from(selectedInventoryIds);
+
+  if (!itemIds.length) {
+    Utils.showToast("No items selected.", "warning");
+    Utils.closeModal();
+    return;
+  }
+
+  if (confirmBtn) {
+    confirmBtn.disabled = true;
+    confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deleting...';
+  }
+  if (errBox) errBox.style.display = "none";
+
+  try {
+    const res = await Auth.fetch("/api/v1/inventory/bulk-delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ item_ids: itemIds })
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      const errMsg = (data && data.detail) || "Failed to bulk delete inventory items.";
+      throw new Error(errMsg);
+    }
+
+    const deletedCount = (data && data.deleted_count) || (data && data.deleted_ids && data.deleted_ids.length) || itemIds.length;
+    const deletedIds = (data && data.deleted_ids) || itemIds;
+
+    // Remove deleted IDs from selected set
+    deletedIds.forEach(id => selectedInventoryIds.delete(Number(id)));
+
+    Utils.closeModal();
+    Utils.showToast(data.message || `Successfully deleted ${deletedCount} inventory item(s).`, "success");
+
+    // Refresh inventory catalog & summary metrics
+    await renderInventory();
+  } catch (err) {
+    if (confirmBtn) {
+      confirmBtn.disabled = false;
+      confirmBtn.innerHTML = `<i class="fas fa-trash-can"></i> Confirm Delete (${itemIds.length})`;
+    }
+    if (errBox) {
+      errBox.textContent = err.message;
+      errBox.style.display = "block";
+    }
+    Utils.showToast(err.message, "danger");
+  }
 }
 
 function filterInventoryCategory(category) {
@@ -463,21 +760,14 @@ function filterInventoryCategory(category) {
 }
 
 function filterInventoryList() {
-  const q = (document.getElementById("inv-search")?.value || "").toLowerCase().trim();
-  const filtered = cachedInventory.filter(i => {
-    const matchCat = currentInvCategory === "ALL" || (i.category && i.category.toLowerCase() === currentInvCategory.toLowerCase());
-    const matchSearch = !q || 
-      (i.name && i.name.toLowerCase().includes(q)) || 
-      (i.sku && i.sku.toLowerCase().includes(q)) ||
-      (i.category && i.category.toLowerCase().includes(q));
-    return matchCat && matchSearch;
-  });
-
+  const filtered = getCurrentlyDisplayedInventory();
   const tbody = document.getElementById("inv-tbody");
   const countBadge = document.getElementById("inv-count-badge");
   if (tbody) tbody.innerHTML = renderInventoryRows(filtered);
   if (countBadge) countBadge.textContent = `${filtered.length} items listed`;
+  updateSelectAllHeaderState();
 }
+
 
 function openImportMasterlistModal() {
   const categories = [
@@ -951,6 +1241,165 @@ async function submitAddInventory() {
   }
 }
 
+function openEditInventoryModal(itemId) {
+  const item = (cachedInventory || []).find(x => Number(x.id) === Number(itemId));
+  if (!item) {
+    Utils.showToast("Item not found in cached catalog.", "warning");
+    return;
+  }
+
+  const depts = [
+    "Kitchen", "Street Foods", "Coffee Bar", "Beverages", "Packaging",
+    "Cleaning Supplies", "Office Supplies and Equipments", "Monthly Bills",
+    "Employee Salary", "SAMGYUPSAL", "KITCHEN UTENSILS & EQUIPMENT", "FURNITURE & FIXTURES"
+  ];
+  const itemCategory = item.category || "Kitchen";
+  const hasCustomDept = !depts.some(d => d.toLowerCase() === itemCategory.toLowerCase());
+
+  Utils.openModal(`
+    <i class="fas fa-pen-to-square" style="color:#c9a227; margin-right:8px;"></i> Edit Inventory Item
+  `, `
+    <form id="form-edit-inv" onsubmit="event.preventDefault(); submitEditInventory(${item.id});">
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Item Name <span style="color:var(--danger);">*</span></label>
+        <input id="edit-inv-name" class="input-field" required value="${(item.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Special Chili Garlic Oil" style="width:100%;">
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Department / Category <span style="color:var(--danger);">*</span></label>
+          <select id="edit-inv-cat" class="input-field" style="width:100%;">
+            ${depts.map(cat => `<option value="${cat}" ${(itemCategory.toLowerCase() === cat.toLowerCase()) ? 'selected' : ''}>${cat}</option>`).join('')}
+            ${hasCustomDept ? `<option value="${itemCategory}" selected>${itemCategory}</option>` : ''}
+          </select>
+        </div>
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">SKU (Optional)</label>
+          <input id="edit-inv-sku" class="input-field" value="${(item.sku || '').replace(/"/g, '&quot;')}" placeholder="e.g. KIT-0099" style="width:100%;">
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Current Stock Quantity <span style="color:var(--danger);">*</span></label>
+          <input type="number" step="any" min="0" id="edit-inv-qty" class="input-field" required value="${Number(item.quantity) || 0}" style="width:100%;">
+        </div>
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Unit of Measure <span style="color:var(--danger);">*</span></label>
+          <input id="edit-inv-unit" class="input-field" required value="${(item.unit || '').replace(/"/g, '&quot;')}" placeholder="kg, L, pcs, packs, cans" style="width:100%;">
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Unit Price / Cost (₱) <span style="color:var(--danger);">*</span></label>
+          <input type="number" step="0.01" min="0" id="edit-inv-price" class="input-field" required value="${Number(item.unit_price) || 0}" placeholder="0.00" style="width:100%;">
+        </div>
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Min Stock Threshold <span style="color:var(--danger);">*</span></label>
+          <input type="number" step="any" min="0" id="edit-inv-min" class="input-field" required value="${Number(item.min_stock) || 0}" style="width:100%;">
+        </div>
+      </div>
+      <div id="edit-inv-error" style="display:none; color:#ef4444; font-size:12px; background:rgba(239,68,68,0.08); border-radius:6px; padding:8px 12px; margin-top:8px;"></div>
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
+        <button type="button" class="btn btn-outline" onclick="Utils.closeModal()">Cancel</button>
+        <button type="button" id="btn-save-edit-inv" class="btn btn-primary" onclick="submitEditInventory(${item.id})" style="display:inline-flex; align-items:center; gap:8px;">
+          <i class="fas fa-save"></i> Save Changes
+        </button>
+      </div>
+    </form>
+  `);
+}
+
+async function submitEditInventory(itemId) {
+  const name = document.getElementById("edit-inv-name")?.value.trim();
+  const category = document.getElementById("edit-inv-cat")?.value.trim();
+  const sku = document.getElementById("edit-inv-sku")?.value.trim();
+  const qtyInput = document.getElementById("edit-inv-qty")?.value;
+  const unit = document.getElementById("edit-inv-unit")?.value.trim();
+  const priceInput = document.getElementById("edit-inv-price")?.value;
+  const minInput = document.getElementById("edit-inv-min")?.value;
+  const errBox = document.getElementById("edit-inv-error");
+  const saveBtn = document.getElementById("btn-save-edit-inv");
+
+  if (!name || !unit) {
+    if (errBox) {
+      errBox.textContent = "Please fill in required item name and unit of measure.";
+      errBox.style.display = "block";
+    }
+    Utils.showToast("Please fill in required item name and unit", "warning");
+    return;
+  }
+
+  const quantity = parseFloat(qtyInput);
+  if (isNaN(quantity) || quantity < 0) {
+    if (errBox) {
+      errBox.textContent = "Current stock quantity must be a non-negative number.";
+      errBox.style.display = "block";
+    }
+    Utils.showToast("Current stock quantity must be a non-negative number.", "warning");
+    return;
+  }
+
+  const unit_price = parseFloat(priceInput);
+  if (isNaN(unit_price) || unit_price < 0) {
+    if (errBox) {
+      errBox.textContent = "Unit price must be a non-negative number.";
+      errBox.style.display = "block";
+    }
+    Utils.showToast("Unit price must be a non-negative number.", "warning");
+    return;
+  }
+
+  const min_stock = parseFloat(minInput);
+  if (isNaN(min_stock) || min_stock < 0) {
+    if (errBox) {
+      errBox.textContent = "Minimum stock threshold must be a non-negative number.";
+      errBox.style.display = "block";
+    }
+    Utils.showToast("Minimum stock threshold must be a non-negative number.", "warning");
+    return;
+  }
+
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+  }
+  if (errBox) errBox.style.display = "none";
+
+  try {
+    const res = await Auth.fetch(`/api/v1/inventory/${itemId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        category: category || "Kitchen",
+        sku: sku || null,
+        quantity,
+        unit,
+        unit_price,
+        min_stock
+      })
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.detail || "Failed to update inventory item.");
+    }
+
+    Utils.showToast(`Item "${name}" updated successfully`, "success");
+    Utils.closeModal();
+    await renderInventory();
+  } catch (err) {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = '<i class="fas fa-save"></i> Save Changes';
+    }
+    if (errBox) {
+      errBox.textContent = err.message;
+      errBox.style.display = "block";
+    }
+    Utils.showToast(err.message, "danger");
+  }
+}
+
 async function inlineUpdateStock(itemId, oldQty, newQtyVal) {
   const newQty = parseFloat(newQtyVal);
   if (isNaN(newQty)) {
@@ -1036,12 +1485,14 @@ async function deleteInventoryItem(itemId, name) {
       } catch (_) {}
       throw new Error(errMsg);
     }
+    selectedInventoryIds.delete(Number(itemId));
     Utils.showToast(`"${name}" deleted from inventory`, "success");
-    renderInventory();
+    await renderInventory();
   } catch (err) {
     Utils.showToast(err.message, "danger");
   }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. PRODUCTS & MENU CATALOG
