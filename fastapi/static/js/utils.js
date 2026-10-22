@@ -115,78 +115,182 @@ const Utils = {
     this.showToast("CSV exported successfully", "success");
   },
 
-generateReceiptHTML(order) {
-    const itemsHtml = (order.items || []).map(it => `
-      <div class="receipt-item">
-        <span style="flex:1; padding-right:10px; word-break: break-word;">
-            ${it.name}<br>
-            <small>${it.quantity || 1} x ₱${Number(it.unit_price || it.price).toFixed(2)}</small>
-        </span>
-        <span style="white-space:nowrap;">₱${(Number(it.unit_price || it.price) * (it.quantity || 1)).toFixed(2)}</span>
-      </div>
-    `).join("");
+generateReceiptHTML(order, isPrint = false) {
+    if (!order) return '<div style="padding:20px; text-align:center; color:#71717a;">No receipt data available.</div>';
 
-    const dateStr = order.date ? new Date(order.date).toLocaleString() : new Date().toLocaleString();
-    const cashierName = order.cashier || "Cashier";
-    let receiptNo = order.receiptNumber || "N/A";
-    if (order.id && (!receiptNo || receiptNo === "N/A" || receiptNo.length > 20)) {
-      receiptNo = Utils.formatId('TXN', order.id);
+    const items = order.items || [];
+    const itemsHtml = items.map(it => {
+      const name = it.name || (it.product ? it.product.name : `Item #${it.product_id || ''}`);
+      const qty = Number(it.quantity || it.qty || 1);
+      const unitPrice = Number(it.unit_price !== undefined ? it.unit_price : (it.price !== undefined ? it.price : 0));
+      const lineTotal = Number(it.total_price !== undefined ? it.total_price : (unitPrice * qty));
+      return `
+        <div class="receipt-item-row" style="display:flex; justify-content:space-between; align-items:flex-start; padding:5px 0; border-bottom:1px dotted #e4e4e7; font-size:12px;">
+          <div class="receipt-item-name" style="flex:1; padding-right:8px; word-break:break-word; text-align:left;">
+            <div style="font-weight:700; color:#18181b;">${name}</div>
+            <div class="receipt-item-qty" style="font-size:11px; color:#71717a;">${qty} x ₱${unitPrice.toFixed(2)}</div>
+          </div>
+          <div class="receipt-item-price" style="white-space:nowrap; font-weight:700; color:#18181b; text-align:right;">
+            ₱${lineTotal.toFixed(2)}
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    const rawDate = order.date || order.created_at || new Date().toISOString();
+    let dateStr = "—";
+    try {
+      dateStr = new Date(rawDate).toLocaleString('en-US', {
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      });
+    } catch (e) {
+      dateStr = String(rawDate);
     }
-    const subtotal = Number(order.total_amount || order.net_amount || 0);
+
+    const cashierName = order.cashier || order.cashier_name || "Staff";
+    let receiptNo = order.receiptNumber || order.receipt_no || "N/A";
+    if (order.id && (!receiptNo || receiptNo === "N/A" || receiptNo.length > 20)) {
+      receiptNo = (typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('TXN', order.id) : `TXN-${String(order.id).padStart(4, '0')}`;
+    }
+    const orderCode = order.orderCode || order.order_code || receiptNo;
+
+    // Financial calculations
+    const subtotal = Number(order.total_amount !== undefined ? order.total_amount : (order.net_amount || 0));
     const discount = Number(order.discount_amount || 0);
-    const total = subtotal - discount; // Adjust if subtotal already implies net
+    const tax = Number(order.tax_amount || 0);
+    const netTotal = Number(order.net_amount !== undefined ? order.net_amount : (subtotal - discount));
+
+    // Payments
+    let paymentMethod = (order.payment_method || (order.payments && order.payments[0] && order.payments[0].payment_method) || "Cash").toUpperCase();
+    const paymentStatus = (order.payment_status || order.status || "COMPLETED").toUpperCase();
+    const amountPaid = Number(order.amount_paid !== undefined ? order.amount_paid : ((order.payments && order.payments[0] && order.payments[0].amount) || netTotal));
+    const change = order.change !== undefined ? Number(order.change) : Math.max(0, amountPaid - netTotal);
 
     return `
-      <div class="receipt-preview">
-          <div class="receipt-header">
-            <h3>BLESSIE FOOD HUB</h3>
-            <p style="margin:2px 0;">INBOX</p>
-            <p style="margin:2px 0;">Bago City, Negros Occidental</p>
+      <div class="receipt-paper" style="background:#ffffff; color:#18181b; font-family:'Courier New', Courier, monospace; width:100%; max-width:380px; margin:0 auto; padding:${isPrint ? '10px 8px' : '22px 18px'}; border-radius:8px; box-sizing:border-box;">
+        
+        <!-- HEADER -->
+        <div class="receipt-header-center" style="text-align:center; margin-bottom:12px;">
+          <img src="/static/images/blessie.png" alt="Blessie FoodHub Logo" class="receipt-logo-img" style="width:58px; height:58px; object-fit:contain; border-radius:50%; margin:0 auto 6px auto; display:block; background:#ffffff; border:1px solid rgba(205,190,150,0.4); padding:2px;" onerror="this.onerror=null; this.src='/images/blessie.png';">
+          <h2 class="receipt-brand-title" style="font-family:'Inter', -apple-system, sans-serif; font-size:18px; font-weight:800; letter-spacing:0.5px; margin:0 0 2px 0; color:#18181b;">BLESSIE FOODHUB</h2>
+          <div class="receipt-subtitle" style="font-size:11px; font-weight:700; color:#52525b; letter-spacing:0.5px; margin-bottom:4px;">COFFEE &amp; COMFORT FOOD</div>
+          <div class="receipt-address" style="font-size:11px; color:#71717a; margin:1px 0;">INBOX, Bago City, Negros Occidental</div>
+          <div class="receipt-contact" style="font-size:11px; color:#71717a; margin:1px 0;">Tel: (034) 123-4567 &bull; Mobile: +63 912 345 6789</div>
+        </div>
+
+        <div class="receipt-divider" style="border-top:1px dashed #a1a1aa; margin:10px 0;"></div>
+
+        <!-- TRANSACTION METADATA -->
+        <div style="font-size:11px; line-height:1.6; color:#3f3f46;">
+          <div class="receipt-meta-row" style="display:flex; justify-content:space-between;">
+            <span>Receipt No:</span>
+            <strong style="color:#18181b;">${receiptNo}</strong>
           </div>
-          <div class="receipt-divider"></div>
-          <p style="margin:2px 0;">Receipt No: ${receiptNo}</p>
-          <p style="margin:2px 0;">Date: ${dateStr}</p>
-          <p style="margin:2px 0;">Cashier: ${cashierName}</p>
-          <div class="receipt-divider"></div>
-          <div style="font-size:0.85rem;">
-            ${itemsHtml}
+          <div class="receipt-meta-row" style="display:flex; justify-content:space-between;">
+            <span>Order Code:</span>
+            <strong style="color:#18181b;">${orderCode}</strong>
           </div>
-          <div class="receipt-divider"></div>
-          <div class="receipt-totals">
+          <div class="receipt-meta-row" style="display:flex; justify-content:space-between;">
+            <span>Date &amp; Time:</span>
+            <span>${dateStr}</span>
+          </div>
+          <div class="receipt-meta-row" style="display:flex; justify-content:space-between;">
+            <span>Cashier:</span>
+            <strong style="color:#18181b;">${cashierName}</strong>
+          </div>
+          ${order.table_number ? `
+          <div class="receipt-meta-row" style="display:flex; justify-content:space-between;">
+            <span>Table / Dine:</span>
+            <strong style="color:#c9a227;">Table ${order.table_number}</strong>
+          </div>
+          ` : ''}
+        </div>
+
+        <div class="receipt-divider" style="border-top:1px dashed #a1a1aa; margin:10px 0;"></div>
+
+        <!-- ITEMIZED SUMMARY HEADER -->
+        <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:700; color:#71717a; text-transform:uppercase; margin-bottom:6px; letter-spacing:0.5px;">
+          <span>Item &amp; Qty</span>
+          <span>Amount</span>
+        </div>
+
+        <!-- ITEMS LIST (FOOD + DRINKS + ALL PRODUCTS) -->
+        <div style="margin-bottom:8px;">
+          ${itemsHtml.length ? itemsHtml : '<div style="text-align:center; padding:10px; font-size:12px; color:#71717a;">No items found</div>'}
+        </div>
+
+        <div class="receipt-divider" style="border-top:1px dashed #a1a1aa; margin:10px 0;"></div>
+
+        <!-- TOTALS BREAKDOWN -->
+        <div style="font-size:12px; line-height:1.7; color:#3f3f46;">
+          <div class="receipt-total-row" style="display:flex; justify-content:space-between;">
             <span>Subtotal:</span>
             <span>₱${subtotal.toFixed(2)}</span>
           </div>
-          <div class="receipt-totals">
+          ${discount > 0 ? `
+          <div class="receipt-total-row" style="display:flex; justify-content:space-between; color:#ef4444;">
             <span>Discount:</span>
-            <span>₱${discount.toFixed(2)}</span>
+            <span>-₱${discount.toFixed(2)}</span>
           </div>
-          <div class="receipt-totals bold">
-            <span>TOTAL:</span>
-            <span>₱${total.toFixed(2)}</span>
+          ` : ''}
+          ${tax > 0 ? `
+          <div class="receipt-total-row" style="display:flex; justify-content:space-between;">
+            <span>Tax / VAT:</span>
+            <span>₱${tax.toFixed(2)}</span>
           </div>
-          <br>
-          <div class="receipt-totals">
-            <span>Payment (${order.payment_method || 'Cash'}):</span>
-            <span></span>
+          ` : ''}
+          
+          <div class="receipt-total-row grand-total" style="display:flex; justify-content:space-between; font-size:16px; font-weight:800; color:#18181b; margin-top:6px; padding-top:6px; border-top:1px solid #18181b;">
+            <span>TOTAL AMOUNT:</span>
+            <span style="color:#18181b;">₱${netTotal.toFixed(2)}</span>
           </div>
-          <div class="receipt-totals">
-            <span>Amount Received:</span>
-            <span>₱${Number(order.amount_paid || order.total_amount || 0).toFixed(2)}</span>
+        </div>
+
+        <div class="receipt-divider" style="border-top:1px dashed #a1a1aa; margin:10px 0;"></div>
+
+        <!-- PAYMENT INFORMATION -->
+        <div style="font-size:11px; line-height:1.7; color:#3f3f46;">
+          <div class="receipt-meta-row" style="display:flex; justify-content:space-between;">
+            <span>Payment Method:</span>
+            <strong style="color:#18181b;">${paymentMethod}</strong>
           </div>
-          <div class="receipt-totals">
+          <div class="receipt-meta-row" style="display:flex; justify-content:space-between;">
+            <span>Payment Status:</span>
+            <strong style="color:#10b981;">${paymentStatus}</strong>
+          </div>
+          <div class="receipt-meta-row" style="display:flex; justify-content:space-between;">
+            <span>Amount Tendered:</span>
+            <span>₱${amountPaid.toFixed(2)}</span>
+          </div>
+          ${paymentMethod.includes('CASH') ? `
+          <div class="receipt-meta-row" style="display:flex; justify-content:space-between;">
             <span>Change:</span>
-            <span>₱${Math.max(0, Number(order.amount_paid || order.total_amount || 0) - total).toFixed(2)}</span>
+            <strong style="color:#10b981;">₱${change.toFixed(2)}</strong>
           </div>
-          <div class="receipt-divider"></div>
-          <div class="receipt-header" style="margin-top:16px;">
-            <p>THANK YOU!</p>
-            <p>PLEASE COME AGAIN</p>
-          </div>
+          ` : ''}
+        </div>
+
+        <div class="receipt-divider" style="border-top:1px dashed #a1a1aa; margin:10px 0;"></div>
+
+        <!-- FOOTER MESSAGE -->
+        <div class="receipt-footer-center" style="text-align:center; font-size:11px; color:#52525b; margin-top:12px;">
+          <p style="margin:2px 0; font-weight:700; letter-spacing:0.5px;">*** THANK YOU FOR YOUR VISIT! ***</p>
+          <p style="margin:2px 0;">Please come again!</p>
+          <p style="margin:4px 0 0 0; font-size:10px; color:#a1a1aa;">Blessie FoodHub POS System</p>
+        </div>
+
       </div>
     `;
   },
 
   printReceipt(order) {
+    if (!order) order = window.currentReceiptOrder;
+    if (!order) {
+      this.showToast("No receipt data available to print.", "warning");
+      return;
+    }
+
     let receiptEl = document.getElementById("printReceipt");
     if (!receiptEl) {
       receiptEl = document.createElement("div");
@@ -197,29 +301,43 @@ generateReceiptHTML(order) {
     // Store original order on window for print button
     window.currentReceiptOrder = order;
 
-    receiptEl.innerHTML = this.generateReceiptHTML(order);
-    window.print();
+    receiptEl.innerHTML = this.generateReceiptHTML(order, true);
+    setTimeout(() => {
+      window.print();
+    }, 120);
   },
 
-  showReceiptModal(order) {
-    const html = this.generateReceiptHTML(order);
-    
-    // Store for print button
+  showReceiptModal(order, customTitle) {
+    if (!order) return;
     window.currentReceiptOrder = order;
 
-    const cancelBtn = order.id ? `
+    const html = this.generateReceiptHTML(order, false);
+    const receiptNo = order.receiptNumber || order.receipt_no || (order.id ? ((typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('TXN', order.id) : `TXN-${String(order.id).padStart(4, '0')}`) : 'Receipt');
+
+    const cancelBtn = (order.id && (order.status === 'pending' || order.status === 'preparing')) ? `
       <button class="btn btn-outline" onclick="Utils.closeModal(); if (typeof promptRejectOrder === 'function') promptRejectOrder(${order.id});" style="border-color:#ef4444; color:#ef4444; font-size:12px; font-weight:700;" title="Cancel & Reject Order">
-        <i class="fas fa-ban"></i> Cancel / Reject Order
+        <i class="fas fa-ban"></i> Cancel Order
       </button>
     ` : '';
 
     const footer = `
-      ${cancelBtn}
-      <button class="btn btn-outline" onclick="Utils.closeModal()">Close</button>
-      <button class="btn btn-primary" onclick="Utils.printReceipt(window.currentReceiptOrder)"><i class="fas fa-print"></i> Print Receipt</button>
+      <div style="display:flex; justify-content:space-between; align-items:center; width:100%; gap:10px; flex-wrap:wrap;">
+        <div>
+          ${cancelBtn}
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn btn-outline" onclick="Utils.closeModal()" style="padding:8px 18px; font-size:13px; font-weight:600;">
+            <i class="fas fa-times"></i> Close Preview
+          </button>
+          <button type="button" class="btn btn-primary" onclick="Utils.printReceipt(window.currentReceiptOrder)" style="padding:8px 20px; font-size:13px; font-weight:700; background:linear-gradient(135deg, #c9a227, #987719); border:none; box-shadow:0 4px 12px rgba(201,162,39,0.25);">
+            <i class="fas fa-print" style="margin-right:6px;"></i> Print Receipt
+          </button>
+        </div>
+      </div>
     `;
 
-    this.openModal('<i class="fas fa-check-circle" style="color:var(--success, #10b981); margin-right:8px;"></i> Transaction Complete', html, footer);
+    const title = customTitle || `<i class="fas fa-receipt" style="color:#c9a227; margin-right:8px;"></i> Receipt Preview — ${receiptNo}`;
+    this.openModal(title, html, footer);
   },
 
   initTheme() {

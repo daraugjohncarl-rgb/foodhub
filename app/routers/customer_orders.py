@@ -47,7 +47,21 @@ def submit_customer_order(body: dict, db: Session = Depends(get_db)):
         customer_name = str(customer_name).strip()
 
     order_number = body.get("order_number")
-    if not order_number:
+    if order_number:
+        existing_order = db.query(models.CustomerOrder).filter(
+            models.CustomerOrder.order_number == order_number,
+            models.CustomerOrder.tenant_id == tenant_id
+        ).first()
+        if existing_order:
+            return {
+                "status": "success",
+                "message": "Order already received",
+                "order_id": existing_order.id,
+                "order_number": existing_order.order_number,
+                "total_amount": float(existing_order.total_amount),
+                "tracking_token": getattr(existing_order, "tracking_token", None)
+            }
+    else:
         order_number = f"CUST-{uuid.uuid4().hex[:6].upper()}"
 
     tracking_token = secrets.token_urlsafe(24)
@@ -212,6 +226,11 @@ def update_customer_order_status(order_id: int, body: dict, db: Session = Depend
             "order_id": order.id,
             "order_number": order.order_number,
             "status": new_status
+        })
+        notify_realtime_event(order.tenant_id or 1, "KITCHEN_UPDATED", {
+            "order_id": f"CUST-{order.id}",
+            "order_number": order.order_number,
+            "status": new_status.upper()
         })
     except Exception:
         pass

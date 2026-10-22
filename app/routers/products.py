@@ -216,6 +216,7 @@ def create_product(
         cost=body.cost if body.cost is not None else Decimal("0.0"),
         is_active=body.is_active if body.is_active is not None else True,
         image_url=body.image_url,
+        preparation_station=getattr(body, "preparation_station", "kitchen") or "kitchen",
     )
     db.add(product)
     try:

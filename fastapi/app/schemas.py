@@ -111,6 +111,7 @@ class ProductCreate(BaseModel):
     price: Decimal = Field(..., ge=0.0)
     cost: Decimal = Field(..., ge=0.0)
     is_active: Optional[bool] = True
+    preparation_station: Optional[str] = Field("kitchen", max_length=30)
 
 class ProductResponse(BaseModel):
     id: int
@@ -123,6 +124,7 @@ class ProductResponse(BaseModel):
     cost: Decimal
     is_active: bool
     image_url: Optional[str] = None
+    preparation_station: Optional[str] = "kitchen"
     created_at: datetime
     updated_at: datetime
 
@@ -365,6 +367,7 @@ class AdminProductCreate(BaseModel):
     cost: Optional[Decimal] = Field(Decimal("0.0"), ge=0, description="Unit cost / COGS")
     image_url: Optional[str] = Field(None)
     is_active: Optional[bool] = Field(True)
+    preparation_station: Optional[str] = Field("kitchen", max_length=30)
 
 
 class AdminProductUpdate(BaseModel):
@@ -377,6 +380,7 @@ class AdminProductUpdate(BaseModel):
     cost: Optional[Decimal] = Field(None, ge=0)
     image_url: Optional[str] = None
     is_active: Optional[bool] = None
+    preparation_station: Optional[str] = Field(None, max_length=30)
 
 
 class AdminProductResponse(BaseModel):
@@ -392,6 +396,7 @@ class AdminProductResponse(BaseModel):
     cost: Decimal
     image_url: Optional[str] = None
     is_active: bool
+    preparation_station: Optional[str] = "kitchen"
     created_at: datetime
     updated_at: datetime
 

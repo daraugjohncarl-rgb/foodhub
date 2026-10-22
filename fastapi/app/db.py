@@ -127,8 +127,13 @@ check_and_create_db()
 # SQLAlchemy engine config
 # pool_pre_ping=True verifies connections before using them, preventing disconnected socket errors
 # pool_recycle=300 prevents timeouts on persistent connections
+connect_args = {}
+if is_postgres:
+    connect_args["prepare_threshold"] = None
+
 engine = create_engine(
     DATABASE_URL,
+    connect_args=connect_args,
     pool_pre_ping=True,
     pool_recycle=300,
     pool_size=5,

@@ -1278,10 +1278,20 @@ function openAddProductModal() {
         <input id="prod-name" class="input-field" required placeholder="e.g. 1pc Chickenjoy with Rice" style="width:100%;">
       </div>
 
-      <!-- Selling Price -->
-      <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Selling Price (₱) <span style="color:var(--danger);">*</span></label>
-        <input type="number" step="0.01" id="prod-price" class="input-field" required value="99" style="width:100%;">
+      <!-- Selling Price & Station -->
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Selling Price (₱) <span style="color:var(--danger);">*</span></label>
+          <input type="number" step="0.01" id="prod-price" class="input-field" required value="99" style="width:100%;">
+        </div>
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Prep Station</label>
+          <select id="prod-station" class="input-field" style="width:100%;">
+            <option value="kitchen">Kitchen (Food & Hot Meals)</option>
+            <option value="drinks">Drinks Counter (Coffee & Beverages)</option>
+            <option value="none">None / Retail (Bottled drinks, retail)</option>
+          </select>
+        </div>
       </div>
 
       <!-- Picture / Image Upload -->
@@ -1321,6 +1331,7 @@ async function submitAddProduct() {
   const sku = document.getElementById("prod-sku").value.trim();
   const catVal = document.getElementById("prod-category").value;
   const price = parseFloat(document.getElementById("prod-price").value) || 0;
+  const stationVal = document.getElementById("prod-station")?.value || "kitchen";
   const imageUrl = document.getElementById("add-prod-img-url")?.value?.trim() || null;
 
   if (!name || !sku) {
@@ -1338,6 +1349,7 @@ async function submitAddProduct() {
     category_id: Number(catVal),
     price,
     cost: 0,
+    preparation_station: stationVal,
     image_url: imageUrl,
     is_active: true
   };
@@ -1387,16 +1399,24 @@ function openEditProductModal(id) {
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Product Name <span style="color:var(--danger);">*</span></label>
         <input id="edit-prod-name" class="input-field" required value="${p.name}" style="width:100%;">
       </div>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-bottom:14px;">
         <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Selling Price (₱) <span style="color:var(--danger);">*</span></label>
+          <label style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Price (₱) <span style="color:var(--danger);">*</span></label>
           <input type="number" step="0.01" id="edit-prod-price" class="input-field" required value="${p.price}" style="width:100%;">
         </div>
         <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Status</label>
+          <label style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Status</label>
           <select id="edit-prod-status" class="input-field" style="width:100%;">
             <option value="true" ${p.is_active ? 'selected' : ''}>Active</option>
             <option value="false" ${!p.is_active ? 'selected' : ''}>Inactive</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Prep Station</label>
+          <select id="edit-prod-station" class="input-field" style="width:100%;">
+            <option value="kitchen" ${(!p.preparation_station || p.preparation_station === 'kitchen') ? 'selected' : ''}>Kitchen</option>
+            <option value="drinks" ${p.preparation_station === 'drinks' ? 'selected' : ''}>Drinks</option>
+            <option value="none" ${p.preparation_station === 'none' ? 'selected' : ''}>None</option>
           </select>
         </div>
       </div>
@@ -1448,6 +1468,7 @@ async function submitEditProduct(id) {
   const catVal = document.getElementById("edit-prod-category").value;
   const price = parseFloat(document.getElementById("edit-prod-price").value) || 0;
   const is_active = document.getElementById("edit-prod-status").value === "true";
+  const stationVal = document.getElementById("edit-prod-station")?.value || "kitchen";
   const imageUrl = document.getElementById("edit-prod-img-url")?.value?.trim() || null;
 
   if (!name || !sku) {
@@ -1461,6 +1482,7 @@ async function submitEditProduct(id) {
     category_id: catVal ? Number(catVal) : null,
     price,
     cost: 0,
+    preparation_station: stationVal,
     image_url: imageUrl,
     is_active
   };
@@ -2362,7 +2384,8 @@ async function renderPOS(c) {
               <i class="fas fa-microphone" id="pos-voice-btn-mic" style="color:#ef4444; font-size:13px;"></i>
               <span id="pos-voice-btn-text">VOICE ORDER</span>
             </button>
-            <button id="pos-online-orders-btn" onclick="openOnlineOrdersModal()" style="height:38px; padding:0 10px; background:#f4f4f5; color:#18181b; border:1px solid rgba(205,190,150,0.4); border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:5px; white-space:nowrap;" title="Pending Customer Online Orders">
+            <button id="pos-last-receipt-btn" onclick="previewLastReceipt()" style="height:38px; padding:0 10px; background:#f4f4f5; color:#18181b; border:1px solid rgba(205,190,150,0.4); border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:5px; white-space:nowrap;" title="Preview & Print Last Receipt"><i class="fas fa-receipt" style="color:#c9a227;"></i> Receipt</button>
+          <button id="pos-online-orders-btn" onclick="openOnlineOrdersModal()" style="height:38px; padding:0 10px; background:#f4f4f5; color:#18181b; border:1px solid rgba(205,190,150,0.4); border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:5px; white-space:nowrap;" title="Pending Customer Online Orders">
               <i class="fas fa-bell"></i>
               <span id="pos-online-orders-badge" style="background:#ef4444; color:#fff; padding:1px 5px; border-radius:10px; font-size:10px; font-weight:bold; display:none;">0</span>
             </button>
@@ -2455,6 +2478,11 @@ async function renderPOS(c) {
           <button class="btn btn-primary" style="width:100%; height:40px; font-size:13px; font-weight:700; border-radius:10px; background:linear-gradient(135deg, #c9a227, #987719); border:none; box-shadow:0 4px 12px rgba(201,162,39,0.2);" onclick="openPaymentModal()">
             <i class="fas fa-cash-register" style="margin-right:6px;"></i> Charge & Checkout
           </button>
+          <div style="text-align:center; margin-top:8px;">
+            <button type="button" class="btn btn-outline btn-sm" onclick="previewLastReceipt()" style="width:100%; height:32px; font-size:11px; font-weight:700; border-color:rgba(201,162,39,0.5); color:#c9a227; display:inline-flex; align-items:center; justify-content:center; gap:5px; border-radius:8px;" title="Reprint or preview the last completed transaction receipt">
+              <i class="fas fa-receipt"></i> Reprint / Preview Last Receipt
+            </button>
+          </div>
         </div>
       </div>
 
@@ -3193,7 +3221,6 @@ function startVoiceRecordingDirect() {
       textEl.innerHTML = `Listening... Speak order (e.g. "isa ka c1 solo", "3 pos 5341", "1 bucket ice c2")`;
       textEl.style.color = "#18181b";
     }
-    Utils.showToast("Voice recording started. Speak your order...", "info");
   };
 
   window.voiceSessionCommitted = window.voiceSessionCommitted || new Set();
@@ -3276,7 +3303,6 @@ function stopVoiceRecordingDirect() {
     window.voiceSessionCommitted.clear();
   }
   updateVoiceButtonUI(false);
-  Utils.showToast("Voice recording stopped.", "info");
 }
 
 function updateVoiceButtonUI(listening) {
@@ -3530,20 +3556,29 @@ async function submitCheckout() {
     const currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
     const orderForReceipt = {
       id: tx.id,
-      receiptNumber: (typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('TXN', tx.id) : `TXN-${String(tx.id).padStart(4, '0')}`,
+      receiptNumber: tx.receipt_no || tx.order_code || ((typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('TXN', tx.id) : `TXN-${String(tx.id).padStart(4, '0')}`),
+      orderCode: tx.order_code || `TXN-${String(tx.id).padStart(4, '0')}`,
       date: tx.created_at || new Date().toISOString(),
       cashier: currentUser ? (currentUser.name || currentUser.username) : "Cashier",
       items: posCart.map(i => ({
         name: i.name,
         quantity: i.quantity,
-        price: i.price
+        price: i.price,
+        unit_price: i.price,
+        total_price: i.price * i.quantity
       })),
       total_amount: total,
+      net_amount: tx.net_amount || total,
+      discount_amount: tx.discount_amount || 0,
+      tax_amount: tx.tax_amount || 0,
       payment_method: method,
-      amount_paid: tendered
+      payment_status: tx.status || "completed",
+      amount_paid: tendered,
+      change: method.toUpperCase() === "CASH" ? Math.max(0, tendered - total) : 0
     };
     
-    Utils.showReceiptModal(orderForReceipt);
+    window.lastCompletedOrder = orderForReceipt;
+    Utils.showReceiptModal(orderForReceipt, `<i class="fas fa-check-circle" style="color:var(--success, #10b981); margin-right:8px;"></i> Transaction Complete — ${orderForReceipt.receiptNumber}`);
     
     clearCart();
     localStorage.setItem("RESTOTRACK_SYNC_TX", Date.now());
@@ -3573,6 +3608,23 @@ async function renderKitchen(c) {
   c = c || document.getElementById('view-container');
   const res = await Auth.fetch(`/api/v1/kitchen/orders?type=food&_t=${Date.now()}`);
   const orders = res.ok ? await res.json() : [];
+
+  if (window.kitchenOrdersInterval) {
+    clearInterval(window.kitchenOrdersInterval);
+    window.kitchenOrdersInterval = null;
+  }
+  window.kitchenOrdersInterval = setInterval(async () => {
+    const kGrid = document.getElementById("kitchen-tickets-grid");
+    if (kGrid) {
+      const liveRes = await Auth.fetch(`/api/v1/kitchen/orders?type=food&_t=${Date.now()}`);
+      if (liveRes.ok) {
+        renderKitchen(c);
+      }
+    } else {
+      clearInterval(window.kitchenOrdersInterval);
+      window.kitchenOrdersInterval = null;
+    }
+  }, 6000);
 
   c.innerHTML = `
     <style>
@@ -3647,7 +3699,7 @@ async function renderKitchen(c) {
     </div>
 
     <!-- Responsive Grid for Order Tickets -->
-    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:20px; align-items:start;" class="fade-up delay-2">
+    <div id="kitchen-tickets-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:20px; align-items:start;" class="fade-up delay-2">
       ${(() => {
         const activeOrders = orders.filter(o => o.status !== 'COMPLETED' && o.status !== 'READY');
         return activeOrders.length ? activeOrders.map(ord => {
@@ -3697,12 +3749,18 @@ async function renderKitchen(c) {
                 <i class="fas fa-check-circle" style="font-size:16px;"></i> Order Completed
               </div>
             ` : `
-              <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-                <button type="button" class="btn" style="font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:6px; border:1px solid #ef4444; color:#ef4444; background:rgba(239,68,68,0.06); cursor:pointer;" onclick="promptRejectOrder(${ord.raw_id || ord.id})">
-                  <i class="fas fa-ban"></i> Reject
-                </button>
-                <button type="button" class="btn btn-primary" style="font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:8px; background:#10b981; color:#fff; border:none; cursor:pointer;" onclick="updateOrderStatus('${ord.raw_id}', 'COMPLETED')">
-                  <i class="fas fa-check-circle"></i> Complete Order
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                ${ord.status !== 'PREPARING' ? `
+                  <button type="button" class="btn" style="font-size:12px; font-weight:700; padding:8px 10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:6px; border:1px solid #3b82f6; color:#3b82f6; background:rgba(59,130,246,0.06); cursor:pointer;" onclick="updateOrderStatus('${ord.raw_id || ord.id}', 'PREPARING')">
+                    <i class="fas fa-fire-burner"></i> Preparing
+                  </button>
+                ` : `
+                  <button type="button" class="btn" style="font-size:12px; font-weight:700; padding:8px 10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:6px; border:1px solid #ef4444; color:#ef4444; background:rgba(239,68,68,0.06); cursor:pointer;" onclick="promptRejectOrder('${ord.raw_id || ord.id}')">
+                    <i class="fas fa-ban"></i> Reject
+                  </button>
+                `}
+                <button type="button" class="btn btn-primary" style="font-size:12px; font-weight:700; padding:8px 10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:6px; background:#10b981; color:#fff; border:none; cursor:pointer;" onclick="updateOrderStatus('${ord.raw_id || ord.id}', 'COMPLETED')">
+                  <i class="fas fa-check-circle"></i> Complete
                 </button>
               </div>
             `}
@@ -3796,14 +3854,19 @@ async function updateOrderStatus(orderId, newStatus) {
   try {
     const res = await Auth.fetch(`/api/v1/kitchen/orders/${orderId}/status`, {
       method: "PUT",
-      body: JSON.stringify({ status: newStatus })
+      body: JSON.stringify({ status: newStatus, station: "food" })
     });
     if (res.ok) {
+      Utils.showToast(`Order #${orderId} marked as ${newStatus}!`, "success");
       renderKitchen();
       localStorage.setItem("RESTOTRACK_SYNC_KITCHEN", JSON.stringify({ timestamp: Date.now(), orderId: orderId, status: newStatus }));
+    } else {
+      const err = await res.json();
+      Utils.showToast(err.detail || "Failed to update order status.", "danger");
     }
   } catch (err) {
     console.error("Failed to update status", err);
+    Utils.showToast("Network error updating status", "danger");
   }
 }
 
@@ -4125,9 +4188,25 @@ async function renderTransactions(c) {
                   </div>
                 `;
               } else if (statusUpper === 'REJECTED' || statusUpper === 'CANCELLED') {
-                actionHtml = `<span style="display:inline-flex; align-items:center; gap:4px; color:#ef4444; font-size:12px; font-weight:700;"><i class="fas fa-ban"></i> Cancelled</span>`;
+                actionHtml = `
+                  <div style="display:flex; justify-content:center; align-items:center; gap:6px;">
+                    <span style="display:inline-flex; align-items:center; gap:4px; color:#ef4444; font-size:11px; font-weight:700;"><i class="fas fa-ban"></i> Cancelled</span>
+                    <button type="button" class="btn btn-sm btn-outline" onclick="previewTransactionReceipt(${tx.id})" style="border-color:#a1a1aa; color:#71717a; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:600; cursor:pointer;" title="View Receipt">
+                      <i class="fas fa-receipt"></i>
+                    </button>
+                  </div>
+                `;
               } else {
-                actionHtml = `<span style="display:inline-flex; align-items:center; gap:4px; color:#10b981; font-size:12px; font-weight:700;"><i class="fas fa-check-double"></i> Completed</span>`;
+                actionHtml = `
+                  <div style="display:flex; justify-content:center; align-items:center; gap:6px;">
+                    <button type="button" class="btn btn-sm btn-outline" onclick="previewTransactionReceipt(${tx.id})" style="border-color:#c9a227; color:#c9a227; border-radius:6px; padding:4px 10px; font-size:11px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:4px; transition:0.2s;" onmouseover="this.style.background='rgba(201,162,39,0.08)'" onmouseout="this.style.background='transparent'" title="Preview Receipt">
+                      <i class="fas fa-receipt"></i> Receipt
+                    </button>
+                    <button type="button" class="btn btn-sm" onclick="printTransactionReceiptDirect(${tx.id})" style="background:#c9a227; color:#ffffff; border:none; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:3px; box-shadow:0 2px 5px rgba(201,162,39,0.25);" title="Print Receipt">
+                      <i class="fas fa-print"></i>
+                    </button>
+                  </div>
+                `;
               }
 
               const itemsSummary = (tx.items || []).map(it => `${it.quantity}x ${it.name}`).join(', ');
@@ -4188,7 +4267,15 @@ window.viewOrderItemsModal = function(txId) {
         <span style="font-size:13px; font-weight:600; color:var(--text-muted);">Total Net:</span>
         <strong style="font-size:16px; color:#c9a227;">₱${Number(tx.net_amount || 0).toFixed(2)}</strong>
       </div>
-      <div style="display:flex; justify-content:flex-end;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn btn-outline" onclick="previewTransactionReceipt(${tx.id})" style="border-color:#c9a227; color:#c9a227; padding:6px 12px; font-size:12px; font-weight:700; display:inline-flex; align-items:center; gap:5px;">
+            <i class="fas fa-receipt"></i> View Receipt
+          </button>
+          <button type="button" class="btn btn-primary" onclick="printTransactionReceiptDirect(${tx.id})" style="padding:6px 14px; font-size:12px; font-weight:700; display:inline-flex; align-items:center; gap:5px;">
+            <i class="fas fa-print"></i> Print Receipt
+          </button>
+        </div>
         <button type="button" class="btn btn-outline" onclick="Utils.closeModal()" style="padding:6px 16px; font-size:13px;">Close</button>
       </div>
     </div>
@@ -6958,3 +7045,115 @@ window.reloadTransferDialogData = reloadTransferDialogData;
 
 
 
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RECEIPT PREVIEW & PRINTING HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+window.previewTransactionReceipt = async function(txId) {
+  try {
+    let tx = (window._recentTransactionsCache || []).find(t => t.id === txId);
+    if (!tx || !tx.items || !tx.payments) {
+      const res = await Auth.fetch(`/api/v1/transactions/${txId}`);
+      if (res.ok) {
+        tx = await res.json();
+      }
+    }
+    if (!tx) {
+      Utils.showToast("Transaction details not found.", "danger");
+      return;
+    }
+    const payment = (tx.payments && tx.payments.length) ? tx.payments[0] : {};
+    const orderForReceipt = {
+      id: tx.id,
+      receiptNumber: tx.receipt_no || tx.order_code || ((typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('TXN', tx.id) : `TXN-${String(tx.id).padStart(4, '0')}`),
+      orderCode: tx.order_code || `TXN-${String(tx.id).padStart(4, '0')}`,
+      date: tx.created_at || new Date().toISOString(),
+      cashier: tx.cashier || "Cashier",
+      items: (tx.items || []).map(i => ({
+        name: i.name,
+        quantity: i.quantity,
+        price: i.unit_price || i.price,
+        unit_price: i.unit_price || i.price,
+        total_price: i.total_price || ((i.unit_price || i.price) * i.quantity)
+      })),
+      total_amount: Number(tx.total_amount !== undefined ? tx.total_amount : (tx.net_amount || 0)),
+      net_amount: Number(tx.net_amount || 0),
+      discount_amount: Number(tx.discount_amount || 0),
+      tax_amount: Number(tx.tax_amount || 0),
+      payment_method: payment.payment_method || "Cash",
+      payment_status: tx.status || "completed",
+      amount_paid: Number(payment.amount !== undefined ? payment.amount : (tx.net_amount || 0)),
+      change: (payment.payment_method || "Cash").toUpperCase().includes("CASH") ? Math.max(0, Number(payment.amount || 0) - Number(tx.net_amount || 0)) : 0
+    };
+    window.lastCompletedOrder = orderForReceipt;
+    Utils.showReceiptModal(orderForReceipt);
+  } catch (err) {
+    console.error("Failed to load receipt:", err);
+    Utils.showToast("Failed to load receipt details.", "danger");
+  }
+};
+
+window.printTransactionReceiptDirect = async function(txId) {
+  try {
+    let tx = (window._recentTransactionsCache || []).find(t => t.id === txId);
+    if (!tx || !tx.items || !tx.payments) {
+      const res = await Auth.fetch(`/api/v1/transactions/${txId}`);
+      if (res.ok) {
+        tx = await res.json();
+      }
+    }
+    if (!tx) {
+      Utils.showToast("Transaction details not found.", "danger");
+      return;
+    }
+    const payment = (tx.payments && tx.payments.length) ? tx.payments[0] : {};
+    const orderForReceipt = {
+      id: tx.id,
+      receiptNumber: tx.receipt_no || tx.order_code || ((typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('TXN', tx.id) : `TXN-${String(tx.id).padStart(4, '0')}`),
+      orderCode: tx.order_code || `TXN-${String(tx.id).padStart(4, '0')}`,
+      date: tx.created_at || new Date().toISOString(),
+      cashier: tx.cashier || "Cashier",
+      items: (tx.items || []).map(i => ({
+        name: i.name,
+        quantity: i.quantity,
+        price: i.unit_price || i.price,
+        unit_price: i.unit_price || i.price,
+        total_price: i.total_price || ((i.unit_price || i.price) * i.quantity)
+      })),
+      total_amount: Number(tx.total_amount !== undefined ? tx.total_amount : (tx.net_amount || 0)),
+      net_amount: Number(tx.net_amount || 0),
+      discount_amount: Number(tx.discount_amount || 0),
+      tax_amount: Number(tx.tax_amount || 0),
+      payment_method: payment.payment_method || "Cash",
+      payment_status: tx.status || "completed",
+      amount_paid: Number(payment.amount !== undefined ? payment.amount : (tx.net_amount || 0)),
+      change: (payment.payment_method || "Cash").toUpperCase().includes("CASH") ? Math.max(0, Number(payment.amount || 0) - Number(tx.net_amount || 0)) : 0
+    };
+    window.lastCompletedOrder = orderForReceipt;
+    Utils.printReceipt(orderForReceipt);
+  } catch (err) {
+    console.error("Failed to print receipt:", err);
+    Utils.showToast("Failed to print receipt.", "danger");
+  }
+};
+
+window.previewLastReceipt = async function() {
+  if (window.lastCompletedOrder) {
+    Utils.showReceiptModal(window.lastCompletedOrder);
+    return;
+  }
+  try {
+    const res = await Auth.fetch("/api/v1/transactions?limit=1");
+    if (res.ok) {
+      const list = await res.json();
+      if (list && list.length) {
+        await window.previewTransactionReceipt(list[0].id);
+        return;
+      }
+    }
+    Utils.showToast("No recent transactions found.", "info");
+  } catch (e) {
+    Utils.showToast("No recent receipt found in this session.", "info");
+  }
+};

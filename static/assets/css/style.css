@@ -3547,3 +3547,228 @@ body.dark-mode .sidebar-user-info strong,
 [data-theme="dark"] .sidebar-user-info strong {
     color: #f4f4f5 !important;
 }
+
+
+/* ==============================================================================
+   RECEIPT PREVIEW & THERMAL PRINTING SYSTEM
+   ============================================================================== */
+.receipt-paper {
+  background: #ffffff;
+  color: #18181b;
+  font-family: 'Courier New', Courier, monospace;
+  width: 100%;
+  max-width: 380px;
+  margin: 0 auto;
+  padding: 24px 20px;
+  border-radius: 8px;
+  border: 1px solid rgba(205, 190, 150, 0.4);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+  box-sizing: border-box;
+}
+
+[data-theme="dark"] .receipt-paper {
+  background: #ffffff !important;
+  color: #18181b !important;
+  border: 1px solid #e4e4e7 !important;
+}
+
+.receipt-header-center {
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.receipt-logo-img {
+  width: 58px;
+  height: 58px;
+  object-fit: contain;
+  border-radius: 50%;
+  margin: 0 auto 6px auto;
+  display: block;
+  border: 1px solid rgba(205, 190, 150, 0.4);
+  background: #ffffff;
+  padding: 2px;
+}
+
+.receipt-brand-title {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  margin: 0 0 2px 0;
+  color: #18181b;
+}
+
+.receipt-subtitle {
+  font-size: 11px;
+  color: #52525b;
+  margin: 0 0 4px 0;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.receipt-address,
+.receipt-contact {
+  font-size: 11px;
+  color: #71717a;
+  margin: 1px 0;
+}
+
+.receipt-divider {
+  border-top: 1px dashed #a1a1aa;
+  margin: 10px 0;
+}
+
+.receipt-meta-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #3f3f46;
+  margin: 2px 0;
+}
+
+.receipt-item-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  font-size: 12px;
+  padding: 5px 0;
+  border-bottom: 1px dotted #e4e4e7;
+}
+
+.receipt-item-row:last-child {
+  border-bottom: none;
+}
+
+.receipt-item-name {
+  flex: 1;
+  padding-right: 8px;
+  word-break: break-word;
+  font-weight: 700;
+  color: #18181b;
+}
+
+.receipt-item-qty {
+  font-size: 11px;
+  color: #71717a;
+  margin-top: 2px;
+}
+
+.receipt-item-price {
+  white-space: nowrap;
+  font-weight: 700;
+  color: #18181b;
+}
+
+.receipt-total-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #3f3f46;
+  margin: 3px 0;
+}
+
+.receipt-total-row.grand-total {
+  font-size: 16px;
+  font-weight: 800;
+  color: #18181b;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #18181b;
+}
+
+.receipt-footer-center {
+  text-align: center;
+  font-size: 11px;
+  color: #52525b;
+  margin-top: 14px;
+}
+
+.receipt-footer-center p {
+  margin: 2px 0;
+}
+
+/* ==============================================================================
+   PRINT-SPECIFIC STYLES (58mm, 80mm THERMAL & STANDARD PRINTERS)
+   ============================================================================== */
+@media print {
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+  }
+
+  /* Hide entire application and UI components */
+  body * {
+    visibility: hidden !important;
+  }
+
+  /* Expose ONLY #printReceipt */
+  #printReceipt,
+  #printReceipt * {
+    visibility: visible !important;
+  }
+
+  #printReceipt {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 80mm !important;
+    margin: 0 auto !important;
+    padding: 2mm 3mm !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-family: 'Courier New', Courier, monospace !important;
+    display: block !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    page-break-inside: avoid !important;
+  }
+
+  #printReceipt .receipt-paper {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+  }
+
+  #printReceipt .receipt-divider {
+    border-top: 1px dashed #000000 !important;
+  }
+
+  #printReceipt .receipt-brand-title,
+  #printReceipt .receipt-item-name,
+  #printReceipt .receipt-item-price,
+  #printReceipt .receipt-total-row,
+  #printReceipt .receipt-meta-row {
+    color: #000000 !important;
+  }
+
+  /* Hide modals, backdrops, sidebar, navbar, action buttons */
+  #modal-container,
+  .modal,
+  .modal-overlay,
+  .sidebar,
+  .sidebar-overlay,
+  .topbar,
+  .mobile-bottom-nav,
+  .mobile-menu-btn,
+  .btn,
+  button,
+  .toast,
+  .toast-container {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  @page {
+    size: auto;
+    margin: 3mm 4mm;
+  }
+}

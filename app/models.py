@@ -138,6 +138,7 @@ class Product(Base):
     cost = Column(Numeric(10, 2), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False, index=True)
     image_url = Column(Text, nullable=True)
+    preparation_station = Column(String(30), default="kitchen", nullable=False, server_default="kitchen")
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -418,6 +419,7 @@ class CustomerOrderItem(Base):
     product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
 
     customer_order = relationship("CustomerOrder", back_populates="items")
+    product = relationship("Product")
 
 class RestaurantTable(Base):
     __tablename__ = "restaurant_tables"

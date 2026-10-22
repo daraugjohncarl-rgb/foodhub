@@ -37,6 +37,8 @@ def list_transactions(
     for tx in transactions:
         result.append({
             "id": tx.id,
+            "order_code": f"TXN-{tx.id:04d}",
+            "receipt_no": f"TXN-{tx.id:04d}",
             "client_tx_id": tx.client_tx_id,
             "tenant_id": tx.tenant_id,
             "shift_id": tx.shift_id,
@@ -70,6 +72,58 @@ def list_transactions(
             ]
         })
     return result
+
+
+@router.get("/{tx_id}", summary="Get transaction details by ID")
+def get_transaction(
+    tx_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    tx = db.query(models.Transaction).options(
+        joinedload(models.Transaction.items).joinedload(models.TransactionItem.product),
+        joinedload(models.Transaction.payments),
+        joinedload(models.Transaction.user)
+    ).filter(models.Transaction.id == tx_id).first()
+    if not tx:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found.")
+    return {
+        "id": tx.id,
+        "order_code": f"TXN-{tx.id:04d}",
+        "receipt_no": f"TXN-{tx.id:04d}",
+        "client_tx_id": tx.client_tx_id,
+        "tenant_id": tx.tenant_id,
+        "shift_id": tx.shift_id,
+        "user_id": tx.user_id,
+        "cashier": tx.user.username if tx.user else "Staff",
+        "total_amount": float(tx.total_amount),
+        "tax_amount": float(tx.tax_amount),
+        "discount_amount": float(tx.discount_amount),
+        "net_amount": float(tx.net_amount),
+        "status": tx.status,
+        "fulfillment_status": tx.fulfillment_status,
+        "created_at": tx.created_at.isoformat() if tx.created_at else None,
+        "items": [
+            {
+                "id": it.id,
+                "product_id": it.product_id,
+                "name": it.product.name if it.product else f"Item #{it.product_id}",
+                "quantity": it.quantity,
+                "unit_price": float(it.unit_price),
+                "total_price": float(it.total_price)
+            }
+            for it in tx.items
+        ],
+        "payments": [
+            {
+                "id": p.id,
+                "payment_method": p.payment_method,
+                "amount": float(p.amount),
+                "status": p.status
+            }
+            for p in tx.payments
+        ]
+    }
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, summary="Create a new POS transaction")
@@ -142,7 +196,30 @@ def create_transaction(
     if net_amount < 0:
         net_amount = Decimal("0.0")
 
-    client_tx_id = body.get("client_tx_id") or str(uuid.uuid4())
+    client_tx_id = body.get("client_tx_id")
+    if client_tx_id:
+        existing_tx = db.query(models.Transaction).filter(
+            models.Transaction.client_tx_id == client_tx_id,
+            models.Transaction.tenant_id == tenant_id
+        ).first()
+        if existing_tx:
+            return {
+                "id": existing_tx.id,
+                "order_code": f"TXN-{existing_tx.id:04d}",
+                "receipt_no": f"TXN-{existing_tx.id:04d}",
+                "client_tx_id": existing_tx.client_tx_id,
+                "net_amount": float(existing_tx.net_amount),
+                "status": existing_tx.status,
+                "created_at": existing_tx.created_at.isoformat() if existing_tx.created_at else None,
+                "message": "Transaction already processed."
+            }
+    else:
+        client_tx_id = str(uuid.uuid4())
+
+    from app.routers.kitchen import is_kitchen_item, is_drink_item
+    has_kitchen = any(is_kitchen_item(it.product) for it in validated_items)
+    has_drinks = any(is_drink_item(it.product) for it in validated_items)
+    initial_fulfillment = "pending" if (has_kitchen or has_drinks) else "completed"
 
     tx = models.Transaction(
         tenant_id=tenant_id,
@@ -153,7 +230,8 @@ def create_transaction(
         tax_amount=tax_amount,
         discount_amount=discount_amount,
         net_amount=net_amount,
-        status=body.get("status") or "completed"
+        status=body.get("status") or "completed",
+        fulfillment_status=initial_fulfillment
     )
     db.add(tx)
     db.commit()
@@ -202,11 +280,27 @@ def create_transaction(
         from app.core.websocket import notify_realtime_event
         notify_realtime_event(tenant_id, "ORDER_CREATED", {
             "order_id": tx.id,
+            "order_code": f"TXN-{tx.id:04d}",
             "client_tx_id": tx.client_tx_id,
             "net_amount": float(tx.net_amount),
             "status": tx.status,
+            "fulfillment_status": tx.fulfillment_status,
             "cashier": current_user.username
         })
+        if has_kitchen:
+            notify_realtime_event(tenant_id, "KITCHEN_UPDATED", {
+                "order_id": f"ORD-{tx.id:04d}",
+                "raw_id": tx.id,
+                "status": "PENDING",
+                "station": "food"
+            })
+        if has_drinks:
+            notify_realtime_event(tenant_id, "KITCHEN_UPDATED", {
+                "order_id": f"ORD-{tx.id:04d}",
+                "raw_id": tx.id,
+                "status": "PENDING",
+                "station": "drinks"
+            })
         notify_realtime_event(tenant_id, "DRAWER_UPDATED", {"reason": "pos_sale", "order_id": tx.id})
         notify_realtime_event(tenant_id, "FINANCIAL_UPDATED", {"reason": "pos_sale", "order_id": tx.id})
     except Exception:
@@ -214,6 +308,8 @@ def create_transaction(
 
     return {
         "id": tx.id,
+        "order_code": f"TXN-{tx.id:04d}",
+        "receipt_no": f"TXN-{tx.id:04d}",
         "client_tx_id": tx.client_tx_id,
         "net_amount": float(tx.net_amount),
         "status": tx.status,
