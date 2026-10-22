@@ -79,6 +79,7 @@ function buildSidebarMenu(role, onNavigate) {
     const isActive = hasSavedItem ? (item.id === currentSaved) : (index === 0);
     a.className = "nav-link" + (isActive ? " active" : "");
     a.setAttribute("data-title", item.label);
+    a.setAttribute("title", item.label);
     a.innerHTML = `<i class="${item.icon}"></i><span>${item.label}</span>${item.badgeId ? `<span id="${item.badgeId}" style="margin-left:auto; background:#ef4444; color:#fff; font-size:10px; font-weight:700; padding:2px 7px; border-radius:10px; display:none;">0</span>` : ''}`;
 
     if (isActive) {

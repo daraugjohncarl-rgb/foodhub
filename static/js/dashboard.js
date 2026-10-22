@@ -17,13 +17,23 @@ async function initDashboardApp() {
 
     if (mobileMenuBtn && sidebar && sidebarOverlay) {
         mobileMenuBtn.addEventListener('click', () => {
-            sidebar.classList.add('open');
-            sidebarOverlay.classList.add('open');
+            const isOpen = sidebar.classList.toggle('open');
+            sidebarOverlay.classList.toggle('open', isOpen);
+            document.body.style.overflow = isOpen ? 'hidden' : '';
         });
 
         sidebarOverlay.addEventListener('click', () => {
             sidebar.classList.remove('open');
             sidebarOverlay.classList.remove('open');
+            document.body.style.overflow = '';
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if ((e.key === 'Escape' || e.key === 'Esc') && sidebar.classList.contains('open')) {
+                sidebar.classList.remove('open');
+                sidebarOverlay.classList.remove('open');
+                document.body.style.overflow = '';
+            }
         });
     }
 
@@ -88,10 +98,12 @@ async function initDashboardApp() {
 
                 const sidebarName = document.getElementById('sidebarName');
                 const sidebarAvatar = document.getElementById('sidebarAvatar');
+                const sidebarRole = document.getElementById('sidebarRole');
                 const headerAvatar = document.getElementById('headerAvatar');
 
                 if (sidebarName) sidebarName.textContent = displayName;
                 if (sidebarAvatar) sidebarAvatar.textContent = initials;
+                if (sidebarRole && user && user.role) sidebarRole.textContent = user.role.replace(/_/g, ' ').toUpperCase();
                 if (headerAvatar) headerAvatar.textContent = initials;
             }
         } catch (err) {

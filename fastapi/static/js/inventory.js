@@ -102,10 +102,12 @@ async function initInventoryApp() {
 
     const sidebarName = document.getElementById("sidebarName");
     const sidebarAvatar = document.getElementById("sidebarAvatar");
+    const sidebarRole = document.getElementById("sidebarRole");
     const headerAvatar = document.getElementById("headerAvatar");
 
     if (sidebarName) sidebarName.textContent = displayName;
     if (sidebarAvatar) sidebarAvatar.textContent = initials;
+    if (sidebarRole && user && user.role) sidebarRole.textContent = user.role.replace(/_/g, ' ').toUpperCase();
     if (headerAvatar) headerAvatar.textContent = initials;
 
     // 6. Theme init

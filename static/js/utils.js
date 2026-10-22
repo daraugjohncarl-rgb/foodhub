@@ -489,15 +489,18 @@ generateReceiptHTML(order, isPrint = false) {
       });
     }
 
-    // Auto-close on nav-link clicks on mobile
-    sidebar.querySelectorAll(".nav-link, .logout-btn").forEach(link => {
-      if (!link.dataset.boundMobileClose) {
-        link.dataset.boundMobileClose = "true";
-        link.addEventListener("click", () => {
-          if (isMobile()) {
-            this.toggleMobileSidebar(false);
-          }
-        });
+    // Auto-close on nav-link clicks on mobile (event delegation for dynamically created links)
+    sidebar.addEventListener("click", (e) => {
+      const link = e.target.closest(".nav-link, .logout-btn");
+      if (link && isMobile()) {
+        this.toggleMobileSidebar(false);
+      }
+    });
+
+    // Close on Escape key
+    document.addEventListener("keydown", (e) => {
+      if ((e.key === "Escape" || e.key === "Esc") && sidebar.classList.contains("open")) {
+        this.toggleMobileSidebar(false);
       }
     });
 
@@ -516,6 +519,37 @@ generateReceiptHTML(order, isPrint = false) {
         this.toggleMobileSidebar(false);
       }
     }, { passive: true });
+
+    // Floating accessible tooltip for desktop collapsed sidebar items
+    let tooltipEl = document.getElementById("sidebar-floating-tooltip");
+    if (!tooltipEl) {
+      tooltipEl = document.createElement("div");
+      tooltipEl.id = "sidebar-floating-tooltip";
+      tooltipEl.style.cssText = "position:fixed; background:#18181b; color:#f4f4f5; font-size:12px; font-weight:600; padding:6px 12px; border-radius:8px; border:1px solid rgba(201,162,39,0.4); box-shadow:0 8px 24px rgba(0,0,0,0.6); pointer-events:none; z-index:100005; opacity:0; transform:translateY(-50%) scale(0.92); transition:opacity 0.15s ease, transform 0.15s ease; white-space:nowrap;";
+      document.body.appendChild(tooltipEl);
+    }
+
+    sidebar.addEventListener("mouseover", (e) => {
+      if (!sidebar.classList.contains("collapsed") || isMobile()) return;
+      const item = e.target.closest(".nav-link, .logout-btn");
+      if (!item) return;
+      const title = item.getAttribute("data-title") || item.getAttribute("title");
+      if (!title) return;
+      const rect = item.getBoundingClientRect();
+      tooltipEl.textContent = title;
+      tooltipEl.style.left = (rect.right + 12) + "px";
+      tooltipEl.style.top = (rect.top + rect.height / 2) + "px";
+      tooltipEl.style.opacity = "1";
+      tooltipEl.style.transform = "translateY(-50%) scale(1)";
+    });
+
+    sidebar.addEventListener("mouseout", (e) => {
+      const item = e.target.closest(".nav-link, .logout-btn");
+      if (item && tooltipEl) {
+        tooltipEl.style.opacity = "0";
+        tooltipEl.style.transform = "translateY(-50%) scale(0.92)";
+      }
+    });
 
     window.addEventListener("resize", () => {
       if (!isMobile()) {
