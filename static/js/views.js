@@ -7840,9 +7840,6 @@ function renderCashDrawerTrackerUI(container, data) {
         <button class="btn btn-outline btn-sm" onclick="openEditCashierDrawerModal(null)" title="Edit Cashier Drawer" style="display:inline-flex; align-items:center; gap:6px; color:#c9a227; border-color:#c9a227; font-weight:700; border-radius:10px; padding:6px 14px;">
           <i class="fas fa-pen-to-square"></i> Edit Drawer
         </button>
-        <button class="btn btn-primary btn-sm" onclick="openAddCashMovementModal(null, 'manager_income')" title="Transfer Cashier Drawer to Manager" style="display:inline-flex; align-items:center; gap:8px; font-weight:700; border-radius:10px; padding:6px 14px;">
-          <i class="fas fa-hand-holding-dollar"></i> Transfer to Manager
-        </button>
         <button class="btn btn-outline btn-sm" onclick="renderCashDrawerTracker(null, true)" title="Refresh Drawer Balances" style="border-radius:10px; padding:6px 12px;">
           <i class="fas fa-sync-alt"></i> Live Refresh
         </button>
