@@ -8,7 +8,6 @@ const ROLE_NAV_CONFIG = {
     { id: "dashboard", label: "Dashboard", icon: "fas fa-chart-line" },
     { id: "cash_drawer", label: "Cash Drawer", icon: "fas fa-vault" },
     { id: "users", label: "User Management", icon: "fas fa-users-cog" },
-    { id: "inventory", label: "Inventory", icon: "fas fa-boxes" },
     { id: "products", label: "Products & Menu", icon: "fas fa-utensils" },
     { id: "tables", label: "Table QRs", icon: "fas fa-qrcode" },
     { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },

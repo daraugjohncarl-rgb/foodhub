@@ -5,7 +5,6 @@ const ROLE_MENUS = {
     { id: "dashboard", label: "Dashboard", icon: "⌂" },
     { id: "pos", label: "POS", icon: "▣" },
     { id: "kitchen", label: "Orders", icon: "▤" },
-    { id: "inventory", label: "Inventory", icon: "▦" },
     { id: "employees", label: "Employees", icon: "♟" },
     { id: "reports", label: "Reports", icon: "▥" },
     { section: "MANAGEMENT" },

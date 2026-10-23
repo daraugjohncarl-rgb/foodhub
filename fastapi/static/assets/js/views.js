@@ -64,9 +64,20 @@ async function renderView(viewId, container) {
       case "cash_drawer":
         await renderCashDrawerTracker(container);
         break;
-      case "inventory":
+      case "inventory": {
+        const _currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
+        const _userRole = (_currentUser && _currentUser.role ? _currentUser.role : (typeof Auth !== 'undefined' ? Auth.getRole() : '')).toLowerCase();
+        const _isAdmin = _userRole === 'admin' || _userRole === 'branch_admin' || _userRole === 'branch admin' || _userRole.includes('admin') || window.location.pathname.includes('/admin');
+        if (_isAdmin) {
+          if (window.location.hash === "#inventory") {
+            history.replaceState(null, "", window.location.pathname + "#dashboard");
+          }
+          await renderDashboard(container);
+          break;
+        }
         await renderInventory(container);
         break;
+      }
       case "products":
         await renderProducts(container);
         break;
@@ -231,7 +242,7 @@ async function renderDashboard(c) {
     <div class="section-card">
       <div class="section-head">
         <h2>Stock & Low Inventory Alerts</h2>
-        <a href="#inventory" onclick="renderView('inventory')" class="view-all-link">Manage Inventory <i class="fas fa-arrow-right"></i></a>
+        ${isAdmin ? '' : '<a href="#inventory" onclick="renderView(\'inventory\')" class="view-all-link">Manage Inventory <i class="fas fa-arrow-right"></i></a>'}
       </div>
       <div class="table-wrap">
         <table>

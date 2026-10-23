@@ -89,7 +89,13 @@ async function initAdminApp() {
     }
 
     // Initial render: restore current feature from URL hash or session, fallback to dashboard
-    const initialView = (window.location.hash ? window.location.hash.replace("#", "") : "") || sessionStorage.getItem("active_feature") || "dashboard";
+    let initialView = (window.location.hash ? window.location.hash.replace("#", "") : "") || sessionStorage.getItem("active_feature") || "dashboard";
+    if (initialView === "inventory") {
+        initialView = "dashboard";
+        if (window.location.hash === "#inventory") {
+            history.replaceState(null, "", window.location.pathname + "#dashboard");
+        }
+    }
     renderView(initialView);
 }
 
