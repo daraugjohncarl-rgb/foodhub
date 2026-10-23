@@ -5302,51 +5302,65 @@ async function renderSuppliers(c) {
     `).join('');
 
     c.innerHTML = `
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-icon gold"><i class="fas fa-truck"></i></div>
-          <div class="stat-info">
-            <h3>Active Suppliers</h3>
-            <div class="stat-count" style="color:#c9a227;">${statsData.active_suppliers}</div>
-            <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-handshake"></i> Verified Vendors</div>
+      <div class="suppliers-page">
+        <!-- Summary Cards Grid -->
+        <div class="stats-grid supplier-summary-grid">
+          <div class="stat-card">
+            <div class="stat-icon gold"><i class="fas fa-truck"></i></div>
+            <div class="stat-info">
+              <h3>Active Suppliers</h3>
+              <div class="stat-count" style="color:#c9a227;">${statsData.active_suppliers}</div>
+              <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-handshake"></i> Verified Vendors</div>
+            </div>
           </div>
+          ${categoryCardsHtml}
         </div>
-        ${categoryCardsHtml}
-      </div>
 
-      <div class="toolbar fade-up delay-1" style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; flex-wrap:wrap;">
-        <div class="search-wrap" style="position:relative; flex:1; max-width:320px;">
-          <i class="fas fa-search" style="position:absolute; left:14px; top:50%; transform:translateY(-50%); color:var(--text-muted);"></i>
-          <input type="text" id="supp-search" class="input-field" placeholder="Search suppliers..." style="padding-left:38px; width:100%;" oninput="filterSuppliersTable()">
+        <!-- Toolbar (Search & Action) -->
+        <div class="toolbar supplier-toolbar fade-up delay-1">
+          <div class="search-wrap supplier-search-wrap">
+            <i class="fas fa-search"></i>
+            <input type="text" id="supp-search" class="input-field" placeholder="Search suppliers..." oninput="filterSuppliersTable()">
+          </div>
+          <button type="button" class="btn btn-primary add-supplier-btn" onclick="openAddSupplierModal()">
+            <i class="fas fa-plus"></i> Add New Supplier
+          </button>
         </div>
-        <button class="btn btn-primary" onclick="openAddSupplierModal()" style="display:inline-flex; align-items:center; gap:8px;">
-          <i class="fas fa-plus"></i> Add New Supplier
-        </button>
-      </div>
 
-      <div class="section-card">
-        <div class="section-head">
-          <h2>Registered Supplier Directory</h2>
-          <span style="font-size:13px; color:var(--text-muted);">${globalSuppliers.length} vendor partners</span>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Supplier Name</th>
-                <th>Contact Person</th>
-                <th>Phone Number</th>
-                <th>Email</th>
-                <th>Category Supplied</th>
-                <th>Terms</th>
-                <th>Status</th>
-                <th style="text-align:right; width:150px;">ACTIONS</th>
-              </tr>
-            </thead>
-            <tbody id="supp-tbody">
-              ${renderSupplierRows(globalSuppliers)}
-            </tbody>
-          </table>
+        <!-- Supplier Directory Container -->
+        <div class="section-card supplier-directory fade-up delay-2">
+          <div class="section-head">
+            <div>
+              <h2 style="margin:0; font-size:15px; font-weight:700;">Registered Supplier Directory</h2>
+              <span id="supp-count-badge" style="font-size:12px; color:var(--text-muted);">${globalSuppliers.length} vendor partners</span>
+            </div>
+          </div>
+          
+          <!-- Desktop Table (Visible on screens >= 768px) -->
+          <div class="supplier-desktop-table table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Supplier Name</th>
+                  <th>Contact Person</th>
+                  <th>Phone Number</th>
+                  <th>Email</th>
+                  <th>Category Supplied</th>
+                  <th>Terms</th>
+                  <th>Status</th>
+                  <th style="text-align:right; width:150px;">ACTIONS</th>
+                </tr>
+              </thead>
+              <tbody id="supp-tbody">
+                ${renderSupplierRows(globalSuppliers)}
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Mobile Cards (Visible on screens < 768px) -->
+          <div class="supplier-mobile-list" id="supp-mobile-list">
+            ${renderSupplierCards(globalSuppliers)}
+          </div>
         </div>
       </div>
     `;
@@ -5363,7 +5377,7 @@ async function renderSuppliers(c) {
 
 function renderSupplierRows(suppliers) {
   if (!suppliers || !suppliers.length) {
-    return `<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--text-muted);">No suppliers found.</td></tr>`;
+    return `<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--text-muted);">No suppliers found matching your criteria.</td></tr>`;
   }
   return suppliers.map(s => `
     <tr>
@@ -5392,17 +5406,95 @@ function renderSupplierRows(suppliers) {
   `).join('');
 }
 
+function renderSupplierCards(suppliers) {
+  if (!suppliers || !suppliers.length) {
+    return `
+      <div style="text-align:center; padding:32px 16px; color:var(--text-muted); background:var(--card-bg, #ffffff); border-radius:12px; border:1px dashed rgba(205,190,150,0.35); margin:8px 0;">
+        <i class="fas fa-search" style="font-size:26px; margin-bottom:10px; opacity:0.4; display:block;"></i>
+        <div style="font-size:13.5px; font-weight:600; color:var(--text-main);">No matching suppliers found</div>
+        <div style="font-size:12px; margin-top:4px;">Try adjusting your search terms or register a new supplier.</div>
+      </div>
+    `;
+  }
+
+  return suppliers.map(s => {
+    const isActive = (s.status || 'Active').toLowerCase() === 'active';
+    const statusBadge = isActive 
+      ? `<span class="badge badge-success" style="font-size:11px; font-weight:700;"><i class="fas fa-check-circle" style="font-size:9px; margin-right:4px;"></i>Active</span>`
+      : `<span class="badge badge-danger" style="font-size:11px; font-weight:700;"><i class="fas fa-times-circle" style="font-size:9px; margin-right:4px;"></i>${s.status || 'Inactive'}</span>`;
+
+    return `
+      <div class="supplier-mobile-card">
+        <div class="supplier-card-header">
+          <div>
+            <div class="supplier-card-title">${s.supplier_name}</div>
+            <div class="supplier-card-badges">
+              <span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; border:1px solid rgba(201,162,39,0.3); font-size:11px; font-weight:600;">
+                <i class="fas fa-tag" style="font-size:9px; margin-right:4px;"></i>${s.category || 'General'}
+              </span>
+              ${statusBadge}
+            </div>
+          </div>
+        </div>
+
+        <div class="supplier-card-body">
+          <div class="supplier-field-row">
+            <span class="supplier-field-label">Contact Person</span>
+            <span class="supplier-field-value">${s.contact_person || 'Not provided'}</span>
+          </div>
+
+          <div class="supplier-field-row">
+            <span class="supplier-field-label">Phone</span>
+            <span class="supplier-field-value phone">${s.contact_number || 'Not provided'}</span>
+          </div>
+
+          <div class="supplier-field-row">
+            <span class="supplier-field-label">Email</span>
+            <span class="supplier-field-value">${s.email || 'Not provided'}</span>
+          </div>
+
+          ${s.notes ? `
+          <div class="supplier-field-row">
+            <span class="supplier-field-label">Payment Terms / Notes</span>
+            <span class="supplier-field-value" style="color:var(--text-muted); font-size:12px;">${s.notes}</span>
+          </div>
+          ` : ''}
+        </div>
+
+        <div class="supplier-card-actions">
+          <button type="button" class="btn btn-outline" style="color:#c9a227; border-color:rgba(201,162,39,0.4);" onclick="openEditSupplierModal(${s.id})" title="Edit Supplier">
+            <i class="fas fa-pencil-alt"></i> Edit
+          </button>
+          <button type="button" class="btn btn-outline" style="color:var(--danger, #ef4444); border-color:rgba(239,68,68,0.4);" onclick="confirmDeleteSupplier(${s.id})" title="Delete Supplier">
+            <i class="fas fa-trash-alt"></i> Delete
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
 function filterSuppliersTable() {
-  const q = (document.getElementById("supp-search")?.value || "").toLowerCase();
+  const q = (document.getElementById("supp-search")?.value || "").toLowerCase().trim();
   const filtered = globalSuppliers.filter(s =>
     (s.supplier_name && s.supplier_name.toLowerCase().includes(q)) ||
     (s.contact_person && s.contact_person.toLowerCase().includes(q)) ||
     (s.contact_number && s.contact_number.toLowerCase().includes(q)) ||
     (s.email && s.email.toLowerCase().includes(q)) ||
-    (s.category && s.category.toLowerCase().includes(q))
+    (s.category && s.category.toLowerCase().includes(q)) ||
+    (s.notes && s.notes.toLowerCase().includes(q))
   );
+
+  const countBadge = document.getElementById("supp-count-badge");
+  if (countBadge) {
+    countBadge.textContent = `${filtered.length} vendor partner${filtered.length === 1 ? '' : 's'}`;
+  }
+
   const tbody = document.getElementById("supp-tbody");
   if (tbody) tbody.innerHTML = renderSupplierRows(filtered);
+
+  const mobList = document.getElementById("supp-mobile-list");
+  if (mobList) mobList.innerHTML = renderSupplierCards(filtered);
 }
 
 function openAddSupplierModal() {
@@ -5412,7 +5504,7 @@ function openAddSupplierModal() {
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Supplier / Company Name <span style="color:var(--danger);">*</span></label>
         <input id="sp-name" class="input-field" required placeholder="e.g. San Miguel Foods Inc." style="width:100%;">
       </div>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+      <div class="modal-form-grid">
         <div class="input-group">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Contact Person</label>
           <input id="sp-contact" class="input-field" placeholder="e.g. Mario Batali" style="width:100%;">
@@ -5422,7 +5514,7 @@ function openAddSupplierModal() {
           <input id="sp-phone" class="input-field" required placeholder="09XX-XXX-XXXX" style="width:100%;">
         </div>
       </div>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+      <div class="modal-form-grid">
         <div class="input-group">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Email Address</label>
           <input type="email" id="sp-email" class="input-field" placeholder="orders@supplier.com" style="width:100%;">
@@ -5517,7 +5609,7 @@ function openEditSupplierModal(id) {
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Supplier / Company Name <span style="color:var(--danger);">*</span></label>
         <input id="edit-sp-name" class="input-field" required value="${escapeAttr(s.supplier_name)}" placeholder="e.g. San Miguel Foods Inc." style="width:100%;">
       </div>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+      <div class="modal-form-grid">
         <div class="input-group">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Contact Person</label>
           <input id="edit-sp-contact" class="input-field" value="${escapeAttr(s.contact_person)}" placeholder="e.g. Mario Batali" style="width:100%;">
@@ -5527,7 +5619,7 @@ function openEditSupplierModal(id) {
           <input id="edit-sp-phone" class="input-field" required value="${escapeAttr(s.contact_number)}" placeholder="09XX-XXX-XXXX" style="width:100%;">
         </div>
       </div>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+      <div class="modal-form-grid">
         <div class="input-group">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Email Address</label>
           <input type="email" id="edit-sp-email" class="input-field" value="${escapeAttr(s.email)}" placeholder="orders@supplier.com" style="width:100%;">
@@ -5537,7 +5629,7 @@ function openEditSupplierModal(id) {
           <input id="edit-sp-category" class="input-field" value="${escapeAttr(s.category)}" placeholder="e.g. Poultry, Dairy, Packaging" style="width:100%;">
         </div>
       </div>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+      <div class="modal-form-grid">
         <div class="input-group">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Payment Terms / Notes</label>
           <input id="edit-sp-notes" class="input-field" value="${escapeAttr(s.notes)}" placeholder="e.g. Net 30, COD, Weekly" style="width:100%;">
