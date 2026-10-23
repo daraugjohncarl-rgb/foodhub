@@ -388,13 +388,14 @@ body::after {
     }
 
     .input-field input {
-        height: 46px;
-        font-size: 12px;
+        height: 48px;
+        font-size: 16px !important;
     }
 
     .signin-btn {
-        height: 46px;
-        font-size: 13px;
+        height: 48px;
+        font-size: 15px;
+        font-weight: 700;
     }
 }
 

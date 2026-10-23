@@ -55,6 +55,11 @@ async function renderView(viewId, container) {
     clearInterval(window.posOnlineOrdersInterval);
     window.posOnlineOrdersInterval = null;
   }
+
+  if (viewId !== 'pos') {
+    const floatBar = document.getElementById("mobile-cart-float-bar");
+    if (floatBar) floatBar.remove();
+  }
   
   try {
     switch (viewId) {
@@ -831,7 +836,7 @@ function openImportMasterlistModal() {
         <div id="file-upload-status" style="display:none; font-size:12px; color:var(--text-main); margin-top:10px; padding:8px 12px; background:rgba(255,255,255,0.85); border-radius:6px; border:1px solid rgba(205,190,150,0.4);"></div>
 
         <div id="file-parsed-preview" style="display:none; background:#ffffff; border:1px solid rgba(205,190,150,0.4); border-radius:8px; padding:12px; margin-top:10px;">
-          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; align-items:flex-end;">
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap:12px; align-items:flex-end;">
             <div class="input-group" style="margin-bottom:0;">
               <label style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--text-muted); margin-bottom:4px; display:block;">Select Department to Import from File:</label>
               <select id="file-dept-selector" class="input-field" style="width:100%; height:38px; font-size:13px; font-weight:600;"></select>
@@ -850,7 +855,7 @@ function openImportMasterlistModal() {
         </button>
       </div>
 
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px; max-height:clamp(220px, 44vh, 460px); overflow-y:auto; padding-right:6px;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap:12px; max-height:clamp(220px, 44vh, 460px); overflow-y:auto; padding-right:6px;">
         ${categories.map(c => `
           <div style="border:1px solid rgba(205,190,150,0.35); border-radius:12px; padding:12px 14px; background:#ffffff; display:flex; flex-direction:column; justify-content:space-between; gap:10px; transition:all 0.15s ease;" onmouseenter="this.style.boxShadow='0 4px 14px rgba(201,162,39,0.12)'" onmouseleave="this.style.boxShadow='none'">
             <div>
@@ -876,7 +881,7 @@ function openImportMasterlistModal() {
         <strong><i class="fas fa-check-circle"></i> Item Name Only Import:</strong> Paste item names below (one per line). If there is no current stock, stock will NOT be added and stays at <strong>0.0</strong>.
       </div>
 
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-bottom:12px;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap:12px; margin-bottom:12px;">
         <div class="input-group">
           <label style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Department Category</label>
           <select id="custom-import-cat" class="input-field" style="width:100%;">
@@ -1138,7 +1143,7 @@ function openUrgentRestockModal() {
     </div>
 
     <h4 style="font-size:13px; font-weight:700; margin-bottom:10px; color:var(--text-main);">Prioritized Restock List</h4>
-    <div style="max-height:300px; overflow-y:auto; border:1px solid rgba(205,190,150,0.3); border-radius:10px;">
+    <div class="table-wrap" style="max-height:300px; overflow-y:auto; overflow-x:auto; border:1px solid rgba(205,190,150,0.3); border-radius:10px;">
       <table style="width:100%; font-size:12px;">
         <thead>
           <tr style="background:#faf8f3;">
@@ -2313,7 +2318,7 @@ async function openImportProductsModal() {
 
 
       <!-- Live Preview Table of Pending Items -->
-      <div id="batch-img-preview-wrap" style="display:none; margin-top:16px; max-height:280px; overflow-y:auto; border:1px solid rgba(205,190,150,0.25); border-radius:8px;">
+      <div id="batch-img-preview-wrap" class="table-wrap" style="display:none; margin-top:16px; max-height:280px; overflow-y:auto; overflow-x:auto; border:1px solid rgba(205,190,150,0.25); border-radius:8px;">
         <table>
           <thead>
             <tr>
@@ -2347,7 +2352,7 @@ async function openImportProductsModal() {
           <button class="btn btn-outline btn-sm" onclick="toggleAllPresetCheckboxes(false)" style="font-size:11px; padding:3px 8px;">Deselect All</button>
         </div>
       </div>
-      <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:10px; max-height:360px; overflow-y:auto; padding:4px;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 200px), 1fr)); gap:10px; max-height:360px; overflow-y:auto; padding:4px;">
         ${presetCards}
       </div>
       <div style="margin-top:16px; text-align:right; border-top:1px solid rgba(205,190,150,0.25); padding-top:12px;">
@@ -4169,7 +4174,7 @@ async function renderKitchen(c) {
     </div>
 
     <!-- Responsive Grid for Order Tickets -->
-    <div id="kitchen-tickets-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:20px; align-items:start;" class="fade-up delay-2">
+    <div id="kitchen-tickets-grid" class="kitchen-orders-grid fade-up delay-2" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 290px), 1fr)); gap:16px; align-items:start;">
       ${(() => {
         const activeOrders = orders.filter(o => o.status !== 'COMPLETED' && o.status !== 'READY');
         return activeOrders.length ? activeOrders.map(ord => {
@@ -4276,7 +4281,7 @@ async function renderKitchenLogs(c) {
     </div>
 
     <!-- Responsive Grid for Order Tickets -->
-    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:20px; align-items:start;" class="fade-up delay-2">
+    <div class="kitchen-orders-grid fade-up delay-2" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 290px), 1fr)); gap:16px; align-items:start;">
       ${completedOrders.length ? completedOrders.map(ord => {
         return `
         <div class="section-card" style="padding:0; overflow:hidden; border:1px solid rgba(16,185,129,0.3);">
@@ -4454,7 +4459,7 @@ async function renderDrinksStation(c) {
     </div>
 
     <!-- Responsive Grid for Drink Tickets -->
-    <div id="drinks-tickets-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:20px; align-items:start;" class="fade-up delay-2">
+    <div id="drinks-tickets-grid" class="drinks-orders-grid fade-up delay-2" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 290px), 1fr)); gap:16px; align-items:start;">
       ${(() => {
         if (!activeOrders.length) {
           return `
@@ -7394,7 +7399,7 @@ async function loadCustomerOrdersTable() {
         </div>
       `;
     } else {
-      html += `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:16px;">`;
+      html += `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap:14px;">`;
       pending.forEach(o => {
         const timeStr = o.created_at ? new Date(o.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Just now';
         const itemsList = (o.items || []).map(it => `
@@ -7526,7 +7531,7 @@ async function renderTables(c) {
           <button class="btn btn-outline" onclick="printAllQRs()"><i class="fas fa-print"></i> Print All QRs</button>
         </div>
       </div>
-      <div id="tables-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:24px;">
+      <div id="tables-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap:16px;">
         <p style="color:var(--text-muted); font-size:14px;">Loading tables...</p>
       </div>
     </div>
@@ -7847,7 +7852,7 @@ function renderCashDrawerTrackerUI(container, data) {
     </div>
 
     <!-- Metrics Cards Grid: Cashier Drawer & Overall Income -->
-    <div class="stats-grid fade-up delay-1" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); margin-bottom:24px;">
+    <div class="stats-grid fade-up delay-1" style="grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); margin-bottom:16px;">
       <div class="stat-card">
         <div class="stat-icon gold"><i class="fas fa-vault"></i></div>
         <div class="stat-info">

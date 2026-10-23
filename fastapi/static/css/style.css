@@ -4505,3 +4505,658 @@ tr.row-selected td {
   transform: translateY(-1px);
 }
 
+/* ==============================================================================
+   MASTER RESPONSIVE & MOBILE DESIGN SYSTEM — BLESSIE FOODHUB POS
+   Breakpoints:
+     - Large Desktop: >= 1280px
+     - Small Desktop / Laptop: 1025px - 1279px
+     - Tablet: 768px - 1024px
+     - Large Mobile / Phablet: 481px - 767px
+     - Standard Mobile: 361px - 480px
+     - Ultra-Small Mobile: 320px - 360px
+   ============================================================================== */
+
+/* 1. Universal Box Model & Viewport Containment */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  -webkit-text-size-adjust: 100%;
+}
+
+img, video, canvas, svg {
+  max-width: 100%;
+  height: auto;
+}
+
+input, select, textarea, button {
+  max-width: 100%;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+/* 2. Universal Table Scrolling Containment */
+.table-wrap,
+.pl-table-wrap,
+.table-responsive,
+.custom-table-wrap {
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow-x: auto !important;
+  -webkit-overflow-scrolling: touch !important;
+  position: relative !important;
+  margin-bottom: 8px !important;
+}
+
+.table-wrap table,
+.pl-table-wrap table,
+.table-responsive table {
+  width: 100% !important;
+  border-collapse: collapse !important;
+}
+
+/* 3. Universal Modal Dialog Fit & Scrolling */
+.modal-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  padding: clamp(8px, 2.5vw, 16px) !important;
+  z-index: 10005 !important;
+  display: flex;
+  align-items: center !important;
+  justify-content: center !important;
+  background: rgba(0, 0, 0, 0.72) !important;
+  backdrop-filter: blur(4px) !important;
+  -webkit-backdrop-filter: blur(4px) !important;
+  box-sizing: border-box !important;
+}
+
+.modal-overlay.hidden,
+.modal-overlay[style*="display: none"],
+.modal-overlay[style*="display:none"] {
+  display: none !important;
+}
+
+.modal {
+  width: 100% !important;
+  max-width: min(100% - 16px, 560px) !important;
+  max-height: calc(100dvh - 32px) !important;
+  border-radius: 16px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  background: var(--card-bg, #ffffff) !important;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4) !important;
+  box-sizing: border-box !important;
+}
+
+.modal-header {
+  padding: 14px 18px !important;
+  border-bottom: 1px solid rgba(205, 190, 150, 0.25) !important;
+  flex-shrink: 0 !important;
+}
+
+.modal-body {
+  padding: 16px 18px !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch !important;
+  flex: 1 1 auto !important;
+  max-height: calc(100dvh - 140px) !important;
+}
+
+.modal-footer {
+  padding: 12px 18px !important;
+  border-top: 1px solid rgba(205, 190, 150, 0.25) !important;
+  flex-shrink: 0 !important;
+  display: flex !important;
+  justify-content: flex-end !important;
+  gap: 8px !important;
+  flex-wrap: wrap !important;
+}
+
+/* 4. Desktop Collapsed Rail vs Expand (>= 1025px) */
+@media (min-width: 1025px) {
+  .mobile-menu-btn,
+  #mobileMenuBtn,
+  .sidebar-overlay,
+  #sidebarOverlay,
+  .mobile-bottom-nav,
+  #mobileBottomNav {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+}
+
+/* 5. Tablet & Mobile Universal Sidebar Drawer (<= 1024px) */
+@media (max-width: 1024px) {
+  /* Main Content zero-margin */
+  body .main-content,
+  body.sidebar-collapsed .main-content,
+  .sidebar.collapsed ~ .main-content,
+  .main-content.sidebar-collapsed,
+  .main-content {
+    margin-left: 0 !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+    padding-bottom: max(24px, env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  /* Slide-out Drawer */
+  .sidebar,
+  body .sidebar,
+  body .sidebar.collapsed,
+  body.sidebar-collapsed .sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    bottom: 0 !important;
+    width: clamp(260px, 82vw, 300px) !important;
+    max-width: 85vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    z-index: 10001 !important;
+    background: #111114 !important;
+    box-shadow: none !important;
+    transform: translateX(-100%) !important;
+    transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1), box-shadow 0.28s ease !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    overflow: hidden !important;
+    padding-top: env(safe-area-inset-top, 0px) !important;
+    padding-bottom: max(14px, env(safe-area-inset-bottom, 0px)) !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+    touch-action: pan-y !important;
+  }
+
+  .sidebar.open,
+  body .sidebar.open {
+    transform: translateX(0) !important;
+    box-shadow: 16px 0 50px rgba(0, 0, 0, 0.75) !important;
+  }
+
+  .sidebar .nav-link span,
+  .sidebar .sidebar-user-info,
+  .sidebar .logout-btn span,
+  .sidebar .sidebar-logo-img,
+  .sidebar .nav-section-title {
+    display: initial !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+
+  /* Mobile Backdrop Overlay */
+  .sidebar-overlay,
+  #sidebarOverlay {
+    display: none;
+    position: fixed !important;
+    inset: 0 !important;
+    background: rgba(0, 0, 0, 0.72) !important;
+    backdrop-filter: blur(4px) !important;
+    -webkit-backdrop-filter: blur(4px) !important;
+    z-index: 10000 !important;
+    opacity: 0;
+    transition: opacity 0.25s ease !important;
+    cursor: pointer;
+  }
+
+  .sidebar-overlay.open,
+  #sidebarOverlay.open {
+    display: block !important;
+    opacity: 1 !important;
+  }
+
+  /* Sticky Top Header */
+  .top-header,
+  body .top-header {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 990 !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    height: 58px !important;
+    padding: 0 clamp(10px, 3vw, 16px) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 8px !important;
+    background: var(--card-bg, #ffffff) !important;
+    border-bottom: 1px solid rgba(205, 190, 150, 0.3) !important;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04) !important;
+    box-sizing: border-box !important;
+  }
+
+  .header-left,
+  body .top-header .header-left {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    min-width: 0 !important;
+    flex: 1 1 auto !important;
+    overflow: hidden !important;
+  }
+
+  .mobile-menu-btn,
+  #mobileMenuBtn,
+  body .top-header .mobile-menu-btn,
+  body #mobileMenuBtn {
+    display: inline-flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    border-radius: 12px !important;
+    background: rgba(201, 162, 39, 0.12) !important;
+    color: #c9a227 !important;
+    border: 1px solid rgba(201, 162, 39, 0.35) !important;
+    font-size: 18px !important;
+    cursor: pointer !important;
+    flex-shrink: 0 !important;
+    margin-right: 4px !important;
+    z-index: 995 !important;
+    box-shadow: 0 2px 8px rgba(201, 162, 39, 0.15) !important;
+    transition: transform 0.15s ease, background 0.15s ease !important;
+  }
+
+  .mobile-menu-btn:active,
+  #mobileMenuBtn:active {
+    transform: scale(0.92) !important;
+    background: rgba(201, 162, 39, 0.25) !important;
+  }
+
+  .header-title,
+  body .top-header .header-title {
+    min-width: 0 !important;
+    flex: 1 1 auto !important;
+    overflow: hidden !important;
+  }
+
+  .header-title h1 {
+    font-size: clamp(14px, 3.8vw, 17px) !important;
+    font-weight: 700 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    margin: 0 !important;
+    line-height: 1.2 !important;
+  }
+
+  .header-title p,
+  #liveDate {
+    display: none !important;
+  }
+
+  .header-actions {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .page-wrapper,
+  #view-container {
+    padding: clamp(10px, 2.5vw, 16px) !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  /* POS Auto-Stack */
+  .pos-container {
+    display: flex !important;
+    flex-direction: column !important;
+    width: 100% !important;
+    gap: 12px !important;
+  }
+
+  .pos-cart {
+    width: 100% !important;
+    position: static !important;
+    height: auto !important;
+    max-height: none !important;
+    margin-top: 10px !important;
+  }
+
+  .pos-cart .cart-items {
+    max-height: 360px !important;
+    overflow-y: auto !important;
+  }
+}
+
+/* 6. Tablet & Mobile Shared Rules (<= 768px) */
+@media (max-width: 768px) {
+  /* Touch target sizes */
+  .btn,
+  button:not(.btn-icon):not(.inv-checkbox):not(.cat-pill) {
+    min-height: 42px;
+  }
+
+  .btn-sm {
+    min-height: 36px;
+    padding: 6px 12px !important;
+  }
+
+  .input-field,
+  input[type="text"],
+  input[type="number"],
+  input[type="search"],
+  input[type="password"],
+  input[type="email"],
+  select {
+    min-height: 42px;
+    font-size: 16px !important;
+  }
+
+  .nav-link {
+    min-height: 44px !important;
+  }
+
+  /* Section heads wrap */
+  .section-head,
+  .page-card-head {
+    padding: 12px 14px !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+
+  .section-head > div:last-child {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+
+  .section-head .btn,
+  .section-head .view-all-link {
+    width: 100% !important;
+    justify-content: center !important;
+    text-align: center !important;
+  }
+
+  /* Toolbars stack vertically */
+  .toolbar {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+
+  .toolbar .search-wrap,
+  .toolbar select,
+  .toolbar button,
+  .toolbar .btn {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* Inventory Bulk Toolbar */
+  .inv-bulk-toolbar {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+    padding: 10px 14px !important;
+  }
+
+  .inv-bulk-left {
+    justify-content: space-between !important;
+    width: 100% !important;
+  }
+
+  .inv-bulk-right {
+    justify-content: stretch !important;
+    width: 100% !important;
+  }
+
+  .inv-bulk-right button {
+    flex: 1 1 auto !important;
+    justify-content: center !important;
+  }
+
+  /* Kitchen KDS 1-column */
+  #kitchen-tickets-grid,
+  .kitchen-orders-grid,
+  #drinks-tickets-grid,
+  .drinks-orders-grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  #kitchen-tickets-grid .btn,
+  #drinks-tickets-grid .btn {
+    min-height: 44px !important;
+    font-size: 13px !important;
+    font-weight: 700 !important;
+  }
+
+  /* Tables QR Grid */
+  #tables-grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)) !important;
+    gap: 14px !important;
+  }
+
+  /* Tables padding */
+  th, td {
+    padding: 8px 10px !important;
+    font-size: 12px !important;
+  }
+}
+
+/* 7. Mobile Grids & Forms (<= 640px) */
+@media (max-width: 640px) {
+  /* Stat Cards: 2 Columns on Mobile */
+  .stats-grid,
+  .reports-stats-grid,
+  .pos-stats-grid,
+  .pl-stats-grid,
+  .pos-workspace .stats-grid,
+  .pos-workspace .pos-stats-grid {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+    margin-bottom: 12px !important;
+  }
+
+  .stat-card {
+    padding: 10px 12px !important;
+    gap: 8px !important;
+    border-radius: 12px !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .stat-card .stat-info {
+    min-width: 0 !important;
+    overflow: hidden !important;
+    flex: 1 1 auto !important;
+  }
+
+  .stat-card .stat-count,
+  .stat-card .stat-value {
+    font-size: clamp(14px, 3.6vw, 19px) !important;
+    font-weight: 800 !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
+    line-height: 1.15 !important;
+  }
+
+  .stat-info h3 {
+    font-size: 10px !important;
+    line-height: 1.2 !important;
+    margin-bottom: 2px !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+  }
+
+  .stat-trend {
+    font-size: 9.5px !important;
+    line-height: 1.2 !important;
+  }
+
+  .stat-icon {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    font-size: 14px !important;
+    border-radius: 8px !important;
+  }
+
+  /* Modal form 2-column grids collapse to 1-column */
+  .modal-body [style*="grid-template-columns:1fr 1fr"],
+  .modal-body [style*="grid-template-columns: 1fr 1fr"],
+  .modal-body [style*="grid-template-columns:1fr 1fr 1fr"],
+  .modal-body [style*="grid-template-columns: 1fr 1fr 1fr"] {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+
+  .modal-footer button {
+    flex: 1 1 auto !important;
+    justify-content: center !important;
+  }
+
+  /* POS Category Pills Horizontal Scroll */
+  .pos-categories,
+  #pos-cat-bar {
+    display: flex !important;
+    gap: 6px !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    scrollbar-width: none !important;
+    padding-bottom: 6px !important;
+  }
+
+  .pos-categories::-webkit-scrollbar,
+  #pos-cat-bar::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  .cat-pill {
+    flex-shrink: 0 !important;
+    white-space: nowrap !important;
+    min-height: 34px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+  }
+
+  /* POS Product Grid: 2 Columns */
+  .pos-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+
+  .pos-product-card {
+    padding: 8px !important;
+    border-radius: 12px !important;
+  }
+
+  .pos-product-card img {
+    height: clamp(75px, 22vw, 95px) !important;
+  }
+
+  .header-actions .btn-sm span {
+    display: none !important;
+  }
+}
+
+/* 8. Ultra-Narrow Mobile (<= 360px down to 320px) */
+@media (max-width: 360px) {
+  /* Stat Cards: 1 Column on very small phones */
+  .stats-grid,
+  .reports-stats-grid,
+  .pos-stats-grid,
+  .pl-stats-grid,
+  .pos-workspace .stats-grid,
+  .pos-workspace .pos-stats-grid {
+    grid-template-columns: 1fr !important;
+    gap: 6px !important;
+  }
+
+  .page-wrapper,
+  #view-container {
+    padding: 8px !important;
+  }
+
+  .header-title h1 {
+    font-size: 13.5px !important;
+    max-width: 140px !important;
+  }
+
+  .pos-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 6px !important;
+  }
+
+  .pos-product-card {
+    padding: 6px !important;
+  }
+
+  .pos-product-card img {
+    height: 75px !important;
+  }
+
+  th, td {
+    padding: 6px 8px !important;
+    font-size: 11px !important;
+  }
+}
+
+/* 9. Print Styles Protection */
+@media print {
+  .sidebar,
+  .top-header,
+  .mobile-menu-btn,
+  .mobile-cart-float-bar,
+  .sidebar-overlay,
+  .modal-footer,
+  .modal-header button,
+  .header-actions {
+    display: none !important;
+  }
+
+  .main-content {
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+  }
+
+  .modal-overlay {
+    position: static !important;
+    padding: 0 !important;
+    background: transparent !important;
+  }
+
+  .modal {
+    box-shadow: none !important;
+    border: none !important;
+    max-width: 100% !important;
+  }
+
+  .modal-body {
+    max-height: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  .receipt-paper {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+}
+
+

@@ -35,23 +35,32 @@ const Utils = {
       container.id = "modal-container";
       container.className = "modal-overlay";
       container.innerHTML = '<div class="modal" id="modal-content"></div>';
+      container.addEventListener("click", (e) => {
+        if (e.target === container) Utils.closeModal();
+      });
       document.body.appendChild(container);
+    } else if (!container.dataset.backdropBound) {
+      container.dataset.backdropBound = "true";
+      container.addEventListener("click", (e) => {
+        if (e.target === container) Utils.closeModal();
+      });
     }
 
     const content = document.getElementById("modal-content");
     content.className = "modal " + (size || "");
     content.removeAttribute("style");
     content.innerHTML = `
-      <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; padding:18px 24px; border-bottom:1px solid rgba(205,190,150,0.25);">
-        <h3 style="font-size:16px; font-weight:700; color:var(--text-main, #18181b);">${title}</h3>
-        <button type="button" class="btn-icon" onclick="Utils.closeModal()" style="border:none; background:transparent; cursor:pointer; font-size:16px; color:var(--text-muted);"><i class="fas fa-times"></i></button>
+      <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; padding:14px 18px; border-bottom:1px solid rgba(205,190,150,0.25);">
+        <h3 style="font-size:16px; font-weight:700; color:var(--text-main, #18181b); margin:0;">${title}</h3>
+        <button type="button" class="btn-icon" onclick="Utils.closeModal()" style="border:none; background:transparent; cursor:pointer; font-size:18px; color:var(--text-muted); display:inline-flex; align-items:center; justify-content:center; width:44px; height:44px; min-width:44px; min-height:44px; border-radius:8px;" aria-label="Close dialog"><i class="fas fa-times"></i></button>
       </div>
-      <div class="modal-body" style="padding:22px 24px;">${bodyHTML}</div>
-      ${footerHTML ? `<div class="modal-footer" style="padding:16px 24px; border-top:1px solid rgba(205,190,150,0.25); display:flex; justify-content:flex-end; gap:12px;">${footerHTML}</div>` : ''}
+      <div class="modal-body" style="padding:16px 18px; overflow-y:auto; max-height:calc(85dvh - 120px);">${bodyHTML}</div>
+      ${footerHTML ? `<div class="modal-footer" style="padding:12px 18px; border-top:1px solid rgba(205,190,150,0.25); display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;">${footerHTML}</div>` : ''}
     `;
 
     container.classList.remove("hidden");
     container.style.display = "flex";
+    document.body.style.overflow = "hidden";
   },
 
   closeModal() {
@@ -64,6 +73,10 @@ const Utils = {
     if (content) {
       content.className = "modal";
       content.removeAttribute("style");
+    }
+    const sidebar = document.getElementById("sidebar");
+    if (!sidebar || !sidebar.classList.contains("open")) {
+      document.body.style.overflow = "";
     }
   },
 
@@ -497,10 +510,45 @@ generateReceiptHTML(order, isPrint = false) {
       }
     });
 
-    // Close on Escape key
+    // Close modal or sidebar on Escape key
     document.addEventListener("keydown", (e) => {
-      if ((e.key === "Escape" || e.key === "Esc") && sidebar.classList.contains("open")) {
-        this.toggleMobileSidebar(false);
+      if (e.key === "Escape" || e.key === "Esc") {
+        const modalContainer = document.getElementById("modal-container");
+        if (modalContainer && !modalContainer.classList.contains("hidden") && modalContainer.style.display !== "none") {
+          this.closeModal();
+          return;
+        }
+        const openModals = document.querySelectorAll('.modal-overlay:not(.hidden)');
+        let closedAny = false;
+        openModals.forEach(m => {
+          if (m.style.display !== 'none' && m.id !== 'sidebarOverlay') {
+            m.style.display = 'none';
+            m.classList.add('hidden');
+            closedAny = true;
+          }
+        });
+        if (closedAny) {
+          const sb = document.getElementById("sidebar");
+          if (!sb || !sb.classList.contains("open")) {
+            document.body.style.overflow = "";
+          }
+          return;
+        }
+        if (sidebar && sidebar.classList.contains("open")) {
+          this.toggleMobileSidebar(false);
+        }
+      }
+    });
+
+    // Dismiss any modal overlay when its backdrop is clicked
+    document.addEventListener("click", (e) => {
+      if (e.target && e.target.classList && e.target.classList.contains("modal-overlay")) {
+        e.target.style.display = "none";
+        e.target.classList.add("hidden");
+        const sb = document.getElementById("sidebar");
+        if (!sb || !sb.classList.contains("open")) {
+          document.body.style.overflow = "";
+        }
       }
     });
 

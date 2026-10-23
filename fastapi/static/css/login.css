@@ -371,16 +371,16 @@ body::after {
 
     .login-container {
         max-width: 100%;
-        padding: 32px 22px;
-        border-radius: 22px;
+        padding: 36px 24px;
+        border-radius: 24px;
     }
 
     .logo-image {
-        max-width: 200px;
+        max-width: 220px;
     }
 
     .welcome-section h1 {
-        font-size: 20px;
+        font-size: 22px;
     }
 
     .welcome-section p {
@@ -388,28 +388,14 @@ body::after {
     }
 
     .input-field input {
-        height: 46px;
-        font-size: 14px;
+        height: 48px;
+        font-size: 16px !important;
     }
 
     .signin-btn {
-        height: 46px;
-        font-size: 13px;
-    }
-}
-
-@media (max-width: 375px) {
-    body {
-        padding: 8px;
-    }
-
-    .login-container {
-        padding: 24px 16px;
-        border-radius: 18px;
-    }
-
-    .welcome-section h1 {
-        font-size: 18px;
+        height: 48px;
+        font-size: 15px;
+        font-weight: 700;
     }
 }
 
