@@ -214,7 +214,11 @@ async function renderDashboard(c) {
         <div class="stat-icon emerald" style="background:rgba(16,185,129,0.12); color:#10b981;"><i class="fas ${isAdmin ? 'fa-inbox' : 'fa-paper-plane'}"></i></div>
         <div class="stat-info">
           <h3>${isAdmin ? 'Income Received from Manager' : 'Transfer Income to Admin'}</h3>
-          <div class="stat-count" style="color:#10b981;">${Utils.formatCurrency((plStats.cashout?.admin_transfer_income !== undefined ? plStats.cashout?.admin_transfer_income : plStats.cashout?.total_transferred_to_admin) || plStats.cashout?.total_cashout_income || 0)}</div>
+          <div class="stat-count" style="color:#10b981;">${Utils.formatCurrency(
+            isAdmin
+              ? (plStats.cashout?.admin_transfer_income !== undefined ? plStats.cashout.admin_transfer_income : (plStats.cashout?.total_transferred_to_admin ?? 0))
+              : (plStats.cashout?.manager_safe_cash !== undefined ? plStats.cashout.manager_safe_cash : Math.max(0, (plStats.cashout?.total_cashout_income || 0) - (plStats.cashout?.total_transferred_to_admin || 0)))
+          )}</div>
           <div class="stat-trend" style="color:#10b981;"><i class="fas ${isAdmin ? 'fa-shield-halved' : 'fa-vault'}"></i> ${isAdmin ? 'Income secured in admin safe' : 'Transfer income to admin'}</div>
         </div>
       </div>
@@ -5856,7 +5860,7 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
   const digitalCollectionsVal = metrics['4_digital_collections'] !== undefined ? metrics['4_digital_collections'] : (rev.non_cash_sales || 0);
   const inventoryValuationVal = inv.total_inventory_valuation || 0;
   const activeDrawerCashVal = csh.active_drawer_cash || 0;
-  const adminIncomingTransfersVal = csh.admin_transfer_income !== undefined ? csh.admin_transfer_income : (csh.total_transferred_to_admin || 0);
+  const adminIncomingTransfersVal = csh.admin_transfer_income !== undefined ? csh.admin_transfer_income : (csh.total_transferred_to_admin ?? 0);
   const managerSafeBalanceVal = csh.manager_safe_cash !== undefined ? csh.manager_safe_cash : Math.max(0, (csh.total_cashout_income || 0) - (csh.total_transferred_to_admin || 0));
   const isReconciled = recon.is_fully_reconciled !== undefined ? recon.is_fully_reconciled : true;
 

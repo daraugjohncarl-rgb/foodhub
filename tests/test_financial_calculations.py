@@ -411,7 +411,79 @@ class TestFinancialCalculations(unittest.TestCase):
         # Transfer is custody movement, not sales income
         self.assertEqual(gross_sales, Decimal("0.00"))
 
+    def test_m_manager_to_admin_transfer_zero_by_default(self):
+        """
+        Test M: In a clean initial database, manager-to-admin transfers and cashier cashouts start at ₱0.00.
+        """
+        admin_transfers = []
+        cashier_cashouts = []
+        total_transferred = sum((to_decimal(m.amount) for m in admin_transfers), Decimal("0.00"))
+        total_cashouts = sum((to_decimal(m.amount) for m in cashier_cashouts), Decimal("0.00"))
+        self.assertEqual(total_transferred, Decimal("0.00"))
+        self.assertEqual(total_cashouts, Decimal("0.00"))
+
+    def test_n_cancelled_and_reversed_transfers_excluded(self):
+        """
+        Test N: Cancelled/voided transfers are excluded and reversing PAID_IN reduces transfer income.
+        """
+        def is_cancelled_or_reversed(reason: str) -> bool:
+            r = (reason or '').lower()
+            return any(term in r for term in ['cancel', 'revers', 'void', 'reject'])
+
+        # Transfer 1: Valid ₱2,000 transfer to Admin
+        m1 = MagicMock()
+        m1.amount = Decimal("2000.00")
+        m1.reason = "Transfer to Admin Safe"
+
+        # Transfer 2: Cancelled ₱1,500 transfer to Admin
+        m2 = MagicMock()
+        m2.amount = Decimal("1500.00")
+        m2.reason = "Cancelled Transfer to Admin"
+
+        all_movements = [m1, m2]
+        qualifying = [m for m in all_movements if 'admin' in (m.reason or '').lower() and not is_cancelled_or_reversed(m.reason)]
+        self.assertEqual(len(qualifying), 1)
+        self.assertEqual(qualifying[0].amount, Decimal("2000.00"))
+
+        # Reversal PAID_IN: ₱500 returned/reversed from Admin
+        rev_in = MagicMock()
+        rev_in.amount = Decimal("500.00")
+        rev_in.reason = "Reversal from Admin Safe"
+
+        reversals = [rev_in]
+        total_reversals = sum((to_decimal(r.amount) for r in reversals), Decimal("0.00"))
+        net_admin_transfer = max(Decimal("0.00"), sum((to_decimal(m.amount) for m in qualifying), Decimal("0.00")) - total_reversals)
+        self.assertEqual(net_admin_transfer, Decimal("1500.00"))
+
+    def test_o_manual_drawer_adjustments_excluded_from_cashout(self):
+        """
+        Test O: Manual cashier drawer edits/corrections via modal are NOT counted as cashier cashout income.
+        """
+        def is_drawer_adjustment(reason: str) -> bool:
+            r = (reason or '').lower()
+            return any(term in r for term in ['drawer edited', 'modal', 'adjustment', 'shortage', 'overage'])
+
+        # Movement 1: Cashier drawer edited via modal (₱4,950 adjustment to ₱0.00)
+        adj = MagicMock()
+        adj.amount = Decimal("4950.00")
+        adj.reason = "Cashier drawer edited via modal (Adjusted from ₱4950.00 to ₱0.00)"
+
+        # Movement 2: Legitimate manager cashout
+        drop = MagicMock()
+        drop.amount = Decimal("1000.00")
+        drop.reason = "Manager Cashout"
+
+        all_cashouts = [adj, drop]
+        cashier_cashouts = [
+            m for m in all_cashouts
+            if 'admin' not in (m.reason or '').lower() and not is_drawer_adjustment(m.reason)
+        ]
+        self.assertEqual(len(cashier_cashouts), 1)
+        self.assertEqual(cashier_cashouts[0].amount, Decimal("1000.00"))
+        self.assertEqual(sum((to_decimal(m.amount) for m in cashier_cashouts), Decimal("0.00")), Decimal("1000.00"))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

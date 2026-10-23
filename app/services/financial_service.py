@@ -483,18 +483,56 @@ def get_consolidated_financial_report(
         models.ShiftCashMovement.type == "PAID_OUT"
     ).order_by(models.ShiftCashMovement.id.desc()).all()
 
-    cashier_cashouts = [m for m in all_cashouts if 'admin' not in (m.reason or '').lower()]
-    admin_transfers = [m for m in all_cashouts if 'admin' in (m.reason or '').lower()]
+    def is_cancelled_or_reversed(reason: str) -> bool:
+        r = (reason or '').lower()
+        return any(term in r for term in ['cancel', 'revers', 'void', 'reject'])
 
+    def is_drawer_adjustment(reason: str) -> bool:
+        r = (reason or '').lower()
+        return any(term in r for term in ['drawer edited', 'modal', 'adjustment', 'shortage', 'overage'])
+
+    # Admin transfers: qualifying movements transferred to Admin Safe
+    admin_transfers = [
+        m for m in all_cashouts 
+        if 'admin' in (m.reason or '').lower() and not is_cancelled_or_reversed(m.reason)
+    ]
+
+    # Cashier cashouts: legitimate cashier drops into manager safe (exclude drawer count edits & cancellations)
+    cashier_cashouts = [
+        m for m in all_cashouts 
+        if 'admin' not in (m.reason or '').lower() 
+        and not is_drawer_adjustment(m.reason) 
+        and not is_cancelled_or_reversed(m.reason)
+    ]
+
+    # Handle any explicit PAID_IN reversals of admin transfers
+    admin_reversals_in = db.query(models.ShiftCashMovement).filter(
+        models.ShiftCashMovement.tenant_id == tenant_id,
+        models.ShiftCashMovement.type == "PAID_IN"
+    ).all()
+    total_reversals_to_admin = quantize(sum((
+        to_decimal(m.amount) for m in admin_reversals_in 
+        if 'admin' in (m.reason or '').lower() and any(k in (m.reason or '').lower() for k in ['revers', 'return', 'refund', 'cancel'])
+    ), Decimal("0.00")))
+
+    gross_transferred_to_admin = quantize(sum((to_decimal(m.amount) for m in admin_transfers), Decimal("0.00")))
+    total_transferred_to_admin = quantize(max(Decimal("0.00"), gross_transferred_to_admin - total_reversals_to_admin))
     total_cashout_income = quantize(sum((to_decimal(m.amount) for m in cashier_cashouts), Decimal("0.00")))
-    total_transferred_to_admin = quantize(sum((to_decimal(m.amount) for m in admin_transfers), Decimal("0.00")))
 
     # In period transfers
     period_transfers = [
         m for m in admin_transfers
         if m.created_at and start_dt <= m.created_at < end_dt
     ]
-    period_transferred_to_admin = quantize(sum((to_decimal(m.amount) for m in period_transfers), Decimal("0.00")))
+    period_reversals = [
+        m for m in admin_reversals_in
+        if m.created_at and start_dt <= m.created_at < end_dt
+        and 'admin' in (m.reason or '').lower() and any(k in (m.reason or '').lower() for k in ['revers', 'return', 'refund', 'cancel'])
+    ]
+    period_transferred_to_admin = quantize(max(
+        Decimal("0.00"),
+        sum((to_decimal(m.amount) for m in period_transfers), Decimal("0.00")) - sum((to_decimal(m.amount) for m in period_reversals), Decimal("0.00"))
+    ))
 
     # Manager safe cash reduces when transferred to Admin
     manager_safe_cash = quantize(max(Decimal("0.00"), total_cashout_income - total_transferred_to_admin))
@@ -581,7 +619,7 @@ def get_consolidated_financial_report(
         "reason": m.reason or ("Transfer Income from Manager" if is_admin else "Transfer to Manager Profit Income"),
         "is_admin_transfer": 'admin' in (m.reason or '').lower(),
         "created_at": m.created_at.isoformat() if m.created_at else None
-    } for m in (admin_transfers if is_admin else all_cashouts)[:30]]
+    } for m in (admin_transfers if is_admin else cashier_cashouts)[:30]]
 
     expenses_table = [{
         "id": e.id,
