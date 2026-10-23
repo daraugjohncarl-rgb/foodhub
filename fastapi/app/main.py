@@ -131,27 +131,8 @@ def seed_default_data():
 
         # 5. Note: Masterlist auto-seeding removed to allow custom inventory and product menu management.
 
-        # 6. Seed default suppliers under 'Main Branch - Blessie FoodHub'
-        target_tenant = db.query(models.Tenant).filter(models.Tenant.name == "Main Branch - Blessie FoodHub").first()
-        if target_tenant:
-            from app.seed_data import DEFAULT_SUPPLIERS
-            existing_sup_names = {s[0] for s in db.query(models.Supplier.supplier_name).filter(models.Supplier.tenant_id == target_tenant.id).all()}
-            has_new_sup = False
-            for s_data in DEFAULT_SUPPLIERS:
-                if s_data["name"] not in existing_sup_names:
-                    new_sup = models.Supplier(
-                        tenant_id=target_tenant.id,
-                        supplier_name=s_data["name"],
-                        contact_number=s_data["contact"],
-                        category=s_data["category"],
-                        products_supplied=s_data["products"],
-                        status="Active"
-                    )
-                    db.add(new_sup)
-                    existing_sup_names.add(s_data["name"])
-                    has_new_sup = True
-            if has_new_sup:
-                db.commit()
+        # 6. Automatic sample supplier seeding disabled for production readiness.
+        # Legitimate suppliers are registered and managed directly by authorized branch administrators.
 
     except Exception as e:
         db.rollback()
