@@ -7937,8 +7937,8 @@ function renderCashDrawerTrackerUI(container, data) {
         <div class="stat-icon green"><i class="fas fa-chart-line"></i></div>
         <div class="stat-info">
           <h3>Overall Income</h3>
-          <div class="stat-count" style="color:#10b981;">${Utils.formatCurrency(data.overall_income !== undefined ? data.overall_income : ((data.orders_overall_income || 0) + (data.total_cash_in_drawers || 0)))}</div>
-          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-circle-check"></i> Orders revenue + cashier drawer included</div>
+          <div class="stat-count" style="color:#10b981;">${Utils.formatCurrency(data.overall_income !== undefined ? data.overall_income : (data.orders_overall_income || 0))}</div>
+          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-circle-check"></i> Orders revenue from completed sales</div>
         </div>
       </div>
     </div>
@@ -8022,15 +8022,15 @@ function renderDrawerTableRows(shifts) {
         </td>
         <td style="background:rgba(16,185,129,0.08);">
           <strong style="color:#10b981; font-weight:800; font-size:15px;">
-            ${Utils.formatCurrency(s.cashier_overall_income !== undefined ? s.cashier_overall_income : ((Number(s.total_sales) || 0) + Number(s.expected_cash || 0) + Number(s.cashed_out || s.paid_out || 0)))}
+            ${Utils.formatCurrency(s.cashier_overall_income !== undefined ? s.cashier_overall_income : (Number(s.total_sales) || 0))}
           </strong>
           <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">
-            ${(s.cashed_out || s.paid_out) ? `<span style="color:#10b981; font-weight:700;">Cashed Out: ${Utils.formatCurrency(s.cashed_out || s.paid_out)}</span> &bull; ` : ''}Orders: ${Utils.formatCurrency(s.total_sales || (s.cash_sales + s.non_cash_sales))} + Drawer: ${Utils.formatCurrency(s.expected_cash || 0)}
+            ${(s.cashed_out || s.paid_out) ? `<span style="color:#10b981; font-weight:700;">Cashed Out: ${Utils.formatCurrency(s.cashed_out || s.paid_out)}</span> &bull; ` : ''}Total Shift Sales (Cash + Non-Cash)
           </div>
         </td>
         <td>
-          <strong style="color:#10b981; font-weight:800; font-size:13.5px;">+${Utils.formatCurrency((Number(s.expected_cash) || 0) + (Number(s.cash_sales) || 0))}</strong>
-          <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">Sales: ${Utils.formatCurrency(s.cash_sales || 0)} + Drawer: ${Utils.formatCurrency(s.expected_cash || 0)}</div>
+          <strong style="color:#10b981; font-weight:800; font-size:13.5px;">+${Utils.formatCurrency(Number(s.cash_sales) || 0)}</strong>
+          <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">Cash Sales Collected</div>
         </td>
         <td>
           <strong style="color:#007dfe; font-weight:800; font-size:13.5px;">+${Utils.formatCurrency(s.non_cash_sales || 0)}</strong>
@@ -8121,8 +8121,8 @@ async function reloadTransferDialogData(showToast = true) {
 
     const expectedCash = targetShift ? (targetShift.expected_cash || 0) : (cachedProfitLossData?.cashout?.active_drawer_cash || 0);
     const cashierOverallIncome = targetShift 
-      ? (targetShift.cashier_overall_income !== undefined ? targetShift.cashier_overall_income : ((targetShift.total_sales || 0) + (targetShift.expected_cash || 0)))
-      : (cachedDrawerData?.overall_income || expectedCash || 0);
+      ? (targetShift.cashier_overall_income !== undefined ? targetShift.cashier_overall_income : (targetShift.total_sales || 0))
+      : (cachedDrawerData?.overall_income || (targetShift ? targetShift.total_sales : 0) || 0);
     const availableSafeCash = cachedProfitLossData?.cashout?.manager_safe_cash !== undefined
       ? cachedProfitLossData.cashout.manager_safe_cash
       : Math.max(0, (cachedProfitLossData?.cashout?.total_cashout_income || 0) - (cachedProfitLossData?.cashout?.total_transferred_to_admin || 0));
@@ -8149,7 +8149,7 @@ async function reloadTransferDialogData(showToast = true) {
 
     if (shiftSelect && shiftSelect.tagName === "SELECT") {
       shiftSelect.innerHTML = openShifts.map(s => {
-        const sIncome = s.cashier_overall_income !== undefined ? s.cashier_overall_income : ((s.total_sales || 0) + (s.expected_cash || 0));
+        const sIncome = s.cashier_overall_income !== undefined ? s.cashier_overall_income : (s.total_sales || 0);
         return `
         <option value="${s.id}" ${s.id === (targetShift ? targetShift.id : "") ? 'selected' : ''}>
           Shift #${s.id} — ${s.cashier_name} (@${s.cashier_username}) [Overall Income: ${Utils.formatCurrency(sIncome)} | Drawer: ${Utils.formatCurrency(s.expected_cash)}]
@@ -8214,8 +8214,8 @@ async function openAddCashMovementModal(defaultShiftId = null, targetType = null
   const targetShiftId = targetShift ? targetShift.id : "";
   const expectedCash = targetShift ? (targetShift.expected_cash || 0) : (cachedProfitLossData?.cashout?.active_drawer_cash || 0);
   const cashierOverallIncome = targetShift 
-    ? (targetShift.cashier_overall_income !== undefined ? targetShift.cashier_overall_income : ((targetShift.total_sales || 0) + (targetShift.expected_cash || 0)))
-    : (cachedDrawerData?.overall_income || expectedCash || 0);
+    ? (targetShift.cashier_overall_income !== undefined ? targetShift.cashier_overall_income : (targetShift.total_sales || 0))
+    : (cachedDrawerData?.overall_income || (targetShift ? targetShift.total_sales : 0) || 0);
   const availableSafeCash = cachedProfitLossData?.cashout?.manager_safe_cash !== undefined
     ? cachedProfitLossData.cashout.manager_safe_cash
     : Math.max(0, (cachedProfitLossData?.cashout?.total_cashout_income || 0) - (cachedProfitLossData?.cashout?.total_transferred_to_admin || 0));
@@ -8231,7 +8231,7 @@ async function openAddCashMovementModal(defaultShiftId = null, targetType = null
   const transferReason = isManagerProfitIncome ? "Transfer to Manager Profit Income" : "Transfer to Admin";
 
   const shiftOptions = openShifts.length > 0 ? openShifts.map(s => {
-    const sIncome = s.cashier_overall_income !== undefined ? s.cashier_overall_income : ((s.total_sales || 0) + (s.expected_cash || 0));
+    const sIncome = s.cashier_overall_income !== undefined ? s.cashier_overall_income : (s.total_sales || 0);
     return `
     <option value="${s.id}" ${(defaultShiftId && defaultShiftId === s.id) || s.id === targetShiftId ? 'selected' : ''}>
       Shift #${s.id} — ${s.cashier_name} (@${s.cashier_username}) [Overall Income: ${Utils.formatCurrency(sIncome)} | Drawer: ${Utils.formatCurrency(s.expected_cash)}]
@@ -8257,7 +8257,7 @@ async function openAddCashMovementModal(defaultShiftId = null, targetType = null
       ${isManagerProfitIncome && openShifts.length > 1 && !defaultShiftId ? `
         <div class="input-group" style="margin-bottom:14px;">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Select Active Cashier Shift <span style="color:var(--danger);">*</span></label>
-          <select id="cm-shift-id" class="input-field" required style="width:100%;" onchange="const s = ((cachedDrawerData && cachedDrawerData.shifts) || []).find(x => x.id == this.value); if (s && document.getElementById('cm-amount')) { const inc = s.cashier_overall_income !== undefined ? s.cashier_overall_income : ((s.total_sales || 0) + (s.expected_cash || 0)); const val = inc > 0 ? inc : (s.expected_cash || 0); document.getElementById('cm-amount').value = val.toFixed(2); const info = document.getElementById('cm-expected-info'); if (info) info.textContent = Utils.formatCurrency(val); }">
+          <select id="cm-shift-id" class="input-field" required style="width:100%;" onchange="const s = ((cachedDrawerData && cachedDrawerData.shifts) || []).find(x => x.id == this.value); if (s && document.getElementById('cm-amount')) { const inc = s.cashier_overall_income !== undefined ? s.cashier_overall_income : (s.total_sales || 0); const val = inc > 0 ? inc : (s.expected_cash || 0); document.getElementById('cm-amount').value = val.toFixed(2); const info = document.getElementById('cm-expected-info'); if (info) info.textContent = Utils.formatCurrency(val); }">
             ${shiftOptions}
           </select>
         </div>

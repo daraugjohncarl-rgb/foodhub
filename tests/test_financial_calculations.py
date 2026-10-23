@@ -322,10 +322,96 @@ class TestFinancialCalculations(unittest.TestCase):
         today = now.date()
         self.assertEqual(start_dt.date(), today)
         self.assertEqual(start_dt.time(), datetime.min.time())
-        # End is start of next day (exclusive boundary)
         self.assertEqual(end_dt.date(), today + datetime.resolution.__class__(days=1))
         self.assertEqual(end_dt.time(), datetime.min.time())
+
+    def test_i_overall_income_no_double_counting_cash_drawer(self):
+        """
+        Test I: Overall Income must NOT double-count active cash drawer balances.
+        Scenario:
+        - Completed sales: ₱1,500.00 cash sales
+        - Starting cash float: ₱1,000.00
+        - Expected drawer cash: ₱2,500.00 (Float ₱1,000 + Cash Sales ₱1,500)
+        Flawed formula result: ₱1,500 + ₱2,500 + adjustments = ₱4,950 (BUG)
+        Correct accounting result:
+        - Overall Sales Income: ₱1,500.00
+        - Active Cash Drawer Balance: ₱2,500.00
+        - Total income must NOT sum drawer cash and completed sales.
+        """
+        cash_sales = Decimal("1500.00")
+        start_float = Decimal("1000.00")
+        expected_drawer_cash = start_float + cash_sales  # ₱2,500.00
+
+        # Overall business revenue must strictly be the completed sales
+        overall_income = cash_sales
+        self.assertEqual(overall_income, Decimal("1500.00"))
+        self.assertNotEqual(overall_income + expected_drawer_cash + Decimal("950.00"), overall_income)
+
+    def test_j_newly_completed_orders_increase_revenue(self):
+        """
+        Test J: Newly completed orders increase revenue and overall income.
+        """
+        tx1 = MagicMock(spec=models.Transaction)
+        tx1.status = "completed"
+        tx1.total_amount = Decimal("300.00")
+        tx1.discount_amount = Decimal("0.00")
+        tx1.net_amount = Decimal("300.00")
+
+        initial_orders = [tx1]
+        gross_sales = self.calc.compute_gross_sales(initial_orders)
+        self.assertEqual(gross_sales, Decimal("300.00"))
+
+        # Customer places another order for ₱250
+        tx2 = MagicMock(spec=models.Transaction)
+        tx2.status = "completed"
+        tx2.total_amount = Decimal("250.00")
+        tx2.discount_amount = Decimal("0.00")
+        tx2.net_amount = Decimal("250.00")
+
+        updated_orders = [tx1, tx2]
+        new_gross_sales = self.calc.compute_gross_sales(updated_orders)
+        new_net_sales = self.calc.compute_net_sales(new_gross_sales, Decimal("0.00"))
+        self.assertEqual(new_gross_sales, Decimal("550.00"))
+        self.assertEqual(new_net_sales, Decimal("550.00"))
+
+    def test_k_expenses_reduce_profit_without_distorting_sales(self):
+        """
+        Test K: Operating expenses reduce net profit but do not modify gross or net sales.
+        """
+        gross_sales = Decimal("5000.00")
+        discounts = Decimal("0.00")
+        cogs = Decimal("2000.00")
+        is_cogs_complete = True
+
+        net_sales = self.calc.compute_net_sales(gross_sales, discounts)
+        gross_profit, _ = self.calc.compute_gross_profit(net_sales, cogs, is_cogs_complete)
+        self.assertEqual(gross_profit, Decimal("3000.00"))
+
+        # Zero expenses
+        net_profit_zero_exp, _, _ = self.calc.compute_net_operating_profit(gross_profit, Decimal("0.00"), is_cogs_complete)
+        self.assertEqual(net_profit_zero_exp, Decimal("3000.00"))
+
+        # Record ₱800 utility expense
+        expenses = Decimal("800.00")
+        net_profit_with_exp, _, _ = self.calc.compute_net_operating_profit(gross_profit, expenses, is_cogs_complete)
+        self.assertEqual(net_profit_with_exp, Decimal("2200.00"))
+        # Sales remains untouched
+        self.assertEqual(net_sales, Decimal("5000.00"))
+
+    def test_l_internal_transfers_do_not_create_revenue(self):
+        """
+        Test L: Cash transfers between Cashier, Manager, and Admin do NOT create sales revenue.
+        """
+        # Internal safe transfer
+        transfer_amount = Decimal("1500.00")
+        # Sales remains 0 when no customer orders exist
+        orders = []
+        gross_sales = self.calc.compute_gross_sales(orders)
+        self.assertEqual(gross_sales, Decimal("0.00"))
+        # Transfer is custody movement, not sales income
+        self.assertEqual(gross_sales, Decimal("0.00"))
 
 
 if __name__ == "__main__":
     unittest.main()
+

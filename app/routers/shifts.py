@@ -215,8 +215,7 @@ def get_drawer_summary(
             "paid_in": float(paid_in_val),
             "paid_out": float(paid_out_val),
             "cashed_out": float(paid_out_val),
-            "expected_cash": float(expected_cash),
-            "cashier_overall_income": float(shift_total_sales + Decimal(str(s.start_cash or 0)) + Decimal(str(paid_in_val)) if (shift_total_sales + Decimal(str(s.start_cash or 0)) + Decimal(str(paid_in_val))) > Decimal("0.0") else (shift_total_sales + expected_cash + Decimal(str(paid_out_val)))),
+            "cashier_overall_income": float(shift_total_sales),
             "end_cash": float(s.end_cash) if s.end_cash is not None else None,
             "variance": float(s.end_cash - expected_cash) if s.end_cash is not None else None,
             "movements": movements
@@ -262,14 +261,16 @@ def get_drawer_summary(
         models.Transaction.status == "completed"
     ).scalar() or Decimal("0.0")
 
-    overall_income_with_drawer = Decimal(str(all_time_income)) + Decimal(str(total_cash_in_active_drawers))
+    # Overall Income is total sales revenue from completed orders (net sales).
+    # Cash in drawer is a physical cash asset; separating them prevents double-counting.
+    overall_income_val = Decimal(str(all_time_income))
 
     return {
         "total_cash_in_drawers": float(total_cash_in_active_drawers),
         "active_drawers_count": active_drawers_count,
         "today_total_cash_sales": float(today_cash_val),
         "today_total_orders_amount": float(today_orders_val),
-        "overall_income": float(overall_income_with_drawer),
+        "overall_income": float(overall_income_val),
         "orders_overall_income": float(all_time_income),
         "shifts": drawer_list
     }
@@ -405,10 +406,9 @@ def cashout_shift(
     ).scalar() or Decimal("0.0")
 
     shift_total_sales = cash_sales + non_cash_sales
-    cashier_overall_income = shift_total_sales + Decimal(str(shift.start_cash or 0)) + Decimal(str(paid_in))
 
     if amount <= Decimal("0.0"):
-        amount = cashier_overall_income if cashier_overall_income > Decimal("0.0") else current_expected
+        amount = current_expected if current_expected > Decimal("0.0") else Decimal("0.0")
 
     # 1. Log Cash Movement (PAID_OUT / Cashout)
     movement = models.ShiftCashMovement(
