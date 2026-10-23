@@ -106,9 +106,19 @@ async function renderView(viewId, container) {
         await renderSuppliers(container);
         break;
       case "profit_loss":
-      case "purchases":
+      case "purchases": {
+        const _currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
+        const _userRole = (_currentUser && _currentUser.role ? _currentUser.role : (typeof Auth !== 'undefined' ? Auth.getRole() : '')).toLowerCase();
+        if (_userRole === 'inventory' || _userRole === 'kitchen' || _userRole === 'cashier') {
+          if (window.location.hash === "#profit_loss" || window.location.hash === "#purchases") {
+            history.replaceState(null, "", window.location.pathname + "#inventory");
+          }
+          await renderInventory(container);
+          break;
+        }
         await renderProfitLoss(container);
         break;
+      }
       case "wastage":
         await renderWastage(container);
         break;

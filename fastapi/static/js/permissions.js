@@ -31,7 +31,6 @@ const ROLE_NAV_CONFIG = {
   inventory: [
     { id: "inventory", label: "Stock Overview", icon: "fas fa-boxes" },
     { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },
-    { id: "profit_loss", label: "Profit Loss and Income", icon: "fas fa-scale-balanced" },
     { id: "wastage", label: "Wastage Track", icon: "fas fa-trash-alt" }
   ],
   cashier: [
