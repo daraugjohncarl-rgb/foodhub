@@ -5922,10 +5922,10 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
         letter-spacing: 0.3px;
       }
 
-      /* 8 Metric KPI Cards Grid for Admin */
+      /* 6 Metric KPI Cards Grid for Admin */
       .pl-admin-grid-8 {
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(3, 1fr);
         gap: 16px;
         margin-bottom: 24px;
         width: 100%;
@@ -6393,7 +6393,7 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
         </button>
       </div>
 
-      <!-- 8 Summary Cards for Centralized Admin Oversight -->
+      <!-- 6 Summary Cards for Centralized Admin Oversight -->
       <div class="pl-admin-grid-8 fade-up delay-1">
         <!-- 1. Gross Sales -->
         <div class="pl-stat-card">
@@ -6451,27 +6451,7 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
           </div>
         </div>
 
-        <!-- 6. Digital Collections -->
-        <div class="pl-stat-card">
-          <div class="pl-stat-icon purple"><i class="fas fa-mobile-screen"></i></div>
-          <div class="pl-stat-info">
-            <h3>Digital Collections</h3>
-            <div class="pl-stat-count" style="color:#6366f1;">${Utils.formatCurrency(digitalCollectionsVal)}</div>
-            <div class="pl-stat-trend" style="color:#6366f1;"><i class="fas fa-qrcode"></i> GCash, Maya, Card & E-Wallets</div>
-          </div>
-        </div>
-
-        <!-- 7. Manager Incoming Transfers -->
-        <div class="pl-stat-card">
-          <div class="pl-stat-icon green"><i class="fas fa-inbox"></i></div>
-          <div class="pl-stat-info">
-            <h3>Transfers from Manager</h3>
-            <div class="pl-stat-count" style="color:#10b981;">${Utils.formatCurrency(adminIncomingTransfersVal)}</div>
-            <div class="pl-stat-trend" style="color:#10b981;"><i class="fas fa-shield-halved"></i> Secured in Admin Safe</div>
-          </div>
-        </div>
-
-        <!-- 8. Inventory Stock Valuation -->
+        <!-- 6. Inventory Stock Valuation -->
         <div class="pl-stat-card">
           <div class="pl-stat-icon cyan"><i class="fas fa-boxes-stacked"></i></div>
           <div class="pl-stat-info">
