@@ -1,0 +1,7 @@
+{
+  "name": "inbox-pos-frontend-tests",
+  "private": true,
+  "description": "Browser-DOM regression tests for XSS (run with: npm ci && npm test)",
+  "scripts": { "test": "node --test --test-force-exit" },
+  "devDependencies": { "jsdom": "26.1.0" }
+}

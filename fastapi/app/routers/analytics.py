@@ -12,8 +12,9 @@ from sqlalchemy import func
 
 from app.db import get_db
 import app.models as models
+from app.services.payments import cash_method_clause, is_cash_method
 import app.schemas as schemas
-from app.core.dependencies import get_current_user
+from app.core.dependencies import require_manager_or_admin, resolve_tenant_id
 
 router = APIRouter(tags=["Analytics"])
 
@@ -25,12 +26,9 @@ router = APIRouter(tags=["Analytics"])
 )
 def get_dashboard_stats(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_manager_or_admin),
 ):
-    tenant_id = current_user.tenant_id
-    if not tenant_id:
-        first_tenant = db.query(models.Tenant).first()
-        tenant_id = first_tenant.id if first_tenant else 1
+    tenant_id = resolve_tenant_id(current_user, db)
 
     # Today's start and end timestamps
     today = datetime.now().date()
@@ -92,7 +90,7 @@ def get_dashboard_stats(
             models.Transaction.shift_id == s.id,
             models.Payment.status == "completed",
             models.Transaction.status == "completed",
-            func.lower(models.Payment.payment_method).like("%cash%")
+            cash_method_clause(models.Payment.payment_method)
         ).scalar() or Decimal("0.0")
 
         p_in = db.query(
@@ -143,7 +141,7 @@ def get_profit_loss(
     start_date: Optional[str] = Query(None, description="ISO start timestamp"),
     end_date: Optional[str] = Query(None, description="ISO end timestamp"),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_manager_or_admin),
 ):
     """
     Authoritative financial reporting endpoint.
@@ -154,10 +152,7 @@ def get_profit_loss(
     """
     _require_admin_or_manager(current_user)
 
-    tenant_id = current_user.tenant_id
-    if not tenant_id:
-        first_tenant = db.query(models.Tenant).first()
-        tenant_id = first_tenant.id if first_tenant else 1
+    tenant_id = resolve_tenant_id(current_user, db)
 
     return get_consolidated_financial_report(
         db=db,
@@ -178,7 +173,7 @@ def get_reconciliation_audit(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_manager_or_admin),
 ):
     """
     Detailed financial balance verification across orders, payments, drawer movements,
@@ -192,10 +187,7 @@ def get_reconciliation_audit(
             detail="Reconciliation audit is restricted to Admin only."
         )
 
-    tenant_id = current_user.tenant_id
-    if not tenant_id:
-        first_tenant = db.query(models.Tenant).first()
-        tenant_id = first_tenant.id if first_tenant else 1
+    tenant_id = resolve_tenant_id(current_user, db)
 
     report = get_consolidated_financial_report(
         db=db,

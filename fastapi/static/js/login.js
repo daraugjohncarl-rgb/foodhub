@@ -1,3 +1,4 @@
+try { localStorage.removeItem("access_token"); sessionStorage.removeItem("access_token"); } catch (e) {} // legacy JWT copies are purged: the session lives only in the HttpOnly cookie
 // Password Toggle Functionality
 function togglePassword() {
     const input = document.getElementById("passwordInput");
@@ -32,11 +33,7 @@ function getRoleDashboardUrl(role) {
 
 function initLoginApp() {
     // If already logged in, redirect directly to user's assigned dashboard
-    if (localStorage.getItem("access_token")) {
-        const role = localStorage.getItem("role") || "";
-        window.location.href = getRoleDashboardUrl(role);
-        return;
-    }
+    // Live sessions are redirected away from /login by the server (cookie check); stored UI state is not trusted here.
 
     const loginForm = document.getElementById("loginForm");
     const usernameInput = document.getElementById("usernameInput");
@@ -109,7 +106,6 @@ function initLoginApp() {
             }
 
             // Cache Authentication session
-            localStorage.setItem("access_token", data.access_token);
             localStorage.setItem("username", data.username);
             localStorage.setItem("role", data.role);
             localStorage.setItem("tenant_id", data.tenant_id !== null ? data.tenant_id : "GLOBAL");

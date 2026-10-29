@@ -6,7 +6,8 @@ from app.db import get_db
 import app.models as models
 from app.schemas import UserResponse, UserCreate, UserUpdate, PasswordResetRequest
 from app.core.security import get_password_hash
-from app.core.dependencies import get_current_user
+from app.core.dependencies import require_manager_or_admin
+import uuid
 
 router = APIRouter(
     prefix="/users",
@@ -16,7 +17,7 @@ router = APIRouter(
 @router.get("/stats")
 def get_user_stats(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_manager_or_admin)
 ):
     """
     Get user statistics aggregated for dashboard metric cards.
@@ -73,7 +74,7 @@ def get_users(
     offset: int = Query(0, ge=0),
     exclude_self: bool = Query(True, description="Exclude the currently logged-in user"),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_manager_or_admin)
 ):
     """
     Retrieve list of users with search and filter capabilities.
@@ -123,7 +124,7 @@ def get_users(
 def get_user_by_id(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_manager_or_admin)
 ):
     """
     Retrieve a single user by ID.
@@ -144,7 +145,7 @@ def get_user_by_id(
 def create_user(
     user_in: UserCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_manager_or_admin)
 ):
     """
     Create a new user account.
@@ -156,12 +157,20 @@ def create_user(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Branch Admins cannot create ADMIN or SUPER_ADMIN accounts. Only Manager, Cashier, Inventory, or Kitchen accounts are allowed."
             )
-        assigned_tenant_id = current_user.tenant_id
+        if not current_user.tenant_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is not assigned to a tenant.")
+        assigned_tenant_id = current_user.tenant_id  # never taken from the request body
     else:
-        if user_in.role != models.UserRole.SUPER_ADMIN and not user_in.tenant_id:
-            first_tenant = db.query(models.Tenant).first()
-            assigned_tenant_id = first_tenant.id if first_tenant else 1
+        if user_in.role == models.UserRole.SUPER_ADMIN:
+            assigned_tenant_id = None
         else:
+            if not user_in.tenant_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="tenant_id is required when creating a tenant-scoped account."
+                )
+            if not db.query(models.Tenant.id).filter(models.Tenant.id == user_in.tenant_id).first():
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
             assigned_tenant_id = user_in.tenant_id
 
     username = user_in.username
@@ -171,17 +180,18 @@ def create_user(
         elif user_in.email:
             username = user_in.email.split("@")[0]
         else:
-            username = f"user_{int(func.now())}"
+            username = f"user_{uuid.uuid4().hex[:8]}"
             
     # Ensure username is unique
     base_username = username
     counter = 1
-    while db.query(models.User).filter(models.User.username == username).first():
+    while db.query(models.User).filter(func.lower(models.User.username) == username.lower()).first():
         username = f"{base_username}{counter}"
         counter += 1
         
     if user_in.email:
-        existing_email = db.query(models.User).filter(models.User.email == user_in.email).first()
+        user_in.email = user_in.email.strip().lower()
+        existing_email = db.query(models.User).filter(func.lower(models.User.email) == user_in.email).first()
         if existing_email:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -204,6 +214,7 @@ def create_user(
     
     # Audit log
     log = models.ActivityLog(
+        tenant_id=new_user.tenant_id,
         user_id=current_user.id,
         action="User Created",
         performed_by=current_user.username,
@@ -222,7 +233,7 @@ def update_user(
     user_id: int,
     user_in: UserUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_manager_or_admin)
 ):
     """
     Update an existing user's details.
@@ -238,17 +249,22 @@ def update_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
         
+    if user.id == current_user.id and (user_in.role is not None or user_in.is_active is not None):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot change your own role or account status.")
+
     if user_in.username is not None:
-        existing = db.query(models.User).filter(models.User.username == user_in.username, models.User.id != user_id).first()
+        existing = db.query(models.User).filter(func.lower(models.User.username) == user_in.username.lower(), models.User.id != user_id).first()
         if existing:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already in use.")
         user.username = user_in.username
         
     if user_in.email is not None:
-        existing_email = db.query(models.User).filter(models.User.email == user_in.email, models.User.id != user_id).first()
-        if existing_email:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already in use.")
-        user.email = user_in.email
+        new_email = user_in.email.strip().lower() or None
+        if new_email:
+            existing_email = db.query(models.User).filter(func.lower(models.User.email) == new_email, models.User.id != user_id).first()
+            if existing_email:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already in use.")
+        user.email = new_email
         
     if user_in.first_name is not None:
         user.first_name = user_in.first_name
@@ -259,12 +275,17 @@ def update_user(
     if user_in.role is not None:
         if current_user.role != models.UserRole.SUPER_ADMIN and user_in.role in [models.UserRole.SUPER_ADMIN, models.UserRole.ADMIN]:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot assign ADMIN or SUPER_ADMIN role.")
+        if user.role != user_in.role:
+            user.token_version = (user.token_version or 0) + 1  # privilege change invalidates sessions
         user.role = user_in.role
     if user_in.is_active is not None:
+        if user.is_active and not user_in.is_active:
+            user.token_version = (user.token_version or 0) + 1
         user.is_active = user_in.is_active
         
     # Audit log
     log = models.ActivityLog(
+        tenant_id=user.tenant_id,
         user_id=current_user.id,
         action="User Edited",
         performed_by=current_user.username,
@@ -283,7 +304,7 @@ def reset_user_password(
     user_id: int,
     req: PasswordResetRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_manager_or_admin)
 ):
     """
     Reset a user's password.
@@ -299,10 +320,15 @@ def reset_user_password(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
         
+    if user.id == current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Use the change-password option for your own account.")
+
     user.password_hash = get_password_hash(req.new_password)
+    user.token_version = (user.token_version or 0) + 1  # revoke existing sessions
     
     # Audit log
     log = models.ActivityLog(
+        tenant_id=user.tenant_id,
         user_id=current_user.id,
         action="Password Reset",
         performed_by=current_user.username,
@@ -319,7 +345,7 @@ def reset_user_password(
 def toggle_user_status(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_manager_or_admin)
 ):
     """
     Toggle active / inactive status of a user.
@@ -335,11 +361,17 @@ def toggle_user_status(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
         
+    if user.id == current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot change your own account status.")
+
     user.is_active = not user.is_active
+    if not user.is_active:
+        user.token_version = (user.token_version or 0) + 1
     action_text = "User Activated" if user.is_active else "User Deactivated"
     
     # Audit log
     log = models.ActivityLog(
+        tenant_id=user.tenant_id,
         user_id=current_user.id,
         action="Status Changed",
         performed_by=current_user.username,
@@ -356,7 +388,7 @@ def toggle_user_status(
 def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_manager_or_admin)
 ):
     """
     Delete a user account.
@@ -377,6 +409,7 @@ def delete_user(
         
     # Audit log
     log = models.ActivityLog(
+        tenant_id=user.tenant_id,
         user_id=current_user.id,
         action="User Deleted",
         performed_by=current_user.username,

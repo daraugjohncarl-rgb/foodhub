@@ -9,10 +9,111 @@ let currentCategoryFilter = "all";
 let cachedProducts = [];
 let cachedInventory = [];
 
+// ── POS checkout safety ──────────────────────────────────────────────────────────────────────────
+// One idempotency key per logical checkout. It is reused when the same checkout is retried (network
+// failure, timeout, double tap) and replaced as soon as the cart or payment method changes.
+let posCheckout = { key: null, signature: null, inFlight: false };
+// Customer (QR) order currently loaded into the cart. The server supplies its items and prices at sale time.
+window.currentOnlineOrder = window.currentOnlineOrder || null;
+window._customerOrderIndex = window._customerOrderIndex || {};
+const POS_DRAFT_KEY = "pos_cart_draft_v1";
+
+function posDraftKey() {
+  const u = (typeof Auth !== "undefined" && Auth.getUser) ? Auth.getUser() : null;
+  return POS_DRAFT_KEY + ":" + ((u && u.id) || "anon");
+}
+
+// The draft stores product ids and quantities only: no names, prices, tokens or payment data.
+function savePosDraft() {
+  try {
+    if (window.currentOnlineOrder || !posCart.length) {
+      sessionStorage.removeItem(posDraftKey());
+      return;
+    }
+    sessionStorage.setItem(posDraftKey(), JSON.stringify(posCart.map(i => ({ product_id: i.product_id, quantity: i.quantity }))));
+  } catch (e) { /* storage unavailable: the cart simply is not recoverable */ }
+}
+
+// The idempotency key of an unfinished walk-in checkout survives a page reload (same tab), so retrying
+// after a reload returns the original sale instead of creating a second one. The key is just a random id.
+function checkoutAttemptKey() {
+  return posDraftKey().replace(POS_DRAFT_KEY, "pos_checkout_attempt_v1");
+}
+
+function persistCheckoutAttempt() {
+  try {
+    if (posCheckout.key && !window.currentOnlineOrder) {
+      sessionStorage.setItem(checkoutAttemptKey(), JSON.stringify({ key: posCheckout.key, signature: posCheckout.signature }));
+    } else {
+      sessionStorage.removeItem(checkoutAttemptKey());
+    }
+  } catch (e) { /* storage unavailable: the key just lives in memory */ }
+}
+
+function restoreCheckoutAttempt() {
+  if (posCheckout.key || window.currentOnlineOrder) return;
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(checkoutAttemptKey()) || "null");
+    if (saved && typeof saved.key === "string" && saved.key.length <= 36 && typeof saved.signature === "string") {
+      posCheckout.key = saved.key;
+      posCheckout.signature = saved.signature;
+    }
+  } catch (e) { /* ignore a damaged entry */ }
+}
+
+// Called after the catalogue was loaded: names and prices come from the server, never from the draft.
+function restorePosDraft() {
+  if (posCart.length || window.currentOnlineOrder) return;
+  let saved = [];
+  try { saved = JSON.parse(sessionStorage.getItem(posDraftKey()) || "[]"); } catch (e) { saved = []; }
+  if (!Array.isArray(saved) || !saved.length) return;
+  let dropped = 0;
+  saved.forEach(line => {
+    const product = (cachedProducts || []).find(p => p.id === Number(line && line.product_id));
+    const qty = Math.min(100, parseInt(line && line.quantity, 10) || 0);
+    if (!product || qty < 1) { dropped++; return; }
+    posCart.push({ product_id: product.id, name: product.name, price: product.price, quantity: qty });
+  });
+  if (posCart.length && typeof Utils !== "undefined") {
+    Utils.showToast("Restored your unsaved cart" + (dropped ? ` (${dropped} unavailable item(s) removed)` : "") + ".", "info");
+  }
+}
+
+// Views that only some roles may open. Checked here as well as in the menu, so a typed or stale
+// #hash / saved view cannot open them. The server enforces the same rules on the APIs behind them.
+const VIEW_ROLE_RULES = { cash_drawer: ["manager", "admin", "super_admin"] };
+
+function currentViewRole() {
+  try {
+    const u = (typeof Auth !== "undefined" && Auth.getUser) ? Auth.getUser() : null;
+    const role = (u && u.role) || (typeof Auth !== "undefined" && Auth.getRole ? Auth.getRole() : "");
+    return String(role || "").trim().toLowerCase();
+  } catch (e) {
+    return "";
+  }
+}
+
+function canOpenView(viewId) {
+  const allowed = VIEW_ROLE_RULES[viewId];
+  return !allowed || allowed.includes(currentViewRole());
+}
+
 // Main view dispatcher
 async function renderView(viewId, container) {
   if (!container) container = document.getElementById("view-container");
   if (!container) return;
+
+  // Any navigation ends a voice session: the microphone is released and late results are ignored.
+  if (window.isVoiceListening || posVoiceRecognition) endVoiceSession(null);
+  window._voicePendingChoice = null;
+
+  if (viewId && !canOpenView(viewId)) {
+    const role = currentViewRole();
+    const navItems = (window.ROLE_NAV_CONFIG && window.ROLE_NAV_CONFIG[role === "super_admin" ? "admin" : role]) || [];
+    const fallback = navItems.find(i => canOpenView(i.id));
+    if (typeof Utils !== "undefined") Utils.showToast("That screen is available to managers and admins only.", "warning");
+    viewId = fallback ? fallback.id : "pos";
+  }
 
   if (viewId) {
     try {
@@ -157,8 +258,8 @@ async function renderView(viewId, container) {
     container.innerHTML = `
       <div class="section-card" style="padding:24px; border:1px solid rgba(239,68,68,0.35);">
         <h3 style="color:var(--danger, #ef4444); font-size:16px; font-weight:700;"><i class="fas fa-exclamation-triangle"></i> Error Loading Module</h3>
-        <p style="color:var(--text-muted, #71717a); margin:10px 0; font-size:13px;">${err.message || "Failed to communicate with backend API."}</p>
-        <button class="btn btn-outline btn-sm" onclick="renderView('${viewId}')"><i class="fas fa-redo"></i> Retry</button>
+        <p style="color:var(--text-muted, #71717a); margin:10px 0; font-size:13px;">${Utils.escapeHtml(err.message || "Failed to communicate with backend API.")}</p>
+        <button class="btn btn-outline btn-sm" onclick="renderView(${Utils.jsArg(viewId)})"><i class="fas fa-redo"></i> Retry</button>
       </div>
     `;
   }
@@ -209,7 +310,7 @@ async function renderDashboard(c) {
         <div class="stat-info">
           <h3>Cash Drawer</h3>
           <div class="stat-count" style="color:#7b1fa2;">${Utils.formatCurrency(liveDrawerCash)}</div>
-          <div class="stat-trend" style="color:var(--success, #10b981);"><i class="fas fa-cash-register"></i> ${drawerSummary.active_drawers_count || 0} active drawer(s)</div>
+          <div class="stat-trend" style="color:var(--success, #10b981);"><i class="fas fa-cash-register"></i> ${Utils.escapeHtml(drawerSummary.active_drawers_count || 0)} active drawer(s)</div>
         </div>
       </div>
       <div class="stat-card" style="cursor:pointer;" onclick="renderView('profit_loss')" title="Click to view Profit & Loss details">
@@ -217,7 +318,7 @@ async function renderDashboard(c) {
         <div class="stat-info">
           <h3>Net Operating Profit</h3>
           <div class="stat-count" style="color:${plStats.profit_loss?.is_profitable ? '#10b981' : '#ef4444'};">${Utils.formatCurrency(plStats.profit_loss?.net_profit || 0)}</div>
-          <div class="stat-trend" style="color:${plStats.profit_loss?.is_profitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${plStats.profit_loss?.profit_margin_percent || 0}% margin</div>
+          <div class="stat-trend" style="color:${plStats.profit_loss?.is_profitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${Utils.escapeHtml(plStats.profit_loss?.profit_margin_percent || 0)}% margin</div>
         </div>
       </div>
       <div class="stat-card" style="cursor:pointer;" onclick="renderView('profit_loss')" title="Click to view ${isAdmin ? 'Income Received from Manager' : 'Transfer Income to Admin'}">
@@ -244,7 +345,7 @@ async function renderDashboard(c) {
         <div class="stat-icon green"><i class="fas fa-receipt"></i></div>
         <div class="stat-info">
           <h3>Transactions Today</h3>
-          <div class="stat-count" style="color:#10b981;">${stats.total_transactions_today || 0}</div>
+          <div class="stat-count" style="color:#10b981;">${Utils.escapeHtml(stats.total_transactions_today || 0)}</div>
           <div class="stat-trend" style="color:var(--success, #10b981);"><i class="fas fa-check-circle"></i> Completed orders</div>
         </div>
       </div>
@@ -252,7 +353,7 @@ async function renderDashboard(c) {
         <div class="stat-icon orange"><i class="fas fa-boxes"></i></div>
         <div class="stat-info">
           <h3>Low Stock Alerts</h3>
-          <div class="stat-count" style="color:#f97316;">${stats.low_stock_count || 0}</div>
+          <div class="stat-count" style="color:#f97316;">${Utils.escapeHtml(stats.low_stock_count || 0)}</div>
           <div class="stat-trend" style="color:#f97316;"><i class="fas fa-exclamation-triangle"></i> Needs reorder</div>
         </div>
       </div>
@@ -275,8 +376,8 @@ async function renderDashboard(c) {
           <tbody>
             ${lowStockItems.length ? lowStockItems.map(item => `
               <tr>
-                <td><strong style="color:var(--text-main); font-size:13px;">${item.name}</strong></td>
-                <td><strong style="font-size:13px;">${item.quantity}</strong> <span style="font-size:12px; color:var(--text-muted);">${item.unit || ''}</span></td>
+                <td><strong style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(item.name)}</strong></td>
+                <td><strong style="font-size:13px;">${Utils.escapeHtml(item.quantity)}</strong> <span style="font-size:12px; color:var(--text-muted);">${Utils.escapeHtml(item.unit || '')}</span></td>
                 <td>
                   <span class="badge ${item.quantity <= 0 ? 'badge-danger' : 'badge-warning'}" style="font-size:11px; font-weight:700;">
                     ${item.quantity <= 0 ? 'Out of Stock' : 'Low Stock'}
@@ -334,7 +435,7 @@ async function renderInventory(c) {
         <div class="stat-icon gold"><i class="fas fa-boxes-stacked"></i></div>
         <div class="stat-info">
           <h3>Total Master Items</h3>
-          <div class="stat-count" style="color:#c9a227;">${cachedAnalytics.total_items}</div>
+          <div class="stat-count" style="color:#c9a227;">${Utils.escapeHtml(cachedAnalytics.total_items)}</div>
           <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-barcode"></i> Tracked SKUs</div>
         </div>
       </div>
@@ -350,15 +451,15 @@ async function renderInventory(c) {
         <div class="stat-icon green"><i class="fas fa-heart-pulse"></i></div>
         <div class="stat-info">
           <h3>Stock Health Score</h3>
-          <div class="stat-count" style="color:#10b981;">${cachedAnalytics.health_score}%</div>
-          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-check-double"></i> ${cachedAnalytics.healthy_count} Healthy SKUs</div>
+          <div class="stat-count" style="color:#10b981;">${Utils.escapeHtml(cachedAnalytics.health_score)}%</div>
+          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-check-double"></i> ${Utils.escapeHtml(cachedAnalytics.healthy_count)} Healthy SKUs</div>
         </div>
       </div>
       <div class="stat-card">
         <div class="stat-icon orange"><i class="fas fa-triangle-exclamation"></i></div>
         <div class="stat-info">
           <h3>Low Stock Warnings</h3>
-          <div class="stat-count" style="color:#f97316;">${cachedAnalytics.low_stock_count}</div>
+          <div class="stat-count" style="color:#f97316;">${Utils.escapeHtml(cachedAnalytics.low_stock_count)}</div>
           <div class="stat-trend" style="color:#f97316;"><i class="fas fa-cart-arrow-down"></i> Needs Reorder</div>
         </div>
       </div>
@@ -366,7 +467,7 @@ async function renderInventory(c) {
         <div class="stat-icon red"><i class="fas fa-circle-xmark"></i></div>
         <div class="stat-info">
           <h3>Out of Stock</h3>
-          <div class="stat-count" style="color:#ef4444;">${cachedAnalytics.out_of_stock_count}</div>
+          <div class="stat-count" style="color:#ef4444;">${Utils.escapeHtml(cachedAnalytics.out_of_stock_count)}</div>
           <div class="stat-trend" style="color:#ef4444;"><i class="fas fa-fire"></i> Critical Depletion</div>
         </div>
       </div>
@@ -395,7 +496,7 @@ async function renderInventory(c) {
       ${categories.map(cat => `
         <button class="btn ${currentInvCategory === cat ? 'btn-primary' : 'btn-outline'}" 
           style="padding:6px 14px; font-size:12px; white-space:nowrap; border-radius:20px;"
-          onclick="filterInventoryCategory('${cat}')">
+          onclick="filterInventoryCategory(${Utils.jsArg(cat)})">
           ${cat === 'ALL' ? '<i class="fas fa-layer-group"></i> All Items' : cat}
         </button>
       `).join('')}
@@ -406,7 +507,7 @@ async function renderInventory(c) {
       <div class="inv-bulk-left">
         <span class="inv-bulk-count-badge">
           <i class="fas fa-check-circle"></i>
-          <span><strong id="inv-selected-count">${selectedInventoryIds.size}</strong> selected</span>
+          <span><strong id="inv-selected-count">${Utils.escapeHtml(selectedInventoryIds.size)}</strong> selected</span>
         </span>
         <div class="inv-bulk-actions">
           <button type="button" class="inv-bulk-link" onclick="selectAllDisplayedInventory()" title="Select all items matching current view">
@@ -424,7 +525,7 @@ async function renderInventory(c) {
         </button>
         <button type="button" class="btn-bulk-delete" onclick="openBulkDeleteModal()" id="btn-bulk-delete-action">
           <i class="fas fa-trash-can"></i>
-          <span>Delete Selected (<span id="inv-delete-count">${selectedInventoryIds.size}</span>)</span>
+          <span>Delete Selected (<span id="inv-delete-count">${Utils.escapeHtml(selectedInventoryIds.size)}</span>)</span>
         </button>
       </div>
     </div>
@@ -433,7 +534,7 @@ async function renderInventory(c) {
     <div class="section-card fade-up delay-2">
       <div class="section-head">
         <h2>Inventory Master Catalog</h2>
-        <span id="inv-count-badge" style="font-size:13px; color:var(--text-muted);">${items.length} items listed</span>
+        <span id="inv-count-badge" style="font-size:13px; color:var(--text-muted);">${Utils.escapeHtml(items.length)} items listed</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -482,33 +583,33 @@ function renderInventoryRows(items) {
     const isSelected = selectedInventoryIds.has(Number(i.id));
 
     return `
-      <tr id="inv-row-${i.id}" class="${isSelected ? 'row-selected' : ''}">
+      <tr id="inv-row-${Utils.escapeHtml(i.id)}" class="${isSelected ? 'row-selected' : ''}">
         <td style="width:48px; text-align:center; padding-left:14px; padding-right:14px;">
           <input type="checkbox" 
                  class="inv-checkbox inv-item-checkbox" 
-                 id="inv-chk-${i.id}"
-                 data-id="${i.id}" 
-                 value="${i.id}" 
+                 id="inv-chk-${Utils.escapeHtml(i.id)}"
+                 data-id="${Utils.escapeHtml(i.id)}" 
+                 value="${Utils.escapeHtml(i.id)}" 
                  ${isSelected ? 'checked' : ''} 
                  onchange="toggleSelectInventoryItem(${Number(i.id)}, this.checked)"
-                 title="Select ${i.name.replace(/"/g, '&quot;')}">
+                 title="Select ${Utils.escapeHtml(i.name)}">
         </td>
         <td>
-          <strong style="color:var(--text-main); font-size:13px;">${i.name}</strong>
-          ${i.sku ? `<span style="font-size:10px; font-family:monospace; background:rgba(0,0,0,0.06); padding:2px 5px; border-radius:4px; margin-left:6px; color:var(--text-muted); font-weight:600;">${i.sku}</span>` : ''}
+          <strong style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(i.name)}</strong>
+          ${i.sku ? `<span style="font-size:10px; font-family:monospace; background:rgba(0,0,0,0.06); padding:2px 5px; border-radius:4px; margin-left:6px; color:var(--text-muted); font-weight:600;">${Utils.escapeHtml(i.sku)}</span>` : ''}
         </td>
-        <td><span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:11px; font-weight:600;">${catName}</span></td>
+        <td><span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:11px; font-weight:600;">${Utils.escapeHtml(catName)}</span></td>
         <td>
           <div style="display:inline-flex; align-items:center; gap:6px;">
             <input type="number" 
                    step="any"
-                   id="inv-stock-${i.id}" 
+                   id="inv-stock-${Utils.escapeHtml(i.id)}" 
                    class="input-field" 
                    value="${Number(i.quantity)}" 
                    style="width:90px; height:36px; padding:4px 10px; font-size:14px; font-weight:800; border-radius:18px; border:1.5px solid rgba(205,190,150,0.5); background:#fff; text-align:center; color:var(--text-main);" 
                    onchange="inlineUpdateStock(${i.id}, ${Number(i.quantity)}, this.value)"
                    title="Adjust stock quantity directly">
-            <span style="font-size:11px; color:var(--text-muted); font-weight:600;">${i.unit}</span>
+            <span style="font-size:11px; color:var(--text-muted); font-weight:600;">${Utils.escapeHtml(i.unit)}</span>
           </div>
         </td>
         <td style="background:rgba(201,162,39,0.03);">
@@ -517,15 +618,15 @@ function renderInventoryRows(items) {
             <input type="number" 
                    step="0.01" 
                    min="0"
-                   id="inv-price-${i.id}" 
+                   id="inv-price-${Utils.escapeHtml(i.id)}" 
                    class="input-field" 
-                   value="${unitPrice}" 
+                   value="${Utils.escapeHtml(unitPrice)}" 
                    style="width:95px; height:36px; padding:4px 10px; font-size:14px; font-weight:800; color:#c9a227; border-radius:18px; border:1.5px solid rgba(201,162,39,0.45); background:#fff; text-align:center;" 
                    onchange="inlineUpdatePrice(${i.id}, this.value)"
                    title="Adjust price unit directly">
           </div>
         </td>
-        <td style="background:rgba(16,185,129,0.04);"><strong id="inv-val-${i.id}" style="color:#10b981; font-size:13px; font-weight:700;">${Utils.formatCurrency(totalVal)}</strong></td>
+        <td style="background:rgba(16,185,129,0.04);"><strong id="inv-val-${Utils.escapeHtml(i.id)}" style="color:#10b981; font-size:13px; font-weight:700;">${Utils.formatCurrency(totalVal)}</strong></td>
         <td><span class="badge ${badgeClass}" style="font-size:11px; font-weight:700;">${badgeText}</span></td>
         <td style="text-align:right; white-space:nowrap;">
           <div style="display:inline-flex; align-items:center; justify-content:flex-end; gap:6px;">
@@ -533,14 +634,14 @@ function renderInventoryRows(items) {
                     style="padding:5px 9px; font-size:12px; color:#c9a227; border-color:rgba(201,162,39,0.45); background:rgba(201,162,39,0.06); border-radius:8px;" 
                     onclick="openEditInventoryModal(${i.id})" 
                     title="Edit Item" 
-                    aria-label="Edit ${i.name.replace(/"/g, '&quot;')}">
+                    aria-label="Edit ${Utils.escapeHtml(i.name)}">
               <i class="fas fa-pen"></i>
             </button>
             <button class="btn btn-outline btn-sm inv-action-btn inv-delete-btn" 
                     style="padding:5px 9px; font-size:12px; color:var(--danger, #ef4444); border-color:rgba(239,68,68,0.4); background:rgba(239,68,68,0.06); border-radius:8px;" 
-                    onclick="deleteInventoryItem(${i.id}, '${i.name.replace(/'/g, "\\'")}')" 
+                    onclick="deleteInventoryItem(${i.id}, ${Utils.jsArg(i.name)})" 
                     title="Delete Item" 
-                    aria-label="Delete ${i.name.replace(/"/g, '&quot;')}">
+                    aria-label="Delete ${Utils.escapeHtml(i.name)}">
               <i class="fas fa-trash"></i>
             </button>
           </div>
@@ -671,10 +772,10 @@ function openBulkDeleteModal() {
   const previewListHtml = selectedItems.slice(0, 10).map(item => `
     <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 10px; background:rgba(0,0,0,0.03); border-radius:6px; font-size:12px; margin-bottom:4px;">
       <div>
-        <strong style="color:var(--text-main);">${item.name}</strong>
-        <span style="color:var(--text-muted); font-size:11px; margin-left:6px;">(${item.category || 'Kitchen'})</span>
+        <strong style="color:var(--text-main);">${Utils.escapeHtml(item.name)}</strong>
+        <span style="color:var(--text-muted); font-size:11px; margin-left:6px;">(${Utils.escapeHtml(item.category || 'Kitchen')})</span>
       </div>
-      <span style="font-weight:700; color:var(--text-muted); font-size:11px;">${Number(item.quantity)} ${item.unit}</span>
+      <span style="font-weight:700; color:var(--text-muted); font-size:11px;">${Number(item.quantity)} ${Utils.escapeHtml(item.unit)}</span>
     </div>
   `).join('');
 
@@ -689,7 +790,7 @@ function openBulkDeleteModal() {
       <div style="background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.3); border-radius:8px; padding:12px 14px; margin-bottom:16px;">
         <div style="display:flex; align-items:center; gap:10px; color:#ef4444; font-weight:700; font-size:14px; margin-bottom:4px;">
           <i class="fas fa-trash-can" style="font-size:16px;"></i>
-          <span>Are you sure you want to delete ${count} inventory item(s)?</span>
+          <span>Are you sure you want to delete ${Utils.escapeHtml(count)} inventory item(s)?</span>
         </div>
         <div style="font-size:12px; color:var(--text-main); line-height:1.5;">
           This will permanently remove the selected records from the inventory master catalog and recalculate stock asset valuation. This action cannot be undone.
@@ -698,11 +799,11 @@ function openBulkDeleteModal() {
 
       <div style="margin-bottom:12px;">
         <label style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:6px;">
-          Selected Records Preview (${count} total):
+          Selected Records Preview (${Utils.escapeHtml(count)} total):
         </label>
         <div style="max-height:160px; overflow-y:auto; border:1px solid rgba(205,190,150,0.35); border-radius:8px; padding:6px; background:#fff;">
           ${previewListHtml}
-          ${overflowText}
+          ${Utils.escapeHtml(overflowText)}
         </div>
       </div>
 
@@ -713,7 +814,7 @@ function openBulkDeleteModal() {
           Cancel
         </button>
         <button type="button" id="btn-confirm-bulk-delete" class="btn btn-danger" onclick="executeBulkDeleteInventory()" style="display:inline-flex; align-items:center; gap:8px;">
-          <i class="fas fa-trash-can"></i> Confirm Delete (${count})
+          <i class="fas fa-trash-can"></i> Confirm Delete (${Utils.escapeHtml(count)})
         </button>
       </div>
     </div>
@@ -765,7 +866,7 @@ async function executeBulkDeleteInventory() {
   } catch (err) {
     if (confirmBtn) {
       confirmBtn.disabled = false;
-      confirmBtn.innerHTML = `<i class="fas fa-trash-can"></i> Confirm Delete (${itemIds.length})`;
+      confirmBtn.innerHTML = `<i class="fas fa-trash-can"></i> Confirm Delete (${Utils.escapeHtml(itemIds.length)})`;
     }
     if (errBox) {
       errBox.textContent = err.message;
@@ -877,12 +978,12 @@ function openImportMasterlistModal() {
                 <span style="width:28px; height:28px; border-radius:6px; background:rgba(201,162,39,0.12); display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
                   <i class="fas ${c.icon}" style="color:#c9a227; font-size:13px;"></i>
                 </span>
-                ${c.name}
+                ${Utils.escapeHtml(c.name)}
               </div>
-              <div style="font-size:11px; color:var(--text-muted); margin-top:6px; line-height:1.4;">${c.desc}</div>
+              <div style="font-size:11px; color:var(--text-muted); margin-top:6px; line-height:1.4;">${Utils.escapeHtml(c.desc)}</div>
             </div>
-            <button class="btn btn-outline btn-sm" style="align-self:flex-start; font-size:11px; padding:4px 10px; border-radius:6px; margin-top:auto;" onclick="submitImportMasterlist('${c.name}')">
-              <i class="fas fa-file-import"></i> Import ${c.name}
+            <button class="btn btn-outline btn-sm" style="align-self:flex-start; font-size:11px; padding:4px 10px; border-radius:6px; margin-top:auto;" onclick="submitImportMasterlist(${Utils.jsArg(c.name)})">
+              <i class="fas fa-file-import"></i> Import ${Utils.escapeHtml(c.name)}
             </button>
           </div>
         `).join('')}
@@ -899,7 +1000,7 @@ function openImportMasterlistModal() {
         <div class="input-group">
           <label style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Department Category</label>
           <select id="custom-import-cat" class="input-field" style="width:100%;">
-            ${categories.map(c => `<option value="${c.name}">${c.name}</option>`).join('')}
+            ${categories.map(c => `<option value="${Utils.escapeHtml(c.name)}">${Utils.escapeHtml(c.name)}</option>`).join('')}
           </select>
         </div>
         <div class="input-group">
@@ -1047,7 +1148,7 @@ async function handleMasterlistFileUpload(input) {
 
   const infoBox = document.getElementById("file-upload-status");
   if (infoBox) {
-    infoBox.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Reading & analyzing <strong>${file.name}</strong>...`;
+    infoBox.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Reading & analyzing <strong>${Utils.escapeHtml(file.name)}</strong>...`;
     infoBox.style.display = "block";
   }
 
@@ -1070,17 +1171,17 @@ async function handleMasterlistFileUpload(input) {
     const previewArea = document.getElementById("file-parsed-preview");
     if (deptSelect && previewArea) {
       deptSelect.innerHTML = `
-        <option value="ALL">All Departments (${data.total_items} items total)</option>
-        ${depts.map(d => `<option value="${d}">${d} (${data.departments[d].length} items)</option>`).join('')}
+        <option value="ALL">All Departments (${Utils.escapeHtml(data.total_items)} items total)</option>
+        ${depts.map(d => `<option value="${Utils.escapeHtml(d)}">${Utils.escapeHtml(d)} (${Utils.escapeHtml(data.departments[d].length)} items)</option>`).join('')}
       `;
       previewArea.style.display = "block";
     }
     if (infoBox) {
-      infoBox.innerHTML = `<i class="fas fa-check-circle" style="color:#10b981;"></i> <strong>${file.name}</strong> loaded: <strong>${data.total_items} items</strong> across <strong>${depts.length} departments</strong> found in file. Select a department above or import all.`;
+      infoBox.innerHTML = `<i class="fas fa-check-circle" style="color:#10b981;"></i> <strong>${Utils.escapeHtml(file.name)}</strong> loaded: <strong>${Utils.escapeHtml(data.total_items)} items</strong> across <strong>${Utils.escapeHtml(depts.length)} departments</strong> found in file. Select a department above or import all.`;
     }
   } catch (err) {
     if (infoBox) {
-      infoBox.innerHTML = `<span style="color:var(--danger);"><i class="fas fa-circle-exclamation"></i> ${err.message}</span>`;
+      infoBox.innerHTML = `<span style="color:var(--danger);"><i class="fas fa-circle-exclamation"></i> ${Utils.escapeHtml(err.message)}</span>`;
     }
   }
 }
@@ -1144,15 +1245,15 @@ function openUrgentRestockModal() {
     <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; margin-bottom:18px;">
       <div style="background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25); border-radius:10px; padding:12px; text-align:center;">
         <div style="font-size:11px; font-weight:700; color:#10b981;">HEALTHY ITEMS</div>
-        <div style="font-size:20px; font-weight:800; color:#10b981;">${cachedAnalytics.healthy_count}</div>
+        <div style="font-size:20px; font-weight:800; color:#10b981;">${Utils.escapeHtml(cachedAnalytics.healthy_count)}</div>
       </div>
       <div style="background:rgba(249,115,22,0.08); border:1px solid rgba(249,115,22,0.25); border-radius:10px; padding:12px; text-align:center;">
         <div style="font-size:11px; font-weight:700; color:#f97316;">LOW STOCK</div>
-        <div style="font-size:20px; font-weight:800; color:#f97316;">${cachedAnalytics.low_stock_count}</div>
+        <div style="font-size:20px; font-weight:800; color:#f97316;">${Utils.escapeHtml(cachedAnalytics.low_stock_count)}</div>
       </div>
       <div style="background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25); border-radius:10px; padding:12px; text-align:center;">
         <div style="font-size:11px; font-weight:700; color:#ef4444;">OUT OF STOCK</div>
-        <div style="font-size:20px; font-weight:800; color:#ef4444;">${cachedAnalytics.out_of_stock_count}</div>
+        <div style="font-size:20px; font-weight:800; color:#ef4444;">${Utils.escapeHtml(cachedAnalytics.out_of_stock_count)}</div>
       </div>
     </div>
 
@@ -1172,13 +1273,13 @@ function openUrgentRestockModal() {
         <tbody>
           ${list.map(u => `
             <tr>
-              <td style="padding:8px 12px;"><strong>${u.name}</strong></td>
-              <td style="padding:8px 12px; color:var(--text-muted);">${u.category}</td>
-              <td style="padding:8px 12px; color:${u.quantity <= 0 ? '#ef4444' : '#f97316'}; font-weight:700;">${u.quantity} ${u.unit}</td>
-              <td style="padding:8px 12px;">${u.min_stock} ${u.unit}</td>
-              <td style="padding:8px 12px; color:#ef4444; font-weight:700;">-${u.deficit} ${u.unit}</td>
+              <td style="padding:8px 12px;"><strong>${Utils.escapeHtml(u.name)}</strong></td>
+              <td style="padding:8px 12px; color:var(--text-muted);">${Utils.escapeHtml(u.category)}</td>
+              <td style="padding:8px 12px; color:${u.quantity <= 0 ? '#ef4444' : '#f97316'}; font-weight:700;">${Utils.escapeHtml(u.quantity)} ${Utils.escapeHtml(u.unit)}</td>
+              <td style="padding:8px 12px;">${Utils.escapeHtml(u.min_stock)} ${Utils.escapeHtml(u.unit)}</td>
+              <td style="padding:8px 12px; color:#ef4444; font-weight:700;">-${Utils.escapeHtml(u.deficit)} ${Utils.escapeHtml(u.unit)}</td>
               <td style="padding:8px 12px; text-align:right;">
-                <button class="btn btn-primary btn-sm" style="padding:2px 8px; font-size:11px;" onclick="openStockAdjustModal(${u.id}, '${u.name.replace(/'/g, "\\'")}', ${u.quantity})">Restock</button>
+                <button class="btn btn-primary btn-sm" style="padding:2px 8px; font-size:11px;" onclick="openStockAdjustModal(${u.id}, ${Utils.jsArg(u.name)}, ${u.quantity})">Restock</button>
               </td>
             </tr>
           `).join('')}
@@ -1292,19 +1393,19 @@ function openEditInventoryModal(itemId) {
     <form id="form-edit-inv" onsubmit="event.preventDefault(); submitEditInventory(${item.id});">
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Item Name <span style="color:var(--danger);">*</span></label>
-        <input id="edit-inv-name" class="input-field" required value="${(item.name || '').replace(/"/g, '&quot;')}" placeholder="e.g. Special Chili Garlic Oil" style="width:100%;">
+        <input id="edit-inv-name" class="input-field" required value="${Utils.escapeHtml(item.name)}" placeholder="e.g. Special Chili Garlic Oil" style="width:100%;">
       </div>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
         <div class="input-group">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Department / Category <span style="color:var(--danger);">*</span></label>
           <select id="edit-inv-cat" class="input-field" style="width:100%;">
-            ${depts.map(cat => `<option value="${cat}" ${(itemCategory.toLowerCase() === cat.toLowerCase()) ? 'selected' : ''}>${cat}</option>`).join('')}
-            ${hasCustomDept ? `<option value="${itemCategory}" selected>${itemCategory}</option>` : ''}
+            ${depts.map(cat => `<option value="${Utils.escapeHtml(cat)}" ${(itemCategory.toLowerCase() === cat.toLowerCase()) ? 'selected' : ''}>${Utils.escapeHtml(cat)}</option>`).join('')}
+            ${hasCustomDept ? `<option value="${Utils.escapeHtml(itemCategory)}" selected>${Utils.escapeHtml(itemCategory)}</option>` : ''}
           </select>
         </div>
         <div class="input-group">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">SKU (Optional)</label>
-          <input id="edit-inv-sku" class="input-field" value="${(item.sku || '').replace(/"/g, '&quot;')}" placeholder="e.g. KIT-0099" style="width:100%;">
+          <input id="edit-inv-sku" class="input-field" value="${Utils.escapeHtml(item.sku)}" placeholder="e.g. KIT-0099" style="width:100%;">
         </div>
       </div>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
@@ -1314,7 +1415,7 @@ function openEditInventoryModal(itemId) {
         </div>
         <div class="input-group">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Unit of Measure <span style="color:var(--danger);">*</span></label>
-          <input id="edit-inv-unit" class="input-field" required value="${(item.unit || '').replace(/"/g, '&quot;')}" placeholder="kg, L, pcs, packs, cans" style="width:100%;">
+          <input id="edit-inv-unit" class="input-field" required value="${Utils.escapeHtml(item.unit)}" placeholder="kg, L, pcs, packs, cans" style="width:100%;">
         </div>
       </div>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
@@ -1567,7 +1668,7 @@ async function renderProducts(c) {
         </div>
         <select id="prod-cat-filter" class="input-field" style="max-width:180px;" onchange="filterProductsList()">
           <option value="all">All Categories</option>
-          ${categories.map(cat => `<option value="${cat.id}">${cat.name}</option>`).join('')}
+          ${categories.map(cat => `<option value="${Utils.escapeHtml(cat.id)}">${Utils.escapeHtml(cat.name)}</option>`).join('')}
         </select>
       </div>
       <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
@@ -1586,7 +1687,7 @@ async function renderProducts(c) {
     <div class="section-card">
       <div class="section-head">
         <h2>Menu Products Catalog</h2>
-        <span style="font-size:13px; color:var(--text-muted);">${products.length} products listed</span>
+        <span style="font-size:13px; color:var(--text-muted);">${Utils.escapeHtml(products.length)} products listed</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -1618,7 +1719,7 @@ function renderProductRows(products) {
     const catName = getProductCategoryName(p);
     const photoHtml = p.image_url ? `
       <div style="width:40px; height:40px; border-radius:8px; overflow:hidden; border:1px solid rgba(205,190,150,0.35); background:#ffffff; display:flex; align-items:center; justify-content:center; margin:0 auto; box-shadow:0 2px 5px rgba(0,0,0,0.04);">
-        <img src="${p.image_url}" alt="${p.name}" style="width:100%; height:100%; object-fit:cover;" onerror="this.onerror=null; this.parentElement.innerHTML='<i class=\\'fas fa-utensils\\' style=\\'color:#cbd5e1; font-size:16px;\\'></i>';">
+        <img src="${Utils.escapeHtml(p.image_url)}" alt="${Utils.escapeHtml(p.name)}" style="width:100%; height:100%; object-fit:cover;" onerror="this.onerror=null; this.parentElement.innerHTML='<i class=\\'fas fa-utensils\\' style=\\'color:#cbd5e1; font-size:16px;\\'></i>';">
       </div>
     ` : `
       <div style="width:40px; height:40px; border-radius:8px; border:1px dashed rgba(205,190,150,0.45); background:rgba(0,0,0,0.02); display:flex; align-items:center; justify-content:center; color:var(--text-muted); margin:0 auto;" title="No picture uploaded">
@@ -1630,12 +1731,12 @@ function renderProductRows(products) {
     <tr>
       <td style="text-align:center;">${photoHtml}</td>
       <td>
-        <span style="background:rgba(201,162,39,0.12); color:#c9a227; font-weight:700; font-family:monospace; padding:3px 8px; border-radius:6px; font-size:12px; letter-spacing:0.5px;">${p.sku || '—'}</span>
+        <span style="background:rgba(201,162,39,0.12); color:#c9a227; font-weight:700; font-family:monospace; padding:3px 8px; border-radius:6px; font-size:12px; letter-spacing:0.5px;">${Utils.escapeHtml(p.sku || '—')}</span>
       </td>
-      <td><strong style="color:var(--text-main); font-size:13px;">${p.name}</strong></td>
+      <td><strong style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(p.name)}</strong></td>
       <td>
         <span class="badge" style="background:rgba(205,190,150,0.18); color:var(--text-main); font-size:11px; font-weight:600;">
-          ${catName}
+          ${Utils.escapeHtml(catName)}
         </span>
       </td>
       <td><strong style="color:#c9a227; font-size:13px;">${Utils.formatCurrency(p.price)}</strong></td>
@@ -1648,7 +1749,7 @@ function renderProductRows(products) {
         <button class="btn btn-outline btn-sm" onclick="openEditProductModal(${p.id})" style="font-size:11px; padding:3px 8px; display:inline-flex; align-items:center; gap:4px; cursor:pointer; margin-right:4px;" title="Edit Product">
           <i class="fas fa-edit"></i> Edit
         </button>
-        <button class="btn btn-danger btn-sm" onclick="deleteProductPrompt(${p.id}, '${(p.name || '').replace(/'/g, "\\'")}')" style="font-size:11px; padding:3px 8px; display:inline-flex; align-items:center; gap:4px; cursor:pointer; background:#dc3545; border-color:#dc3545; color:#fff;" title="Delete Product">
+        <button class="btn btn-danger btn-sm" onclick="deleteProductPrompt(${p.id}, ${Utils.jsArg(p.name)})" style="font-size:11px; padding:3px 8px; display:inline-flex; align-items:center; gap:4px; cursor:pointer; background:#dc3545; border-color:#dc3545; color:#fff;" title="Delete Product">
           <i class="fas fa-trash"></i> Delete
         </button>
       </td>
@@ -1686,7 +1787,7 @@ window.handleProductImageSelect = async function(inputEl, previewId, urlInputId)
   const reader = new FileReader();
   reader.onload = function(e) {
     if (previewEl) {
-      previewEl.innerHTML = `<img src="${e.target.result}" style="width:100%; height:100%; object-fit:cover;">`;
+      previewEl.innerHTML = `<img src="${Utils.escapeHtml(e.target.result)}" style="width:100%; height:100%; object-fit:cover;">`;
     }
     if (removeBtn) removeBtn.style.display = 'inline-flex';
   };
@@ -1746,7 +1847,7 @@ function openAddProductModal() {
         </div>
         <select id="prod-category" class="input-field" required style="width:100%;">
           <option value="">-- Select Category --</option>
-          ${cats.map(cat => `<option value="${cat.id}">${cat.name}</option>`).join('')}
+          ${cats.map(cat => `<option value="${Utils.escapeHtml(cat.id)}">${Utils.escapeHtml(cat.name)}</option>`).join('')}
         </select>
       </div>
 
@@ -1872,22 +1973,22 @@ function openEditProductModal(id) {
         </div>
         <select id="edit-prod-category" class="input-field" style="width:100%;">
           <option value="">-- No Category --</option>
-          ${cats.map(cat => `<option value="${cat.id}" ${p.category_id === cat.id ? 'selected' : ''}>${cat.name}</option>`).join('')}
+          ${cats.map(cat => `<option value="${Utils.escapeHtml(cat.id)}" ${p.category_id === cat.id ? 'selected' : ''}>${Utils.escapeHtml(cat.name)}</option>`).join('')}
         </select>
       </div>
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Product Code <span style="color:var(--danger);">*</span></label>
-        <input id="edit-prod-sku" class="input-field" required value="${p.sku || ''}" placeholder="e.g. C1, B1, Y1" style="width:100%;">
+        <input id="edit-prod-sku" class="input-field" required value="${Utils.escapeHtml(p.sku || '')}" placeholder="e.g. C1, B1, Y1" style="width:100%;">
         <small style="font-size:11px; color:var(--text-muted); margin-top:3px; display:block;">Quick menu order code (like Jollibee item codes)</small>
       </div>
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Product Name <span style="color:var(--danger);">*</span></label>
-        <input id="edit-prod-name" class="input-field" required value="${p.name}" style="width:100%;">
+        <input id="edit-prod-name" class="input-field" required value="${Utils.escapeHtml(p.name)}" style="width:100%;">
       </div>
       <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-bottom:14px;">
         <div class="input-group">
           <label style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Price (₱) <span style="color:var(--danger);">*</span></label>
-          <input type="number" step="0.01" id="edit-prod-price" class="input-field" required value="${p.price}" style="width:100%;">
+          <input type="number" step="0.01" id="edit-prod-price" class="input-field" required value="${Utils.escapeHtml(p.price)}" style="width:100%;">
         </div>
         <div class="input-group">
           <label style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Status</label>
@@ -1916,7 +2017,7 @@ function openEditProductModal(id) {
         <div style="display:flex; align-items:center; gap:14px; padding:12px 14px; border:1px dashed rgba(205,190,150,0.5); border-radius:10px; background:rgba(0,0,0,0.01);">
           <!-- Live Preview Box -->
           <div id="edit-prod-img-preview" style="width:68px; height:68px; border-radius:10px; border:1px solid rgba(205,190,150,0.3); background:#ffffff; display:flex; align-items:center; justify-content:center; overflow:hidden; flex-shrink:0; box-shadow:0 2px 6px rgba(0,0,0,0.04);">
-            ${p.image_url ? `<img src="${p.image_url}" style="width:100%; height:100%; object-fit:cover;">` : `<i class="fas fa-camera" style="font-size:26px; color:rgba(205,190,150,0.5);"></i>`}
+            ${p.image_url ? `<img src="${Utils.escapeHtml(p.image_url)}" style="width:100%; height:100%; object-fit:cover;">` : `<i class="fas fa-camera" style="font-size:26px; color:rgba(205,190,150,0.5);"></i>`}
           </div>
 
           <div style="flex:1;">
@@ -1929,7 +2030,7 @@ function openEditProductModal(id) {
                 <i class="fas fa-trash"></i> Remove
               </button>
             </div>
-            <input type="hidden" id="edit-prod-img-url" value="${p.image_url || ''}">
+            <input type="hidden" id="edit-prod-img-url" value="${Utils.escapeHtml(p.image_url || '')}">
             <small style="font-size:11px; color:var(--text-muted); margin-top:5px; display:block;">Shows on the POS Cashier and customer menu QR ordering.</small>
           </div>
         </div>
@@ -1937,7 +2038,7 @@ function openEditProductModal(id) {
     </form>
   `, `
     <div style="display:flex; justify-content:space-between; align-items:center; width:100%; gap:12px;">
-      <button type="button" class="btn btn-danger" onclick="deleteProductPrompt(${p.id}, '${(p.name || '').replace(/'/g, "\\'")}')" style="background:#dc3545; border-color:#dc3545; color:#fff; display:inline-flex; align-items:center; gap:6px; cursor:pointer;">
+      <button type="button" class="btn btn-danger" onclick="deleteProductPrompt(${p.id}, ${Utils.jsArg(p.name)})" style="background:#dc3545; border-color:#dc3545; color:#fff; display:inline-flex; align-items:center; gap:6px; cursor:pointer;">
         <i class="fas fa-trash"></i> Delete Product
       </button>
       <button class="btn btn-primary" onclick="submitEditProduct(${p.id})" style="display:inline-flex; align-items:center; gap:6px; cursor:pointer;">
@@ -2028,17 +2129,17 @@ async function openCategoriesModal() {
   const catRows = categories.length ? categories.map(cat => {
     const pCount = countMap[cat.id] || 0;
     return `
-      <tr id="cat-row-${cat.id}">
-        <td><strong style="color:var(--text-main); font-size:13px;">${cat.name}</strong></td>
-        <td style="color:var(--text-muted); font-size:12px;">${cat.description || '—'}</td>
+      <tr id="cat-row-${Utils.escapeHtml(cat.id)}">
+        <td><strong style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(cat.name)}</strong></td>
+        <td style="color:var(--text-muted); font-size:12px;">${Utils.escapeHtml(cat.description || '—')}</td>
         <td style="text-align:center;">
-          <span class="badge" style="background:rgba(205,190,150,0.2); font-size:11px; font-weight:700;">${pCount} items</span>
+          <span class="badge" style="background:rgba(205,190,150,0.2); font-size:11px; font-weight:700;">${Utils.escapeHtml(pCount)} items</span>
         </td>
         <td style="text-align:right; white-space:nowrap;">
           <button class="btn btn-outline btn-sm" onclick="openEditCategoryModal(${cat.id})" style="font-size:11px; padding:3px 8px; margin-right:4px;" title="Edit Category">
             <i class="fas fa-edit"></i> Edit
           </button>
-          <button class="btn btn-danger btn-sm" onclick="deleteCategoryPrompt(${cat.id}, '${(cat.name || '').replace(/'/g, "\\'")}')" style="font-size:11px; padding:3px 8px; background:#dc3545; border-color:#dc3545; color:#fff;" title="Delete Category">
+          <button class="btn btn-danger btn-sm" onclick="deleteCategoryPrompt(${cat.id}, ${Utils.jsArg(cat.name)})" style="font-size:11px; padding:3px 8px; background:#dc3545; border-color:#dc3545; color:#fff;" title="Delete Category">
             <i class="fas fa-trash"></i>
           </button>
         </td>
@@ -2068,7 +2169,7 @@ async function openCategoriesModal() {
 
     <div class="section-card" style="margin:0; box-shadow:none; border:1px solid rgba(205,190,150,0.25);">
       <div class="section-head" style="padding:12px 16px;">
-        <h4 style="margin:0; font-size:13px;">Existing Categories (${categories.length})</h4>
+        <h4 style="margin:0; font-size:13px;">Existing Categories (${Utils.escapeHtml(categories.length)})</h4>
       </div>
       <div class="table-wrap" style="max-height:300px; overflow-y:auto;">
         <table>
@@ -2126,15 +2227,15 @@ function openEditCategoryModal(catId) {
   const cat = (window.cachedCategories || []).find(c => c.id === catId);
   if (!cat) return;
 
-  Utils.openModal(`Edit Category: ${cat.name}`, `
+  Utils.openModal(`Edit Category: ${Utils.escapeHtml(cat.name)}`, `
     <form id="form-edit-cat" onsubmit="event.preventDefault(); submitEditCategory(${cat.id});">
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Category Name <span style="color:var(--danger);">*</span></label>
-        <input type="text" id="edit-cat-name" class="input-field" required value="${cat.name}" style="width:100%;">
+        <input type="text" id="edit-cat-name" class="input-field" required value="${Utils.escapeHtml(cat.name)}" style="width:100%;">
       </div>
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Description</label>
-        <input type="text" id="edit-cat-desc" class="input-field" value="${cat.description || ''}" placeholder="Optional description" style="width:100%;">
+        <input type="text" id="edit-cat-desc" class="input-field" value="${Utils.escapeHtml(cat.description || '')}" placeholder="Optional description" style="width:100%;">
       </div>
     </form>
   `, `
@@ -2285,14 +2386,14 @@ async function openImportProductsModal() {
 
   const presetCards = presets.map((item, idx) => `
     <div style="display:flex; align-items:center; gap:12px; padding:10px; border-radius:8px; border:1px solid rgba(205,190,150,0.25); background:rgba(255,255,255,0.7);">
-      <input type="checkbox" id="preset-chk-${idx}" class="preset-select-chk" value="${idx}" checked style="width:18px; height:18px; cursor:pointer;">
+      <input type="checkbox" id="preset-chk-${Utils.escapeHtml(idx)}" class="preset-select-chk" value="${Utils.escapeHtml(idx)}" checked style="width:18px; height:18px; cursor:pointer;">
       <div style="width:44px; height:44px; border-radius:8px; overflow:hidden; border:1px solid rgba(205,190,150,0.3); background:#fff; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
-        <img src="${item.image_url}" alt="${item.name}" style="width:100%; height:100%; object-fit:cover;" onerror="this.onerror=null; this.parentElement.innerHTML='<i class=\\'fas fa-utensils\\' style=\\'color:#cbd5e1; font-size:18px;\\'></i>';">
+        <img src="${Utils.escapeHtml(item.image_url)}" alt="${Utils.escapeHtml(item.name)}" style="width:100%; height:100%; object-fit:cover;" onerror="this.onerror=null; this.parentElement.innerHTML='<i class=\\'fas fa-utensils\\' style=\\'color:#cbd5e1; font-size:18px;\\'></i>';">
       </div>
       <div style="flex:1; min-width:0;">
-        <strong style="font-size:12px; color:var(--text-main); display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${item.name}</strong>
+        <strong style="font-size:12px; color:var(--text-main); display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${Utils.escapeHtml(item.name)}</strong>
         <div style="font-size:11px; color:var(--text-muted); display:flex; gap:8px;">
-          <span>${item.category_name}</span>
+          <span>${Utils.escapeHtml(item.category_name)}</span>
           <span>•</span>
           <span style="color:#c9a227; font-weight:700;">₱${Number(item.price).toFixed(2)}</span>
         </div>
@@ -2307,7 +2408,7 @@ async function openImportProductsModal() {
         <i class="fas fa-images"></i> Upload Image Files (Auto Name from Image)
       </button>
       <button id="tab-import-preset" class="btn btn-outline btn-sm" onclick="switchProdImportTab('preset')" style="font-size:12px;">
-        <i class="fas fa-book-open"></i> Preset Menu Library (${presets.length} Items)
+        <i class="fas fa-book-open"></i> Preset Menu Library (${Utils.escapeHtml(presets.length)} Items)
       </button>
       <button id="tab-import-text" class="btn btn-outline btn-sm" onclick="switchProdImportTab('text')" style="font-size:12px;">
         <i class="fas fa-file-lines"></i> Paste Names / CSV List
@@ -2485,23 +2586,23 @@ function renderPendingImagesTable() {
       <tr>
         <td style="text-align:center;">
           <div style="width:40px; height:40px; border-radius:6px; overflow:hidden; border:1px solid rgba(205,190,150,0.3); margin:0 auto; background:#fff;">
-            <img src="${item.previewUrl}" style="width:100%; height:100%; object-fit:cover;">
+            <img src="${Utils.escapeHtml(item.previewUrl)}" style="width:100%; height:100%; object-fit:cover;">
           </div>
         </td>
         <td>
-          <input type="text" class="input-field" value="${item.sku}" style="height:32px; font-size:12px; font-family:monospace; font-weight:700; width:100%;" onchange="window.pendingImportImages[${idx}].sku = this.value.trim()">
+          <input type="text" class="input-field" value="${Utils.escapeHtml(item.sku)}" style="height:32px; font-size:12px; font-family:monospace; font-weight:700; width:100%;" onchange="window.pendingImportImages[${idx}].sku = this.value.trim()">
         </td>
         <td>
-          <input type="text" class="input-field" value="${item.name}" style="height:32px; font-size:12px; font-weight:600; width:100%;" onchange="window.pendingImportImages[${idx}].name = this.value.trim()">
+          <input type="text" class="input-field" value="${Utils.escapeHtml(item.name)}" style="height:32px; font-size:12px; font-weight:600; width:100%;" onchange="window.pendingImportImages[${idx}].name = this.value.trim()">
         </td>
         <td>
           <select class="input-field batch-row-cat" style="height:32px; font-size:12px; width:100%;" onchange="window.pendingImportImages[${idx}].category_id = this.value">
             <option value="">-- No Category --</option>
-            ${cats.map(c => `<option value="${c.id}" ${item.category_id == c.id ? 'selected' : ''}>${c.name}</option>`).join('')}
+            ${cats.map(c => `<option value="${Utils.escapeHtml(c.id)}" ${item.category_id == c.id ? 'selected' : ''}>${Utils.escapeHtml(c.name)}</option>`).join('')}
           </select>
         </td>
         <td>
-          <input type="number" step="0.01" class="input-field batch-row-price" value="${item.price}" style="height:32px; font-size:12px; width:100%; font-weight:700; color:#c9a227;" onchange="window.pendingImportImages[${idx}].price = parseFloat(this.value) || 0">
+          <input type="number" step="0.01" class="input-field batch-row-price" value="${Utils.escapeHtml(item.price)}" style="height:32px; font-size:12px; width:100%; font-weight:700; color:#c9a227;" onchange="window.pendingImportImages[${idx}].price = parseFloat(this.value) || 0">
         </td>
         <td style="text-align:center;">
           <button type="button" class="btn-icon" onclick="removePendingImportImage(${idx})" style="color:#ef4444; border:none; background:transparent; cursor:pointer;" title="Remove">
@@ -2544,7 +2645,7 @@ async function submitImportImageProducts() {
   const btn = document.getElementById("btn-submit-import-images");
   if (btn) {
     btn.disabled = true;
-    btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Uploading & Importing (${items.length})...`;
+    btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Uploading & Importing (${Utils.escapeHtml(items.length)})...`;
   }
 
   try {
@@ -2758,8 +2859,7 @@ async function renderPOS(c) {
   const categories = await catRes.json();
   const drawerData = await drawerRes.json();
   const currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
-  const myShift = (drawerData.shifts || []).find(s => s.status === 'open' && (currentUser ? s.cashier_id === currentUser.id : true))
-               || (drawerData.shifts || []).find(s => s.status === 'open');
+  const myShift = (drawerData.shifts || []).find(s => s.status === 'open' && !!currentUser && s.cashier_id === currentUser.id);   // own drawer only, never another person's
   const posDrawerCash = myShift ? myShift.expected_cash : 0;
   const posOrdersTotal = myShift ? myShift.total_sales : (drawerData.today_total_orders_amount || 0);
 
@@ -2771,6 +2871,8 @@ async function renderPOS(c) {
   const catMap = {};
   categories.forEach(cat => { catMap[cat.id] = cat.name; });
   window.cachedCategoryMap = catMap;
+  restorePosDraft();
+  restoreCheckoutAttempt();
 
   if (!window._posDrawerListenerAttached) {
     window._posDrawerListenerAttached = true;
@@ -2781,8 +2883,7 @@ async function renderPOS(c) {
           if (res.ok) {
             const dData = await res.json();
             const cUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
-            const myS = (dData.shifts || []).find(s => s.status === 'open' && (cUser ? s.cashier_id === cUser.id : true))
-                     || (dData.shifts || []).find(s => s.status === 'open');
+            const myS = (dData.shifts || []).find(s => s.status === 'open' && !!cUser && s.cashier_id === cUser.id);   // own drawer only, never another person's
             const dCashEl = document.getElementById("pos-cash-in-drawer-display");
             const dOrdEl = document.getElementById("pos-complete-orders-display");
             if (dCashEl) dCashEl.textContent = Utils.formatCurrency(myS ? myS.expected_cash : 0);
@@ -2903,14 +3004,14 @@ async function renderPOS(c) {
               <div style="width:32px; height:32px; border-radius:8px; background:rgba(201,162,39,0.1); color:#c9a227; display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0;"><i class="fas fa-box"></i></div>
               <div style="min-width:0;">
                 <div style="font-size:9px; color:var(--text-muted); font-weight:600; text-transform:uppercase; line-height:1.1;">Total Items</div>
-                <div style="font-size:16px; font-weight:800; color:var(--text-main); line-height:1.1;">${products.length}</div>
+                <div style="font-size:16px; font-weight:800; color:var(--text-main); line-height:1.1;">${Utils.escapeHtml(products.length)}</div>
               </div>
             </div>
             <div class="stat-card" style="padding:8px 12px; display:flex; align-items:center; gap:10px; background:#ffffff; border-radius:10px; border:1px solid rgba(205,190,150,0.3);">
               <div style="width:32px; height:32px; border-radius:8px; background:rgba(16,185,129,0.1); color:#10b981; display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0;"><i class="fas fa-tags"></i></div>
               <div style="min-width:0;">
                 <div style="font-size:9px; color:var(--text-muted); font-weight:600; text-transform:uppercase; line-height:1.1;">Categories</div>
-                <div style="font-size:16px; font-weight:800; color:var(--text-main); line-height:1.1;">${categories.length}</div>
+                <div style="font-size:16px; font-weight:800; color:var(--text-main); line-height:1.1;">${Utils.escapeHtml(categories.length)}</div>
               </div>
             </div>
 
@@ -2927,7 +3028,7 @@ async function renderPOS(c) {
           <!-- CATEGORIES HORIZONTAL SCROLL -->
           <div class="pos-categories" id="pos-cat-bar" style="display:flex; gap:6px; overflow-x:auto; padding-bottom:6px; margin-bottom:8px;">
             <button class="cat-pill active-cat" onclick="selectPOSCategory('all', this)" style="padding:5px 12px; font-size:11px; border-radius:8px;">All Items</button>
-            ${categories.map(cat => `<button class="cat-pill" onclick="selectPOSCategory(${cat.id}, this)" style="padding:5px 12px; font-size:11px; border-radius:8px;">${cat.name}</button>`).join('')}
+            ${categories.map(cat => `<button class="cat-pill" onclick="selectPOSCategory(${cat.id}, this)" style="padding:5px 12px; font-size:11px; border-radius:8px;">${Utils.escapeHtml(cat.name)}</button>`).join('')}
           </div>
         </div>
 
@@ -2942,8 +3043,10 @@ async function renderPOS(c) {
         
         <div style="padding:10px 14px; border-bottom:1px solid rgba(205,190,150,0.2); display:flex; justify-content:space-between; align-items:center; background:#faf8f3;">
           <h2 style="font-size:13px; font-weight:800; color:var(--text-main); margin:0;">Current Cart</h2>
-          <button class="btn btn-outline btn-sm" onclick="clearCart()" style="font-size:11px; padding:2px 8px; border-radius:6px; color:var(--danger); border-color:rgba(239,68,68,0.2); background:rgba(239,68,68,0.05);">Clear All</button>
+          <button class="btn btn-outline btn-sm" onclick="requestClearCart()" style="font-size:11px; padding:2px 8px; border-radius:6px; color:var(--danger); border-color:rgba(239,68,68,0.2); background:rgba(239,68,68,0.05);">Clear All</button>
         </div>
+
+        <div id="pos-online-banner" style="display:none;"></div>
 
         <div class="cart-items" id="cart-items-container" style="flex:1; overflow-y:auto; padding:0;">
           ${renderCartItems()}
@@ -2977,8 +3080,9 @@ async function renderPOS(c) {
     </div>
   `;
   
-  window.currentOnlineOrderId = null;
+  window.currentOnlineOrderId = window.currentOnlineOrder ? window.currentOnlineOrder.id : null;
   startPOSOnlineOrdersPolling();
+  updateCartUI();
 }
 
 function renderPOSProductCards(products) {
@@ -2992,25 +3096,25 @@ function renderPOSProductCards(products) {
   }
   return activeProducts.map(p => {
     return `
-    <div class="pos-item-card" onclick="addToCart(${p.id}, '${p.name.replace(/'/g, "\\'")}', ${p.price})" style="position:relative; background:#ffffff; border:1px solid rgba(205,190,150,0.3); border-radius:10px; overflow:hidden; cursor:pointer; transition:transform 0.15s, box-shadow 0.15s; display:flex; flex-direction:column; box-shadow:0 2px 8px rgba(0,0,0,0.02);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 18px rgba(201,162,39,0.15)';" onmouseout="this.style.transform='none'; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.02)';">
+    <div class="pos-item-card" onclick="addToCart(${p.id}, ${Utils.jsArg(p.name)}, ${p.price})" style="position:relative; background:#ffffff; border:1px solid rgba(205,190,150,0.3); border-radius:10px; overflow:hidden; cursor:pointer; transition:transform 0.15s, box-shadow 0.15s; display:flex; flex-direction:column; box-shadow:0 2px 8px rgba(0,0,0,0.02);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 18px rgba(201,162,39,0.15)';" onmouseout="this.style.transform='none'; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.02)';">
       
       <!-- Top Badges -->
       <div style="position:absolute; top:6px; right:6px; z-index:2;">
-        <button class="add-btn" onclick="event.stopPropagation(); addToCart(${p.id}, '${p.name.replace(/'/g, "\\'")}', ${p.price})" style="width:22px; height:22px; border-radius:50%; background:#ffffff; color:#c9a227; border:none; box-shadow:0 2px 6px rgba(0,0,0,0.1); cursor:pointer; display:flex; align-items:center; justify-content:center; pointer-events:auto; font-size:9px; transition:background 0.2s;" onmouseover="this.style.background='#f0f0f0';" onmouseout="this.style.background='#ffffff';"><i class="fas fa-plus"></i></button>
+        <button class="add-btn" onclick="event.stopPropagation(); addToCart(${p.id}, ${Utils.jsArg(p.name)}, ${p.price})" style="width:22px; height:22px; border-radius:50%; background:#ffffff; color:#c9a227; border:none; box-shadow:0 2px 6px rgba(0,0,0,0.1); cursor:pointer; display:flex; align-items:center; justify-content:center; pointer-events:auto; font-size:9px; transition:background 0.2s;" onmouseover="this.style.background='#f0f0f0';" onmouseout="this.style.background='#ffffff';"><i class="fas fa-plus"></i></button>
       </div>
 
       <!-- Image Area -->
       <div style="height:80px; background:#f9f9f9; display:flex; align-items:center; justify-content:center; border-bottom:1px solid rgba(205,190,150,0.15); padding:0;">
-        ${p.image_url ? `<img src="${p.image_url}" alt="${p.name}" style="width:100%; height:100%; object-fit:cover;">` : `<i class="fas fa-utensils" style="font-size:20px; color:#e2e2e2;"></i>`}
+        ${p.image_url ? `<img src="${Utils.escapeHtml(p.image_url)}" alt="${Utils.escapeHtml(p.name)}" style="width:100%; height:100%; object-fit:cover;">` : `<i class="fas fa-utensils" style="font-size:20px; color:#e2e2e2;"></i>`}
       </div>
 
       <!-- Details -->
       <div style="padding:8px 10px; display:flex; flex-direction:column; flex:1;">
-        <div style="font-size:11px; font-weight:700; color:var(--text-main); line-height:1.25; height:28px; margin-bottom:6px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${p.name}</div>
+        <div style="font-size:11px; font-weight:700; color:var(--text-main); line-height:1.25; height:28px; margin-bottom:6px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${Utils.escapeHtml(p.name)}</div>
         
         <div style="margin-top:auto; display:flex; justify-content:space-between; align-items:flex-end;">
           <span style="font-size:13px; font-weight:800; color:#c9a227;">${Utils.formatCurrency(p.price)}</span>
-          <span style="font-size:9px; color:var(--text-muted); font-family:monospace;">${p.sku || `POS-${p.id}`}</span>
+          <span style="font-size:9px; color:var(--text-muted); font-family:monospace;">${Utils.escapeHtml(p.sku || `POS-${p.id}`)}</span>
         </div>
       </div>
     </div>
@@ -3040,9 +3144,22 @@ function selectPOSCategory(catId, btn) {
   filterPOSGrid();
 }
 
+function guardOnlineCart() {
+  if (window.currentOnlineOrder) {
+    Utils.showToast("This cart is a customer order and cannot be edited. Clear it to start a new sale.", "warning");
+    return true;
+  }
+  return false;
+}
+
 function addToCart(productId, name, price) {
+  if (guardOnlineCart()) return;
   const existing = posCart.find(i => i.product_id === productId);
   if (existing) {
+    if (existing.quantity >= 100) {
+      Utils.showToast("The most you can sell of one item in one order is 100.", "warning");
+      return;
+    }
     existing.quantity += 1;
   } else {
     posCart.push({ product_id: productId, name, price, quantity: 1 });
@@ -3051,8 +3168,13 @@ function addToCart(productId, name, price) {
 }
 
 function updateCartItemQty(productId, delta) {
+  if (guardOnlineCart()) return;
   const item = posCart.find(i => i.product_id === productId);
   if (!item) return;
+  if (item.quantity + delta > 100) {
+    Utils.showToast("The most you can sell of one item in one order is 100.", "warning");
+    return;
+  }
   item.quantity += delta;
   if (item.quantity <= 0) {
     posCart = posCart.filter(i => i.product_id !== productId);
@@ -3060,9 +3182,34 @@ function updateCartItemQty(productId, delta) {
   updateCartUI();
 }
 
+function removeCartLine(idx) {
+  if (guardOnlineCart()) return;
+  posCart.splice(idx, 1);
+  updateCartUI();
+}
+
+function renderOnlineOrderBanner() {
+  const el = document.getElementById("pos-online-banner");
+  if (!el) return;
+  const o = window.currentOnlineOrder;
+  if (!o) {
+    el.innerHTML = "";
+    el.style.display = "none";
+    return;
+  }
+  el.style.display = "block";
+  el.innerHTML = `
+    <div style="padding:8px 14px; background:#fffbeb; border-bottom:1px solid rgba(205,190,150,0.3); font-size:11px; color:var(--text-main);">
+      <strong>Customer order ${Utils.escapeHtml(o.order_number)}</strong> &bull; ${Utils.escapeHtml(o.table_number ? "Table " + o.table_number : (o.order_type || "Take Out"))} &bull; ${Utils.escapeHtml(o.customer_name)}
+      <div style="margin-top:4px;">${paymentBadgeHtml(o)}</div>
+    </div>`;
+}
+
 function updateCartUI() {
   const container = document.getElementById("cart-items-container");
   if (container) container.innerHTML = renderCartItems();
+  renderOnlineOrderBanner();
+  savePosDraft();
 
   const total = posCart.reduce((sum, i) => sum + (i.price * i.quantity), 0);
   const subtotalEl = document.getElementById("cart-subtotal");
@@ -3084,7 +3231,7 @@ function updateCartUI() {
     floatBar.innerHTML = `
       <div class="mobile-cart-float-info" onclick="document.querySelector('.pos-cart')?.scrollIntoView({behavior:'smooth'});">
         <i class="fas fa-shopping-bag"></i>
-        <span><strong>${count} items</strong> • ${Utils.formatCurrency(total)}</span>
+        <span><strong>${Utils.escapeHtml(count)} items</strong> • ${Utils.formatCurrency(total)}</span>
       </div>
       <button class="mobile-cart-float-btn" onclick="document.querySelector('.pos-cart')?.scrollIntoView({behavior:'smooth'});">
         View Cart <i class="fas fa-arrow-down"></i>
@@ -3108,30 +3255,47 @@ function renderCartItems() {
       </div>
     `;
   }
+  const locked = !!window.currentOnlineOrder;
+  const lockStyle = locked ? "opacity:0.35; cursor:not-allowed;" : "";
   return posCart.map((i, idx) => `
     <div style="padding:10px 14px; border-bottom:1px solid rgba(205,190,150,0.15);">
-      <div style="font-weight:700; color:var(--text-main); font-size:12px; line-height:1.25; margin-bottom:4px;">${i.name}</div>
+      <div style="font-weight:700; color:var(--text-main); font-size:12px; line-height:1.25; margin-bottom:4px;">${Utils.escapeHtml(i.name)}</div>
       <div style="display:flex; justify-content:space-between; align-items:center;">
-        
+
         <div style="color:var(--text-muted); font-size:11px; min-width:50px;">${Utils.formatCurrency(i.price)}</div>
-        
+
         <!-- Quantity Controls -->
         <div style="display:flex; align-items:center; background:#faf8f3; border:1px solid rgba(205,190,150,0.3); border-radius:6px; overflow:hidden;">
-          <button type="button" onclick="updateCartItemQty(${i.product_id}, -1)" style="width:24px; height:24px; border:none; background:transparent; cursor:pointer; color:var(--text-main); font-size:9px;"><i class="fas fa-minus"></i></button>
-          <span style="font-weight:700; font-size:12px; width:24px; text-align:center; padding-top:2px;">${i.quantity}</span>
-          <button type="button" onclick="updateCartItemQty(${i.product_id}, 1)" style="width:24px; height:24px; border:none; background:transparent; cursor:pointer; color:var(--text-main); font-size:9px;"><i class="fas fa-plus"></i></button>
+          <button type="button" onclick="updateCartItemQty(${Number(i.product_id)}, -1)" style="width:24px; height:24px; border:none; background:transparent; cursor:pointer; color:var(--text-main); font-size:9px; ${lockStyle}"><i class="fas fa-minus"></i></button>
+          <span style="font-weight:700; font-size:12px; width:24px; text-align:center; padding-top:2px;">${Utils.escapeHtml(i.quantity)}</span>
+          <button type="button" onclick="updateCartItemQty(${Number(i.product_id)}, 1)" style="width:24px; height:24px; border:none; background:transparent; cursor:pointer; color:var(--text-main); font-size:9px; ${lockStyle}"><i class="fas fa-plus"></i></button>
         </div>
-        
+
         <div style="font-weight:800; color:#c9a227; font-size:13px; text-align:right; min-width:60px;">${Utils.formatCurrency(i.price * i.quantity)}</div>
-        
-        <button type="button" class="btn-icon" onclick="posCart.splice(${idx}, 1); updateCartUI();" style="border:none; background:transparent; color:var(--danger); cursor:pointer; font-size:12px; margin-left:4px;" title="Remove"><i class="fas fa-trash-alt"></i></button>
+
+        <button type="button" class="btn-icon" onclick="removeCartLine(${idx})" style="border:none; background:transparent; color:var(--danger); cursor:pointer; font-size:12px; margin-left:4px; ${lockStyle}" title="Remove"><i class="fas fa-trash-alt"></i></button>
       </div>
     </div>
   `).join('');
 }
 
+// "Clear All" button: never discards a non-empty cart without asking.
+function requestClearCart() {
+  if (!posCart.length && !window.currentOnlineOrder) return;
+  const count = posCart.reduce((sum, i) => sum + i.quantity, 0);
+  const online = window.currentOnlineOrder
+    ? " The customer order goes back to the queue; nothing is charged."
+    : "";
+  Utils.confirmAction("Clear this cart?", `This removes ${Utils.escapeHtml(count)} item(s) from the current cart.${online}`, clearCart);
+}
+
 function clearCart() {
   posCart = [];
+  window.currentOnlineOrder = null;
+  window.currentOnlineOrderId = null;
+  posCheckout.key = null;
+  posCheckout.signature = null;
+  persistCheckoutAttempt();
   updateCartUI();
 }
 
@@ -3477,24 +3641,36 @@ function parseFullVoiceOrder(speechText, products, pendingQty = null) {
       continue;
     }
     if (!itemStr) continue;
-    const matched = matchVoiceProduct(itemStr, products);
+    const match = matchVoiceProductDetailed(itemStr, products);
     items.push({
       original: s,
       qty,
       itemStr,
       isOnlyQty: false,
-      product: matched
+      // Only an exact/strong match is a product; ambiguous/low matches wait for the cashier's choice.
+      product: (match.confidence === 'exact' || match.confidence === 'strong') ? match.product : null,
+      confidence: match.confidence,
+      candidates: match.candidates
     });
   }
 
   return items;
 }
 
-function matchVoiceProduct(query, products) {
-  if (!products || !products.length || !query) return null;
+// Same matching steps as before, but the result says HOW it matched:
+//   exact     - SKU / POS code / exact product name: added directly
+//   strong    - one product clearly contains the words: added directly
+//   ambiguous - several products match equally well: the cashier picks one
+//   low       - partial-word or fuzzy match: the cashier confirms it
+//   none      - nothing reasonable
+// A spoken name is never turned into "the first product in the list" or into a fuzzy guess silently.
+function matchVoiceProductDetailed(query, products) {
+  const NONE = { product: null, confidence: 'none', candidates: [] };
+  const hit = (p, confidence) => ({ product: p, confidence, candidates: [p] });
+  if (!products || !products.length || !query) return NONE;
   // Exclude inactive products from voice recognition
   const activeProducts = products.filter(p => p.is_active !== false && p.is_active !== 0 && p.is_active !== "0");
-  if (!activeProducts.length) return null;
+  if (!activeProducts.length) return NONE;
 
   const normQuery = query.toLowerCase().replace(/[\-_,.]/g, ' ').replace(/\s+/g, ' ').trim();
   const qClean = query.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -3506,7 +3682,7 @@ function matchVoiceProduct(query, products) {
   // Incomplete POS code check: All POS codes have 4 digits (e.g. POS-5341, POS-2631, POS-2931).
   // If query is an incomplete code with < 4 digits (e.g. "pos 2", "pos 26", "pos 263"), NEVER match!
   if (isCodeQuery && qDigits && qDigits.length < 4) {
-    return null;
+    return NONE;
   }
 
   // 1. Exact match on normalized SKU / Code (e.g. "c1 solo" or "c1solo" matching "C1-SOLO", or "pos 7928", "pos 2631")
@@ -3515,77 +3691,73 @@ function matchVoiceProduct(query, products) {
     const normSku = sku.replace(/[\-_,.]/g, ' ').replace(/\s+/g, ' ').trim();
     const cleanSku = sku.replace(/[^a-z0-9]/g, '');
     if ((normSku && normSku === normQuery) || (cleanSku && cleanSku === qClean)) {
-      return p;
+      return hit(p, 'exact');
     }
   }
 
   // 2. Code digits match (4 digits for POS-XXXX, 5 digits for SKU-XXXXX)
   if (isCodeQuery && qDigits && qDigits.length >= 4) {
-    for (const p of activeProducts) {
-      const sku = (p.sku || '').toLowerCase();
-      const skuDigitMatch = sku.match(/\d+/);
-      if (skuDigitMatch && skuDigitMatch[0].length >= 4) {
-        const sDigits = skuDigitMatch[0];
-        if (sDigits === qDigits) {
-          return p;
-        }
-      }
-    }
+    const byDigits = activeProducts.filter(p => {
+      const skuDigitMatch = (p.sku || '').toLowerCase().match(/\d+/);
+      return skuDigitMatch && skuDigitMatch[0].length >= 4 && skuDigitMatch[0] === qDigits;
+    });
+    if (byDigits.length === 1) return hit(byDigits[0], 'exact');
+    if (byDigits.length > 1) return { product: null, confidence: 'ambiguous', candidates: byDigits };
   }
 
   // 3. Embedded code in query (e.g. "bucket ice c2", "1 c1", query contains code word "c2" or "c1")
-  for (const p of activeProducts) {
-    const sku = (p.sku || '').toLowerCase().trim();
-    const cleanSku = sku.replace(/[^a-z0-9]/g, '');
-    if (cleanSku.length >= 2) {
-      const reg = new RegExp('\\b' + cleanSku + '\\b', 'i');
-      if (reg.test(normQuery)) {
-        return p;
-      }
-    }
-  }
+  const embedded = activeProducts.filter(p => {
+    const cleanSku = (p.sku || '').toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+    return cleanSku.length >= 2 && new RegExp('\\b' + cleanSku + '\\b', 'i').test(normQuery);
+  });
+  if (embedded.length === 1) return hit(embedded[0], 'exact');
+  if (embedded.length > 1) return { product: null, confidence: 'ambiguous', candidates: embedded };
 
   // 3b. SKU substring match for longer codes (>=4 chars, e.g. "pos2931" ending with "2931")
   if (qClean.length >= 4) {
-    for (const p of activeProducts) {
-      const sku = (p.sku || '').toLowerCase();
-      const cleanSku = sku.replace(/[^a-z0-9]/g, '');
-      if (cleanSku && cleanSku.length >= 4 && (cleanSku.endsWith(qClean) || qClean.endsWith(cleanSku))) {
-        return p;
-      }
-    }
+    const bySuffix = activeProducts.filter(p => {
+      const cleanSku = (p.sku || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      return cleanSku && cleanSku.length >= 4 && (cleanSku.endsWith(qClean) || qClean.endsWith(cleanSku));
+    });
+    if (bySuffix.length === 1) return hit(bySuffix[0], 'exact');
+    if (bySuffix.length > 1) return { product: null, confidence: 'ambiguous', candidates: bySuffix };
   }
 
   // 4. Exact Product Name match
   for (const p of activeProducts) {
     const normName = (p.name || '').toLowerCase().replace(/[\-_,.]/g, ' ').replace(/\s+/g, ' ').trim();
     if (normName === normQuery) {
-      return p;
+      return hit(p, 'exact');
     }
   }
 
-  // 5. Product Name contains query or query contains product name (e.g. "french vanilla pos" contains "french vanilla")
-  let bestContains = null;
+  // 5. Product Name contains query or query contains product name (e.g. "french vanilla pos" contains "french vanilla").
+  //    Every product tied on the best length is a candidate: "coke" with Coke Zero + Coke Light is ambiguous.
+  let containsTies = [];
   let bestLen = 0;
   for (const p of activeProducts) {
     const normName = (p.name || '').toLowerCase().replace(/[\-_,.]/g, ' ').replace(/\s+/g, ' ').trim();
-    if (normName.length > 2 && normQuery.includes(normName) && normName.length > bestLen) {
-      bestContains = p;
-      bestLen = normName.length;
-    } else if (normQuery.length > 3 && normName.includes(normQuery) && normQuery.length > bestLen) {
-      bestContains = p;
-      bestLen = normQuery.length;
+    let len = 0;
+    if (normName.length > 2 && normQuery.includes(normName)) {
+      len = normName.length;
+    } else if (normQuery.length > 3 && normName.includes(normQuery)) {
+      len = normQuery.length;
+    }
+    if (len > bestLen) {
+      bestLen = len;
+      containsTies = [p];
+    } else if (len && len === bestLen) {
+      containsTies.push(p);
     }
   }
-  if (bestContains) {
-    return bestContains;
-  }
+  if (containsTies.length === 1) return hit(containsTies[0], 'strong');
+  if (containsTies.length > 1) return { product: null, confidence: 'ambiguous', candidates: containsTies };
 
   // 6. Token overlap match (avoid false positives on generic modifiers like 'solo', 'regular', 'single')
   const MODIFIER_WORDS = new Set(['solo', 'single', 'regular', 'barkada', 'with', 'w', 'hot', 'cold', 'iced', '16', '22', 'oz', 'pcs', 'pc', 'l']);
   const qTokens = normQuery.split(' ').filter(t => t.length > 1);
   const nonModifierTokens = qTokens.filter(t => !MODIFIER_WORDS.has(t));
-  let bestProd = null;
+  let tokenTies = [];
   let bestScore = 0;
 
   for (const p of activeProducts) {
@@ -3598,21 +3770,25 @@ function matchVoiceProduct(query, products) {
     }
     // If there are primary (non-modifier) tokens, at least one MUST match
     const hasPrimaryMatch = nonModifierTokens.length === 0 || nonModifierTokens.some(t => target.includes(t));
-    if (hasPrimaryMatch && score > bestScore) {
+    if (!hasPrimaryMatch || score === 0) continue;
+    if (score > bestScore) {
       bestScore = score;
-      bestProd = p;
+      tokenTies = [p];
+    } else if (score === bestScore) {
+      tokenTies.push(p);
     }
   }
 
   const minRequired = qTokens.length <= 2 ? qTokens.length : Math.max(2, Math.floor(qTokens.length * 0.6));
-  if (bestScore >= minRequired) {
-    return bestProd;
+  if (bestScore > 0 && bestScore >= minRequired) {
+    if (tokenTies.length > 1) return { product: null, confidence: 'ambiguous', candidates: tokenTies };
+    // Every spoken word found in one product: strong. Only some of them: ask the cashier.
+    return hit(tokenTies[0], bestScore === qTokens.length ? 'strong' : 'low');
   }
 
-  // 7. Fuzzy string similarity (handles close pronunciations like "french ba nila" -> "French Vanilla")
-  let bestFuzzyProd = null;
-  let bestFuzzyScore = 0.0;
-
+  // 7. Fuzzy string similarity (handles close pronunciations like "french ba nila" -> "French Vanilla").
+  //    A fuzzy guess is only ever offered for confirmation, never added on its own.
+  const scored = [];
   for (const p of activeProducts) {
     const pCleanName = (p.name || '').toLowerCase().replace(/[\-_,.()–—]/g, ' ').replace(/\s+/g, ' ').trim();
     const sku = (p.sku || '').toLowerCase();
@@ -3622,8 +3798,9 @@ function matchVoiceProduct(query, products) {
 
     const qWords = normQuery.split(/\s+/).filter(w => w.length > 2);
     const pWords = pCleanName.split(/\s+/).filter(w => w.length > 2);
-    let wordOverlap = 0;
+    let tokenSim = 0;
     if (qWords.length > 0 && pWords.length > 0) {
+      let wordOverlap = 0;
       for (const qw of qWords) {
         let bestWSim = 0;
         for (const pw of pWords) {
@@ -3632,24 +3809,25 @@ function matchVoiceProduct(query, products) {
         }
         if (bestWSim >= 0.75) wordOverlap++;
       }
-      var tokenSim = wordOverlap / Math.max(qWords.length, pWords.length);
-    } else {
-      var tokenSim = 0;
+      tokenSim = wordOverlap / Math.max(qWords.length, pWords.length);
     }
 
     const maxSim = Math.max(simName, simSku, tokenSim);
-    if (maxSim > bestFuzzyScore) {
-      bestFuzzyScore = maxSim;
-      bestFuzzyProd = p;
-    }
+    if (maxSim >= 0.65) scored.push({ p, maxSim });
+  }
+  if (scored.length) {
+    scored.sort((a, b) => b.maxSim - a.maxSim);
+    const top = scored.slice(0, 3).map(s => s.p);
+    return { product: top.length === 1 ? top[0] : null, confidence: top.length === 1 ? 'low' : 'ambiguous', candidates: top };
   }
 
-  // If >= 65% close to POS product name or code, automatically match!
-  if (bestFuzzyScore >= 0.65) {
-    return bestFuzzyProd;
-  }
+  return NONE;
+}
 
-  return null;
+// Backward-compatible: the single product only when the match is safe to use without asking.
+function matchVoiceProduct(query, products) {
+  const m = matchVoiceProductDetailed(query, products);
+  return (m.confidence === 'exact' || m.confidence === 'strong') ? m.product : null;
 }
 
 function playVoiceBeep() {
@@ -3681,29 +3859,90 @@ function toggleVoiceOrderDirect() {
   }
 }
 
+// Voice session lifecycle. Every session gets a number; callbacks from a stopped, failed or replaced
+// recogniser (late results, a final onend) see a different number and do nothing, so they can never
+// touch the cart, restart the microphone or show a second message.
+const VOICE_MAX_LINE_QTY = 100;          // same 1-100 per line limit as the server and the tap-to-add cart
+const VOICE_MAX_IDLE_RESTARTS = 3;       // silent auto-restarts before listening stops by itself
+let voiceSessionSeq = 0;
+let voiceIdleRestarts = 0;
+
+const VOICE_INSECURE_MSG = "Voice ordering needs a secure address (https://, or http://localhost on this computer). The browser blocks the microphone on this address, so open the POS over HTTPS to use voice.";
+// terminal: the session ends (no automatic restart). msg: what the cashier is told (null = nothing).
+const VOICE_ERRORS = {
+  "not-allowed": { terminal: true, msg: "Microphone access is blocked for this page. Allow the microphone in the browser's site settings, then press VOICE ORDER again." },
+  "service-not-allowed": { terminal: true, msg: "Speech recognition is not available in this browser or on this device. Add items by tapping them instead." },
+  "audio-capture": { terminal: true, msg: "No microphone was found, or another app is using it. Check the microphone and press VOICE ORDER again." },
+  "network": { terminal: true, msg: "Speech recognition could not reach its online service. Check the internet connection and press VOICE ORDER again." },
+  "language-not-supported": { terminal: true, msg: "This browser cannot recognise Filipino (fil-PH) speech. Use Chrome or Edge, or add items by tapping them." },
+  "aborted": { terminal: true, msg: null },
+  "no-speech": { terminal: false, msg: null }
+};
+
+function voiceInsecureContext() {
+  return window.isSecureContext === false;
+}
+
+// The POS cart is on screen (voice must never change a cart the cashier cannot see).
+function voicePosActive() {
+  return !!document.getElementById("cart-items-container") && !!document.getElementById("pos-voice-order-btn");
+}
+
+function detachVoiceRecognition() {
+  const rec = posVoiceRecognition;
+  posVoiceRecognition = null;
+  if (!rec) return;
+  rec.onstart = null;
+  rec.onresult = null;
+  rec.onerror = null;
+  rec.onend = null;
+  try { rec.abort(); } catch (e) {}
+}
+
+// Ends the current session for any reason (Stop, navigation, logout, error). Shows `message` once.
+function endVoiceSession(message) {
+  voiceSessionSeq++;
+  window.isVoiceListening = false;
+  window.pendingVoiceQty = null;
+  window.lastVoiceSpoken = "";
+  voiceIdleRestarts = 0;
+  detachVoiceRecognition();
+  clearTimeout(voiceCommitResetTimer);
+  if (window.voiceSessionCommitted) window.voiceSessionCommitted.clear();
+  updateVoiceButtonUI(false);
+  if (message && typeof Utils !== "undefined") Utils.showToast(message, "warning");
+}
+
 function startVoiceRecordingDirect() {
   const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRec) {
     Utils.showToast("Web Speech API not supported in this browser. Please use Chrome or Edge.", "warning");
     return;
   }
+  if (voiceInsecureContext()) {
+    Utils.showToast(VOICE_INSECURE_MSG, "warning");
+    return;
+  }
+  if (window.isVoiceListening && posVoiceRecognition) return;   // repeated taps: one session at a time
 
+  detachVoiceRecognition();
+  const session = ++voiceSessionSeq;
+  const live = () => session === voiceSessionSeq && window.isVoiceListening;
+  voiceIdleRestarts = 0;
   window.isVoiceListening = true;
   window.pendingVoiceQty = null;
+  window.lastVoiceSpoken = "";
+  window.voiceSessionCommitted = window.voiceSessionCommitted || new Set();
   updateVoiceButtonUI(true);
 
-  if (posVoiceRecognition) {
-    try { posVoiceRecognition.abort(); } catch(e) {}
-  }
+  const rec = new SpeechRec();
+  posVoiceRecognition = rec;
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.lang = voiceActiveLanguage;
 
-  posVoiceRecognition = new SpeechRec();
-  posVoiceRecognition.continuous = true;
-  posVoiceRecognition.interimResults = true;
-  posVoiceRecognition.lang = voiceActiveLanguage;
-
-  posVoiceRecognition.onstart = function() {
-    window.isVoiceListening = true;
-    updateVoiceButtonUI(true);
+  rec.onstart = function() {
+    if (!live()) return;
     const textEl = document.getElementById("pos-voice-transcript-text");
     if (textEl) {
       textEl.innerHTML = `Listening... Speak order (e.g. "isa ka c1 solo", "3 pos 5341", "1 bucket ice c2")`;
@@ -3711,11 +3950,10 @@ function startVoiceRecordingDirect() {
     }
   };
 
-  window.voiceSessionCommitted = window.voiceSessionCommitted || new Set();
-  window.lastVoiceSpoken = '';
-  window.lastVoiceCommitted = false;
-
-  posVoiceRecognition.onresult = function(event) {
+  rec.onresult = function(event) {
+    if (!live()) return;                        // late result from a stopped or replaced session
+    if (!voicePosActive()) { endVoiceSession(null); return; }
+    voiceIdleRestarts = 0;
     let interim = '';
     let finalTranscript = '';
     for (let i = event.resultIndex; i < event.results.length; ++i) {
@@ -3727,70 +3965,54 @@ function startVoiceRecordingDirect() {
     }
 
     const textEl = document.getElementById("pos-voice-transcript-text");
-    const spoken = (finalTranscript || interim).trim();
-    if (textEl && spoken) {
-      textEl.innerHTML = `Heard: <span style="color:#b91c1c;">"${spoken}"</span>`;
-    }
-
-    window.lastVoiceSpoken = spoken;
     if (finalTranscript.trim()) {
-      window.lastVoiceCommitted = true;
+      if (textEl) textEl.innerHTML = `Heard: <span style="color:#b91c1c;">"${Utils.escapeHtml(finalTranscript.trim())}"</span>`;
+      window.lastVoiceSpoken = "";
+      // Only finalised speech is matched to products; interim text is a preview and never reaches the cart.
       executeVoiceOrderDirect(finalTranscript.trim(), true);
-    } else {
-      window.lastVoiceCommitted = false;
+    } else if (interim.trim()) {
+      window.lastVoiceSpoken = interim.trim();
+      if (textEl) textEl.innerHTML = `Hearing: <span style="color:#71717a;">"${Utils.escapeHtml(interim.trim())}"</span> <span style="font-size:11px; color:#71717a;">(not added yet)</span>`;
     }
   };
 
-  posVoiceRecognition.onerror = function(event) {
+  rec.onerror = function(event) {
+    if (!live()) return;
     console.warn("Speech recognition error:", event.error);
-    if (event.error === 'not-allowed') {
-      window.isVoiceListening = false;
-      updateVoiceButtonUI(false);
-      Utils.showToast("Microphone access denied. Please allow microphone in browser settings.", "danger");
-    } else if (event.error === 'no-speech') {
-      // Continue listening without stopping
-    }
+    const info = VOICE_ERRORS[event.error] || { terminal: true, msg: "Voice recognition stopped unexpectedly. Press VOICE ORDER to try again." };
+    if (!info.terminal) return;                 // no-speech: onend decides whether to keep listening
+    const message = (event.error === "not-allowed" && voiceInsecureContext()) ? VOICE_INSECURE_MSG : info.msg;
+    endVoiceSession(message);
   };
 
-  posVoiceRecognition.onend = function() {
-    // If still in listening state, auto-restart so cashier can speak next item
-    if (window.isVoiceListening) {
-      try {
-        posVoiceRecognition.start();
-      } catch(e) {
-        window.isVoiceListening = false;
-        updateVoiceButtonUI(false);
-      }
-    } else {
-      updateVoiceButtonUI(false);
+  rec.onend = function() {
+    if (!live()) return;
+    if (!voicePosActive()) { endVoiceSession(null); return; }
+    // Browsers end a continuous session after a pause: restart so the cashier can speak the next item,
+    // but only a few times without speech, never in an endless loop.
+    voiceIdleRestarts++;
+    if (voiceIdleRestarts > VOICE_MAX_IDLE_RESTARTS) {
+      endVoiceSession("Stopped listening because no speech was heard. Press VOICE ORDER to start again.");
+      return;
+    }
+    try {
+      rec.start();
+    } catch (e) {
+      endVoiceSession("Voice recognition could not restart. Press VOICE ORDER to try again.");
     }
   };
 
   try {
-    posVoiceRecognition.start();
-  } catch(e) {
+    rec.start();
+  } catch (e) {
     console.warn("Could not start speech recognition:", e);
-    window.isVoiceListening = false;
-    updateVoiceButtonUI(false);
+    endVoiceSession("Voice recognition could not start. Press VOICE ORDER to try again.");
   }
 }
 
+// Stop button: ends listening. Words still being recognised (interim) are discarded, not added.
 function stopVoiceRecordingDirect() {
-  window.isVoiceListening = false;
-  window.pendingVoiceQty = null;
-  if (posVoiceRecognition) {
-    try {
-      posVoiceRecognition.stop();
-    } catch(e) {}
-  }
-  if (window.lastVoiceSpoken && !window.lastVoiceCommitted) {
-    executeVoiceOrderDirect(window.lastVoiceSpoken, true);
-    window.lastVoiceSpoken = '';
-  }
-  if (window.voiceSessionCommitted) {
-    window.voiceSessionCommitted.clear();
-  }
-  updateVoiceButtonUI(false);
+  endVoiceSession(null);
 }
 
 function updateVoiceButtonUI(listening) {
@@ -3840,48 +4062,76 @@ function updateVoiceButtonUI(listening) {
 window.voiceSessionCommitted = window.voiceSessionCommitted || new Set();
 let voiceCommitResetTimer = null;
 
+function validVoiceQty(qty) {
+  return Number.isInteger(qty) && qty >= 1 && qty <= VOICE_MAX_LINE_QTY;
+}
+
+// Adds to the cart only if the resulting line stays within 1-100. Returns true or a message for the cashier.
+function addVoiceLine(prod, qty) {
+  const existing = posCart.find(i => i.product_id === prod.id);
+  const next = (existing ? existing.quantity : 0) + qty;
+  if (next > VOICE_MAX_LINE_QTY) {
+    return `${prod.name}: that would make ${next} in the cart (maximum ${VOICE_MAX_LINE_QTY} per item). Not added.`;
+  }
+  if (existing) {
+    existing.quantity = next;
+  } else {
+    posCart.push({ product_id: prod.id, name: prod.name, price: prod.price, quantity: qty });
+  }
+  return true;
+}
+
 function executeVoiceOrderDirect(text, isFinal = true) {
   if (!text || !text.trim()) return;
   if (!isFinal) return; // Ensure cart addition only executes on final transcript
+  if (!voicePosActive()) return; // never change a cart that is not on screen
+  if (guardOnlineCart()) return;
 
   const items = parseFullVoiceOrder(text, cachedProducts, window.pendingVoiceQty);
   const textEl = document.getElementById("pos-voice-transcript-text");
 
   // Check if speech was solely a quantity (e.g. "3", "isa ka", "tatlo", "five")
   if (items.length === 1 && items[0].isOnlyQty) {
+    if (!validVoiceQty(items[0].qty)) {
+      window.pendingVoiceQty = null;
+      if (textEl) textEl.innerHTML = `<span style="color:#b91c1c;"><i class="fas fa-exclamation-triangle"></i> Quantity ${Utils.escapeHtml(items[0].qty)} is not allowed (1 to ${VOICE_MAX_LINE_QTY} per item). Say it again.</span>`;
+      return;
+    }
     window.pendingVoiceQty = items[0].qty;
     if (textEl) {
-      textEl.innerHTML = `<span style="color:#d97706;">⏳ Quantity <strong>${items[0].qty}</strong> noted — speak product name or POS code...</span>`;
+      textEl.innerHTML = `<span style="color:#d97706;">⏳ Quantity <strong>${Utils.escapeHtml(items[0].qty)}</strong> noted — speak product name or POS code...</span>`;
     }
     return;
   }
 
   let addedCount = 0;
   let summaryNames = [];
+  const problems = [];
+  const choices = [];
 
   items.forEach(item => {
-    if (item.product) {
-      const prod = item.product;
-      const itemKey = `${prod.id}_${item.qty}_${item.itemStr.toLowerCase().replace(/\s+/g, '')}`;
-
-      if (!window.voiceSessionCommitted.has(itemKey)) {
-        window.voiceSessionCommitted.add(itemKey);
-
-        const existing = posCart.find(i => i.product_id === prod.id);
-        if (existing) {
-          existing.quantity += item.qty;
-        } else {
-          posCart.push({
-            product_id: prod.id,
-            name: prod.name,
-            price: prod.price,
-            quantity: item.qty
-          });
-        }
-        addedCount++;
-        summaryNames.push(`${item.qty}x ${prod.name}`);
-      }
+    if (item.isOnlyQty) return;
+    const needsChoice = item.confidence === 'ambiguous' || item.confidence === 'low';
+    if (!item.product && !needsChoice) return;
+    if (!validVoiceQty(item.qty)) {
+      problems.push(`Quantity ${item.qty} for "${item.itemStr}" is not allowed (1 to ${VOICE_MAX_LINE_QTY} per item).`);
+      return;
     }
+    if (needsChoice) {
+      choices.push(item);
+      return;
+    }
+    const prod = item.product;
+    const itemKey = `${prod.id}_${item.qty}_${item.itemStr.toLowerCase().replace(/\s+/g, '')}`;
+    if (window.voiceSessionCommitted.has(itemKey)) return;   // the same final result delivered twice
+    const added = addVoiceLine(prod, item.qty);
+    if (added !== true) {
+      problems.push(added);
+      return;
+    }
+    window.voiceSessionCommitted.add(itemKey);
+    addedCount++;
+    summaryNames.push(`${item.qty}x ${prod.name}`);
   });
 
   if (addedCount > 0) {
@@ -3889,16 +4139,26 @@ function executeVoiceOrderDirect(text, isFinal = true) {
     updateCartUI();
     playVoiceBeep();
     if (textEl) {
-      textEl.innerHTML = `<span style="color:#047857;"><i class="fas fa-check-circle"></i> Inserted ${summaryNames.join(', ')} into Current Cart!</span>`;
+      textEl.innerHTML = `<span style="color:#047857;"><i class="fas fa-check-circle"></i> Inserted ${Utils.escapeHtml(summaryNames.join(', '))} into Current Cart!</span>`;
     }
-  } else if (isFinal && (!items.length || !items.some(i => i.product))) {
+  }
+  if (problems.length) {
+    window.pendingVoiceQty = null;
+    if (textEl) {
+      textEl.innerHTML = `<span style="color:#b91c1c;"><i class="fas fa-exclamation-triangle"></i> ${Utils.escapeHtml(problems.join(' '))}</span>`;
+    }
+  } else if (!addedCount && !choices.length && isFinal && (!items.length || !items.some(i => i.product))) {
     // Only show "Item not found" on final silence, not while typing/speaking interim digits or lone quantities
     const cleanedText = text.trim();
     if (!/^\d{1,2}$/.test(cleanedText) && !['pos', 'sku', 'code'].includes(cleanedText.toLowerCase())) {
       if (textEl) {
-        textEl.innerHTML = `<span style="color:#b91c1c;"><i class="fas fa-exclamation-triangle"></i> Item not found: "${text}"</span>`;
+        textEl.innerHTML = `<span style="color:#b91c1c;"><i class="fas fa-exclamation-triangle"></i> Item not found: "${Utils.escapeHtml(text)}"</span>`;
       }
     }
+  }
+  if (choices.length) {
+    window.pendingVoiceQty = null;
+    openVoiceChoice(choices[0], choices.length - 1);
   }
 
   // Clear committed keys after 2.5 seconds of silence so the cashier can order the same item again
@@ -3913,40 +4173,169 @@ function executeVoiceOrderDirect(text, isFinal = true) {
   }
 }
 
+// Ambiguous or low-confidence voice match: the cashier picks the product; nothing is added until then.
+window._voicePendingChoice = null;
+
+function openVoiceChoice(item, moreCount) {
+  window._voicePendingChoice = { qty: item.qty, ids: item.candidates.map(p => p.id) };
+  const heard = Utils.escapeHtml(item.itemStr);
+  const lead = item.confidence === 'low'
+    ? `Heard "<strong>${heard}</strong>". This is only a partial match: is it the item below?`
+    : `Heard "<strong>${heard}</strong>". More than one item matches. Pick the one the customer wants:`;
+  const buttons = item.candidates.map(p => `
+      <button type="button" class="btn btn-outline" data-voice-choice="${Utils.escapeHtml(p.id)}" onclick="confirmVoiceChoice(${Utils.jsArg(p.id)})" style="width:100%; justify-content:space-between; display:flex;">
+        <span>${Utils.escapeHtml(item.qty)}x ${Utils.escapeHtml(p.name)}</span><span>${Utils.formatCurrency(p.price)}</span>
+      </button>`).join('');
+  const more = moreCount > 0
+    ? `<div style="margin-top:10px; font-size:12px; color:#92400e;">${Utils.escapeHtml(moreCount)} other spoken item(s) also need a choice and were not added. Say them again after this one.</div>`
+    : '';
+  Utils.openModal(item.confidence === 'low' ? 'Confirm voice item' : 'Which item did you mean?', `
+    <div style="font-size:13px; margin-bottom:12px;">${lead}</div>
+    <div id="voice-choice-list" style="display:grid; gap:8px;">${buttons}</div>${more}
+  `, `<button type="button" class="btn btn-outline" onclick="cancelVoiceChoice()" style="width:100%;">None of these</button>`);
+}
+
+window.confirmVoiceChoice = function(productId) {
+  const choice = window._voicePendingChoice;
+  window._voicePendingChoice = null;
+  Utils.closeModal();
+  if (!choice || !choice.ids.includes(productId)) return;
+  if (!voicePosActive() || guardOnlineCart()) return;
+  const prod = (cachedProducts || []).find(p => p.id === productId && p.is_active !== false && p.is_active !== 0 && p.is_active !== "0");
+  if (!prod) {
+    Utils.showToast("That item is no longer available.", "warning");
+    return;
+  }
+  const added = addVoiceLine(prod, choice.qty);
+  if (added !== true) {
+    Utils.showToast(added, "warning");
+    return;
+  }
+  updateCartUI();
+  playVoiceBeep();
+  Utils.showToast(`Added ${choice.qty}x ${prod.name}.`, "success");
+};
+
+window.cancelVoiceChoice = function() {
+  window._voicePendingChoice = null;
+  Utils.closeModal();
+};
+
+// Leaving the page (logout, reload, closing the tab) always releases the microphone.
+window.addEventListener("pagehide", () => endVoiceSession(null));
+window.stopVoiceRecordingDirect = stopVoiceRecordingDirect;
+
 // Backward compatibility alias
 window.openVoiceOrderModal = toggleVoiceOrderDirect;
 window.executeVoiceOrder = executeVoiceOrderDirect;
 window.toggleVoiceListeningState = toggleVoiceOrderDirect;
 
-function openPaymentModal() {
+// ─────────────────────────────────────────────────────────────────────────────
+// CHECKOUT (cash / card / walk-in GCash, and customer-order settlement)
+// ─────────────────────────────────────────────────────────────────────────────
+function cartTotal() {
+  return posCart.reduce((sum, i) => sum + (i.price * i.quantity), 0);
+}
+
+function showCheckoutError(message) {
+  const box = document.getElementById("checkout-error");
+  if (box) {
+    box.textContent = message;
+    box.style.display = "block";
+  }
+  Utils.showToast(message, "danger");
+}
+
+function setCheckoutBusy(busy) {
+  posCheckout.inFlight = busy;
+  const btn = document.getElementById("checkout-confirm-btn");
+  if (btn) {
+    btn.disabled = busy;
+    btn.innerHTML = busy
+      ? '<i class="fas fa-spinner fa-spin"></i> Processing...'
+      : '<i class="fas fa-check-circle"></i> Confirm &amp; Complete Sale';
+  }
+}
+
+function checkoutSignature(method) {
+  const lines = posCart.map(i => `${i.product_id}x${i.quantity}`).sort().join(",");
+  const online = window.currentOnlineOrder ? window.currentOnlineOrder.id : "";
+  return `${online}|${method}|${lines}`;
+}
+
+function newCheckoutKey() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return (Date.now().toString(16) + "-" + Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2)).slice(0, 36);
+}
+
+async function openPaymentModal() {
   if (!posCart.length) {
     Utils.showToast("Order cart is empty. Please add items to checkout.", "danger");
     return;
   }
-  const total = posCart.reduce((sum, i) => sum + (i.price * i.quantity), 0);
+  const online = window.currentOnlineOrder;
+  if (online) {
+    // The server decides what this order may do; re-read it so a stale queue entry cannot mislead.
+    try {
+      await refreshCurrentOnlineOrder();
+    } catch (err) {
+      Utils.showToast(err.message, "danger");
+      return;
+    }
+    if (online.sale_recorded) {
+      Utils.showToast("This customer order already has a sale recorded. Reloading the queue.", "warning");
+      clearCart();
+      fetchPendingOnlineOrders();
+      return;
+    }
+    if (online.status === "rejected") {
+      Utils.showToast("This customer order was rejected and cannot be paid.", "danger");
+      clearCart();
+      return;
+    }
+    if (online.payment_method === "GCASH") {
+      await openGcashModal(online.id, true);
+      return;
+    }
+  }
+
+  const total = cartTotal();
   window.isFirstTenderTap = true;
+  const counterOnly = !!online && online.payment_method === "PAY_AT_COUNTER";
+  const methods = counterOnly
+    ? [["CASH", "Cash (Cash Register)"], ["CARD", "Debit / Credit Card"]]
+    : [["CASH", "Cash (Cash Register)"], ["GCASH", "GCash E-Wallet"], ["CARD", "Debit / Credit Card"]];
+  const orderNote = online ? `
+      <div style="padding:10px 12px; background:#fffbeb; border:1px solid rgba(205,190,150,0.4); border-radius:10px; margin-bottom:14px; font-size:12px;">
+        <strong>Customer order ${Utils.escapeHtml(online.order_number)}</strong> &bull; ${Utils.escapeHtml(online.customer_name)}<br>
+        ${paymentBadgeHtml(online)}
+        ${online.payment_method ? "" : '<div style="margin-top:6px; color:#92400e;">This is an older order: no payment method was recorded. Collect payment as usual; it is not assumed to be GCash.</div>'}
+      </div>` : "";
 
   Utils.openModal('<i class="fas fa-credit-card" style="color:var(--accent); margin-right:8px;"></i> Process Order Checkout', `
     <form id="form-payment" onsubmit="event.preventDefault(); submitCheckout();">
+      ${orderNote}
       <div style="text-align:center; padding:18px; background:rgba(201,162,39,0.08); border-radius:14px; margin-bottom:18px; border:1px solid rgba(205,190,150,0.3);">
         <span style="font-size:12px; text-transform:uppercase; color:var(--text-muted); font-weight:600; letter-spacing:0.5px;">Total Amount Due</span>
         <div style="font-size:28px; font-weight:800; color:#c9a227; margin-top:4px;">${Utils.formatCurrency(total)}</div>
       </div>
+      <div id="checkout-error" role="alert" style="display:none; padding:10px 12px; margin-bottom:12px; background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; border-radius:10px; font-size:13px; font-weight:600;"></div>
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Payment Method <span style="color:var(--danger);">*</span></label>
-        <select id="pay-method" class="input-field" style="width:100%;">
-          <option value="CASH" selected>Cash (Cash Register)</option>
-          <option value="GCASH">GCash E-Wallet</option>
-          <option value="CARD">Debit / Credit Card</option>
+        <select id="pay-method" class="input-field" style="width:100%;" onchange="onPayMethodChange(${total})">
+          ${methods.map((m, i) => `<option value="${m[0]}"${i === 0 ? " selected" : ""}>${m[1]}</option>`).join("")}
         </select>
       </div>
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Amount Tendered (₱) <span style="color:var(--danger);">*</span></label>
-        <input type="number" step="0.01" id="pay-tendered" class="input-field" required value="${total}" style="width:100%; font-size:16px; font-weight:700;" oninput="window.isFirstTenderTap=false; calculateChange(${total})">
+        <input type="number" step="0.01" id="pay-tendered" class="input-field" required value="${Utils.escapeHtml(total)}" style="width:100%; font-size:16px; font-weight:700;" oninput="window.isFirstTenderTap=false; calculateChange(${total})">
       </div>
-      
+      <div id="pay-noncash-note" style="display:none; font-size:12px; color:var(--text-muted); margin-bottom:12px;">
+        Non-cash payments are recorded for exactly the amount due. Confirm the payment on the card terminal / GCash app first: for walk-in sales the POS records what you confirm and does not verify it.
+      </div>
+
       <!-- Quick Denominations for Rapid Touch Input -->
-      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px;">
+      <div id="pay-quick-buttons" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px;">
         <button type="button" class="btn btn-outline btn-sm" style="flex:1; min-width:60px;" onclick="setTenderedAmount(${total}, ${total})">Clear</button>
         <button type="button" class="btn btn-outline btn-sm" style="flex:1; min-width:40px;" onclick="addTenderedAmount(1, ${total})">₱1</button>
         <button type="button" class="btn btn-outline btn-sm" style="flex:1; min-width:40px;" onclick="addTenderedAmount(5, ${total})">₱5</button>
@@ -3962,7 +4351,22 @@ function openPaymentModal() {
         <span id="pay-change" style="font-size:16px; font-weight:800; color:var(--success, #10b981);">₱0.00</span>
       </div>
     </form>
-  `, `<button class="btn btn-primary" onclick="submitCheckout()" style="width:100%; height:44px; font-size:14px; font-weight:700;"><i class="fas fa-check-circle"></i> Confirm & Complete Sale</button>`);
+  `, `<button id="checkout-confirm-btn" class="btn btn-primary" onclick="submitCheckout()" style="width:100%; height:44px; font-size:14px; font-weight:700;"><i class="fas fa-check-circle"></i> Confirm &amp; Complete Sale</button>`);
+}
+
+function onPayMethodChange(total) {
+  const method = (document.getElementById("pay-method") || {}).value;
+  const input = document.getElementById("pay-tendered");
+  const quick = document.getElementById("pay-quick-buttons");
+  const note = document.getElementById("pay-noncash-note");
+  const isCash = method === "CASH";
+  if (input) {
+    if (!isCash) input.value = Number(total).toFixed(2);
+    input.readOnly = !isCash;
+  }
+  if (quick) quick.style.display = isCash ? "flex" : "none";
+  if (note) note.style.display = isCash ? "none" : "block";
+  calculateChange(total);
 }
 
 function setTenderedAmount(amount, total) {
@@ -3989,58 +4393,98 @@ function addTenderedAmount(amount, total) {
 }
 
 function calculateChange(total) {
+  const method = (document.getElementById("pay-method") || {}).value;
   const tendered = parseFloat(document.getElementById("pay-tendered")?.value) || 0;
-  const change = Math.max(0, tendered - total);
+  const change = method && method !== "CASH" ? 0 : Math.max(0, tendered - total);
   const changeEl = document.getElementById("pay-change");
   if (changeEl) {
     changeEl.textContent = Utils.formatCurrency(change);
   }
 }
 
-async function submitCheckout() {
-  const method = document.getElementById("pay-method").value;
-  const tendered = parseFloat(document.getElementById("pay-tendered").value) || 0;
-  const total = posCart.reduce((sum, i) => sum + (i.price * i.quantity), 0);
+function receiptLinesFromSale(tx, cart) {
+  const lines = (tx && Array.isArray(tx.items) && tx.items.length)
+    ? tx.items
+    : (cart || []).map(i => ({ name: i.name, quantity: i.quantity, unit_price: i.price, total_price: i.price * i.quantity }));
+  return lines.map(i => ({
+    name: i.name,
+    quantity: i.quantity,
+    price: Number(i.unit_price),
+    unit_price: Number(i.unit_price),
+    total_price: Number(i.total_price)
+  }));
+}
 
-  if (tendered < total) {
-    Utils.showToast("Tendered amount is less than total payable amount.", "danger");
+async function submitCheckout() {
+  if (posCheckout.inFlight) return;   // double tap / Enter + click: one request at a time
+  if (!posCart.length) {
+    showCheckoutError("The cart is empty.");
+    return;
+  }
+  const online = window.currentOnlineOrder;
+  const isGcashOrder = !!online && online.payment_method === "GCASH";
+  const methodEl = document.getElementById("pay-method");
+  const method = isGcashOrder ? "GCASH" : (methodEl ? methodEl.value : "CASH");
+  const total = cartTotal();
+  const tenderedEl = document.getElementById("pay-tendered");
+  const tendered = isGcashOrder ? total : (parseFloat(tenderedEl ? tenderedEl.value : "") || 0);
+  const cents = (n) => Math.round(n * 100);
+
+  if (cents(tendered) < cents(total)) {
+    showCheckoutError("Tendered amount is less than total payable amount.");
+    return;
+  }
+  if (method !== "CASH" && cents(tendered) !== cents(total)) {
+    showCheckoutError("A non-cash payment must be exactly the amount due.");
     return;
   }
 
-  const payload = {
-    items: posCart.map(i => ({ product_id: i.product_id, quantity: i.quantity })),
-    payment_method: method,
-    amount_paid: tendered
-  };
+  // Same checkout => same key (a retry cannot charge twice). Different cart or method => new key.
+  const signature = checkoutSignature(method);
+  if (!posCheckout.key || posCheckout.signature !== signature) {
+    posCheckout.key = newCheckoutKey();
+    posCheckout.signature = signature;
+  }
+  persistCheckoutAttempt();
+
+  const payload = online
+    ? { customer_order_id: online.id, client_tx_id: posCheckout.key }
+    : {
+        items: posCart.map(i => ({ product_id: i.product_id, quantity: i.quantity })),
+        client_tx_id: posCheckout.key
+      };
+  if (!isGcashOrder) {
+    payload.payment_method = method;
+    payload.amount_paid = tendered;
+  }
+
+  const errorBox = document.getElementById("checkout-error");
+  if (errorBox) errorBox.style.display = "none";
+  setCheckoutBusy(true);
 
   try {
     const res = await Auth.fetch("/api/v1/transactions", {
       method: "POST",
       body: JSON.stringify(payload)
     });
+    let tx = null;
+    try { tx = await res.json(); } catch (e) { tx = null; }
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || "Transaction processing failed.");
-    }
-    
-    const tx = await res.json();
-    
-    // Mark customer online order as completed if applicable
-    if (window.currentOnlineOrderId) {
-      try {
-        await Auth.fetch(`/api/v1/customer-orders/${window.currentOnlineOrderId}/status`, {
-          method: "PUT",
-          body: JSON.stringify({ status: "completed" })
-        });
-        window.currentOnlineOrderId = null;
-      } catch (err) {
-        console.error("Failed to update online order status:", err);
+      const detail = tx && typeof tx.detail === "string" ? tx.detail : `The server rejected the sale (HTTP ${res.status}).`;
+      if (res.status === 409 && /different order|checkout reference/i.test(detail)) {
+        posCheckout.key = null;   // the key belongs to another checkout: start a new one
+        posCheckout.signature = null;
       }
+      const failure = new Error(detail);
+      failure.definitive = true;
+      throw failure;
     }
-    
-    Utils.showToast("Order completed successfully!", "success");
+
+    Utils.showToast(tx.idempotent_replay ? "This sale was already recorded. Showing the original receipt." : "Order completed successfully!", tx.idempotent_replay ? "info" : "success");
     Utils.closeModal();
-    
+    const committedNet = Number(tx.net_amount !== undefined ? tx.net_amount : total);
+    const committedMethod = String((tx.payments && tx.payments[0] && tx.payments[0].payment_method) || method).toUpperCase();
+
     const currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
     const orderForReceipt = {
       id: tx.id,
@@ -4048,36 +4492,32 @@ async function submitCheckout() {
       orderCode: tx.order_code || `TXN-${String(tx.id).padStart(4, '0')}`,
       date: tx.created_at || new Date().toISOString(),
       cashier: currentUser ? (currentUser.name || currentUser.username) : "Cashier",
-      items: posCart.map(i => ({
-        name: i.name,
-        quantity: i.quantity,
-        price: i.price,
-        unit_price: i.price,
-        total_price: i.price * i.quantity
-      })),
-      total_amount: total,
-      net_amount: tx.net_amount || total,
-      discount_amount: tx.discount_amount || 0,
-      tax_amount: tx.tax_amount || 0,
-      payment_method: method,
+      // The receipt shows what the server committed (lines, prices, totals, method), never the browser cart:
+      // on a replay the cart may no longer match the original sale.
+      items: receiptLinesFromSale(tx, posCart),
+      total_amount: Number(tx.total_amount !== undefined ? tx.total_amount : total),
+      net_amount: committedNet,
+      discount_amount: Number(tx.discount_amount || 0),
+      tax_amount: Number(tx.tax_amount || 0),
+      payment_method: committedMethod,
       payment_status: tx.status || "completed",
-      amount_paid: tendered,
-      change: method.toUpperCase() === "CASH" ? Math.max(0, tendered - total) : 0
+      amount_paid: committedMethod === "CASH" ? tendered : committedNet,
+      change: committedMethod === "CASH" ? Math.max(0, tendered - committedNet) : 0
     };
-    
+
     window.lastCompletedOrder = orderForReceipt;
-    Utils.showReceiptModal(orderForReceipt, `<i class="fas fa-check-circle" style="color:var(--success, #10b981); margin-right:8px;"></i> Transaction Complete — ${orderForReceipt.receiptNumber}`);
-    
-    clearCart();
+    Utils.showReceiptModal(orderForReceipt, `<i class="fas fa-check-circle" style="color:var(--success, #10b981); margin-right:8px;"></i> Transaction Complete — ${Utils.escapeHtml(orderForReceipt.receiptNumber)}`);
+
+    clearCart();   // also forgets the idempotency key and the loaded customer order
     localStorage.setItem("RESTOTRACK_SYNC_TX", Date.now());
+    fetchPendingOnlineOrders();
 
     try {
       const dRes = await Auth.fetch("/api/v1/shifts/drawer-summary");
       if (dRes.ok) {
         const dData = await dRes.json();
         const cUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
-        const myS = (dData.shifts || []).find(s => s.status === 'open' && (cUser ? s.cashier_id === cUser.id : true))
-                 || (dData.shifts || []).find(s => s.status === 'open');
+        const myS = (dData.shifts || []).find(s => s.status === 'open' && !!cUser && s.cashier_id === cUser.id);   // own drawer only, never another person's
         const dCashEl = document.getElementById("pos-cash-in-drawer-display");
         const dOrdEl = document.getElementById("pos-complete-orders-display");
         if (dCashEl && myS) dCashEl.textContent = Utils.formatCurrency(myS.expected_cash);
@@ -4085,7 +4525,15 @@ async function submitCheckout() {
       }
     } catch (e) {}
   } catch (err) {
-    Utils.showToast(err.message, "danger");
+    if (err && err.definitive) {
+      showCheckoutError(err.message);
+    } else {
+      // No answer from the server: the sale may or may not have been saved. The key is kept, so pressing
+      // Confirm again returns the original sale instead of creating a second one.
+      showCheckoutError("No response from the server, so the sale may or may not have been saved. Press Confirm again: the same checkout reference is reused and cannot charge twice.");
+    }
+  } finally {
+    setCheckoutBusy(false);
   }
 }
 
@@ -4207,10 +4655,10 @@ async function renderKitchen(c) {
           <div style="background:${isCompleted ? '#f0fdf4' : '#faf8f3'}; padding:16px 20px; border-bottom:1px solid rgba(205,190,150,0.2); display:flex; justify-content:space-between; align-items:center;">
             <div>
               <strong style="font-size:16px; font-weight:800; color:var(--text-main);">${(typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('ORD', ord.raw_id || ord.id) : (ord.id || 'ORD-0000')}</strong>
-              <div style="font-size:11px; color:var(--text-muted); margin-top:2px;"><i class="far fa-clock"></i> ${ord.time || 'Just now'} • ${ord.table || 'Takeout'}</div>
+              <div style="font-size:11px; color:var(--text-muted); margin-top:2px;"><i class="far fa-clock"></i> ${Utils.escapeHtml(ord.time || 'Just now')} • ${Utils.escapeHtml(ord.table || 'Takeout')}</div>
             </div>
             <span class="badge" style="font-size:11px; font-weight:700; ${badgeStyle}">
-              ${ord.status || 'PENDING'}
+              ${Utils.escapeHtml(ord.status || 'PENDING')}
             </span>
           </div>
           
@@ -4220,11 +4668,11 @@ async function renderKitchen(c) {
               ${(ord.items || []).map((it, idx) => `
                 <li style="display:flex; align-items:flex-start; gap:12px; margin-bottom:${idx === (ord.items.length - 1) ? '0' : '12px'}; padding-bottom:${idx === (ord.items.length - 1) ? '0' : '12px'}; border-bottom:${idx === (ord.items.length - 1) ? 'none' : '1px dashed rgba(205,190,150,0.3)'};">
                   <div style="font-size:16px; font-weight:800; color:#c9a227; min-width:32px; text-align:right;">
-                    ${it.qty || it.quantity}<span style="font-size:12px; color:var(--text-muted);">x</span>
+                    ${Utils.escapeHtml(it.qty || it.quantity)}<span style="font-size:12px; color:var(--text-muted);">x</span>
                   </div>
                   <div>
-                    <div style="font-size:14px; font-weight:700; color:var(--text-main); line-height:1.3;">${it.name || it.product_name}</div>
-                    ${it.notes ? `<div style="font-size:12px; color:#f97316; margin-top:4px;"><i class="fas fa-exclamation-circle"></i> ${it.notes}</div>` : ''}
+                    <div style="font-size:14px; font-weight:700; color:var(--text-main); line-height:1.3;">${Utils.escapeHtml(it.name || it.product_name)}</div>
+                    ${it.notes ? `<div style="font-size:12px; color:#f97316; margin-top:4px;"><i class="fas fa-exclamation-circle"></i> ${Utils.escapeHtml(it.notes)}</div>` : ''}
                   </div>
                 </li>
               `).join('')}
@@ -4240,15 +4688,15 @@ async function renderKitchen(c) {
             ` : `
               <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
                 ${ord.status !== 'PREPARING' ? `
-                  <button type="button" class="btn" style="font-size:12px; font-weight:700; padding:8px 10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:6px; border:1px solid #3b82f6; color:#3b82f6; background:rgba(59,130,246,0.06); cursor:pointer;" onclick="updateOrderStatus('${ord.raw_id || ord.id}', 'PREPARING')">
+                  <button type="button" class="btn" style="font-size:12px; font-weight:700; padding:8px 10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:6px; border:1px solid #3b82f6; color:#3b82f6; background:rgba(59,130,246,0.06); cursor:pointer;" onclick="updateOrderStatus(${Utils.jsArg(ord.raw_id || ord.id)}, 'PREPARING')">
                     <i class="fas fa-fire-burner"></i> Preparing
                   </button>
                 ` : `
-                  <button type="button" class="btn" style="font-size:12px; font-weight:700; padding:8px 10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:6px; border:1px solid #ef4444; color:#ef4444; background:rgba(239,68,68,0.06); cursor:pointer;" onclick="promptRejectOrder('${ord.raw_id || ord.id}')">
+                  <button type="button" class="btn" style="font-size:12px; font-weight:700; padding:8px 10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:6px; border:1px solid #ef4444; color:#ef4444; background:rgba(239,68,68,0.06); cursor:pointer;" onclick="promptRejectOrder(${Utils.jsArg(ord.raw_id || ord.id)})">
                     <i class="fas fa-ban"></i> Reject
                   </button>
                 `}
-                <button type="button" class="btn btn-primary" style="font-size:12px; font-weight:700; padding:8px 10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:6px; background:#10b981; color:#fff; border:none; cursor:pointer;" onclick="updateOrderStatus('${ord.raw_id || ord.id}', 'COMPLETED')">
+                <button type="button" class="btn btn-primary" style="font-size:12px; font-weight:700; padding:8px 10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:6px; background:#10b981; color:#fff; border:none; cursor:pointer;" onclick="updateOrderStatus(${Utils.jsArg(ord.raw_id || ord.id)}, 'COMPLETED')">
                   <i class="fas fa-check-circle"></i> Complete
                 </button>
               </div>
@@ -4303,10 +4751,10 @@ async function renderKitchenLogs(c) {
           <div style="background:#f0fdf4; padding:16px 20px; border-bottom:1px solid rgba(205,190,150,0.2); display:flex; justify-content:space-between; align-items:center;">
             <div>
               <strong style="font-size:16px; font-weight:800; color:var(--text-main);">${(typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('ORD', ord.raw_id || ord.id) : (ord.id || 'ORD-0000')}</strong>
-              <div style="font-size:11px; color:var(--text-muted); margin-top:2px;"><i class="far fa-clock"></i> ${ord.time || 'Just now'} • ${ord.table || 'Takeout'}</div>
+              <div style="font-size:11px; color:var(--text-muted); margin-top:2px;"><i class="far fa-clock"></i> ${Utils.escapeHtml(ord.time || 'Just now')} • ${Utils.escapeHtml(ord.table || 'Takeout')}</div>
             </div>
             <span class="badge" style="font-size:11px; font-weight:700; background:rgba(16,185,129,0.12); color:#10b981;">
-              ${ord.status || 'COMPLETED'}
+              ${Utils.escapeHtml(ord.status || 'COMPLETED')}
             </span>
           </div>
           
@@ -4316,10 +4764,10 @@ async function renderKitchenLogs(c) {
               ${(ord.items || []).map((it, idx) => `
                 <li style="display:flex; align-items:flex-start; gap:12px; margin-bottom:${idx === (ord.items.length - 1) ? '0' : '12px'}; padding-bottom:${idx === (ord.items.length - 1) ? '0' : '12px'}; border-bottom:${idx === (ord.items.length - 1) ? 'none' : '1px dashed rgba(205,190,150,0.3)'};">
                   <div style="font-size:16px; font-weight:800; color:#10b981; min-width:32px; text-align:right;">
-                    ${it.qty || it.quantity}<span style="font-size:12px; color:var(--text-muted);">x</span>
+                    ${Utils.escapeHtml(it.qty || it.quantity)}<span style="font-size:12px; color:var(--text-muted);">x</span>
                   </div>
                   <div>
-                    <div style="font-size:14px; font-weight:700; color:var(--text-main); line-height:1.3; text-decoration: line-through;">${it.name || it.product_name}</div>
+                    <div style="font-size:14px; font-weight:700; color:var(--text-main); line-height:1.3; text-decoration: line-through;">${Utils.escapeHtml(it.name || it.product_name)}</div>
                   </div>
                 </li>
               `).join('')}
@@ -4442,7 +4890,7 @@ async function renderDrinksStation(c) {
         <div class="stat-icon orange"><i class="fas fa-clock"></i></div>
         <div class="stat-info">
           <h3>Pending Drinks</h3>
-          <div class="stat-count">${pendingOrders.length}</div>
+          <div class="stat-count">${Utils.escapeHtml(pendingOrders.length)}</div>
           <div class="stat-trend" style="color:#f97316;"><i class="fas fa-exclamation-circle"></i> Needs Dispensing</div>
         </div>
       </div>
@@ -4450,7 +4898,7 @@ async function renderDrinksStation(c) {
         <div class="stat-icon blue"><i class="fas fa-blender"></i></div>
         <div class="stat-info">
           <h3>Preparing Drinks</h3>
-          <div class="stat-count">${preparingOrders.length}</div>
+          <div class="stat-count">${Utils.escapeHtml(preparingOrders.length)}</div>
           <div class="stat-trend" style="color:#3b82f6;"><i class="fas fa-spinner fa-spin"></i> In Progress</div>
         </div>
       </div>
@@ -4458,7 +4906,7 @@ async function renderDrinksStation(c) {
         <div class="stat-icon green"><i class="fas fa-check-double"></i></div>
         <div class="stat-info">
           <h3>Drinks Served</h3>
-          <div class="stat-count">${completedOrders.length}</div>
+          <div class="stat-count">${Utils.escapeHtml(completedOrders.length)}</div>
           <div class="stat-trend" style="color:#10b981;"><i class="fas fa-thumbs-up"></i> Dispatched</div>
         </div>
       </div>
@@ -4466,7 +4914,7 @@ async function renderDrinksStation(c) {
         <div class="stat-icon gold"><i class="fas fa-mug-hot"></i></div>
         <div class="stat-info">
           <h3>Drink Items</h3>
-          <div class="stat-count">${totalItems}</div>
+          <div class="stat-count">${Utils.escapeHtml(totalItems)}</div>
           <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-list-ol"></i> Drinks to Pour</div>
         </div>
       </div>
@@ -4506,11 +4954,11 @@ async function renderDrinksStation(c) {
                     <span style="font-size:11px; font-weight:700; background:#2563eb; color:#ffffff; padding:2px 8px; border-radius:12px;"><i class="fas fa-glass-water" style="margin-right:4px;"></i> DRINKS</span>
                   </div>
                   <div style="font-size:11px; color:var(--text-muted); margin-top:3px;">
-                    <i class="far fa-clock"></i> ${ord.time || 'Just now'} • <strong>${ord.table || 'Takeout'}</strong>
+                    <i class="far fa-clock"></i> ${Utils.escapeHtml(ord.time || 'Just now')} • <strong>${Utils.escapeHtml(ord.table || 'Takeout')}</strong>
                   </div>
                 </div>
                 <span class="badge" style="font-size:11px; font-weight:700; ${badgeStyle}">
-                  ${ord.status || 'PENDING'}
+                  ${Utils.escapeHtml(ord.status || 'PENDING')}
                 </span>
               </div>
 
@@ -4520,11 +4968,11 @@ async function renderDrinksStation(c) {
                   ${(ord.items || []).map((it, idx) => `
                     <li style="display:flex; align-items:flex-start; gap:12px; margin-bottom:${idx === (ord.items.length - 1) ? '0' : '12px'}; padding-bottom:${idx === (ord.items.length - 1) ? '0' : '12px'}; border-bottom:${idx === (ord.items.length - 1) ? 'none' : '1px dashed rgba(205,190,150,0.3)'};">
                       <div style="font-size:16px; font-weight:800; color:#2563eb; min-width:32px; text-align:right;">
-                        ${it.qty || it.quantity}<span style="font-size:12px; color:var(--text-muted);">x</span>
+                        ${Utils.escapeHtml(it.qty || it.quantity)}<span style="font-size:12px; color:var(--text-muted);">x</span>
                       </div>
                       <div>
-                        <div style="font-size:14px; font-weight:700; color:var(--text-main); line-height:1.3;">${it.name || it.product_name}</div>
-                        ${it.notes ? `<div style="font-size:12px; color:#f97316; margin-top:4px;"><i class="fas fa-exclamation-circle"></i> ${it.notes}</div>` : ''}
+                        <div style="font-size:14px; font-weight:700; color:var(--text-main); line-height:1.3;">${Utils.escapeHtml(it.name || it.product_name)}</div>
+                        ${it.notes ? `<div style="font-size:12px; color:#f97316; margin-top:4px;"><i class="fas fa-exclamation-circle"></i> ${Utils.escapeHtml(it.notes)}</div>` : ''}
                       </div>
                     </li>
                   `).join('')}
@@ -4542,7 +4990,7 @@ async function renderDrinksStation(c) {
                     <button type="button" class="btn" style="font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:6px; border:1px solid #ef4444; color:#ef4444; background:rgba(239,68,68,0.06); cursor:pointer;" onclick="promptRejectOrder(${ord.raw_id || ord.id})">
                       <i class="fas fa-ban"></i> Reject
                     </button>
-                    <button type="button" class="btn btn-primary" style="font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:8px; background:#10b981; color:#fff; border:none; cursor:pointer;" onclick="updateDrinksStatus('${ord.raw_id}', 'COMPLETED')">
+                    <button type="button" class="btn btn-primary" style="font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:8px; background:#10b981; color:#fff; border:none; cursor:pointer;" onclick="updateDrinksStatus(${Utils.jsArg(ord.raw_id)}, 'COMPLETED')">
                       <i class="fas fa-check-circle"></i> Complete Order
                     </button>
                   </div>
@@ -4631,7 +5079,7 @@ async function renderTransactions(c) {
       <div class="section-head" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
         <div>
           <h2>Order Transactions</h2>
-          <span style="font-size:13px; color:var(--text-muted);">${list.length} recent transactions</span>
+          <span style="font-size:13px; color:var(--text-muted);">${Utils.escapeHtml(list.length)} recent transactions</span>
         </div>
         <div>
           <button class="btn btn-outline btn-sm" onclick="renderTransactions()" style="border-color:#c9a227; color:#c9a227; display:inline-flex; align-items:center; gap:6px;">
@@ -4647,6 +5095,7 @@ async function renderTransactions(c) {
               <th>Timestamp</th>
               <th>Cashier</th>
               <th>Items</th>
+              <th>Payment</th>
               <th>Total Net</th>
               <th>Status</th>
               <th style="text-align:center;">Action</th>
@@ -4661,9 +5110,9 @@ async function renderTransactions(c) {
               } else if (statusUpper === 'PREPARING') {
                 statusBadge = `<span class="badge" style="background:#dbeafe; color:#1e40af; border:1px solid rgba(59,130,246,0.3); font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><i class="fas fa-fire"></i> PREPARING</span>`;
               } else if (statusUpper === 'REJECTED' || statusUpper === 'CANCELLED') {
-                statusBadge = `<span class="badge" style="background:#fee2e2; color:#b91c1c; border:1px solid rgba(239,68,68,0.3); font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><i class="fas fa-times-circle"></i> ${statusUpper}</span>`;
+                statusBadge = `<span class="badge" style="background:#fee2e2; color:#b91c1c; border:1px solid rgba(239,68,68,0.3); font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><i class="fas fa-times-circle"></i> ${Utils.escapeHtml(statusUpper)}</span>`;
               } else {
-                statusBadge = `<span class="badge badge-success" style="font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><i class="fas fa-check-circle"></i> ${statusUpper}</span>`;
+                statusBadge = `<span class="badge badge-success" style="font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><i class="fas fa-check-circle"></i> ${Utils.escapeHtml(statusUpper)}</span>`;
               }
 
               let actionHtml = '';
@@ -4682,6 +5131,7 @@ async function renderTransactions(c) {
                 actionHtml = `
                   <div style="display:flex; justify-content:center; align-items:center; gap:6px;">
                     <span style="display:inline-flex; align-items:center; gap:4px; color:#ef4444; font-size:11px; font-weight:700;"><i class="fas fa-ban"></i> Cancelled</span>
+                    ${refundStatusHtml(tx)}
                     <button type="button" class="btn btn-sm btn-outline" onclick="previewTransactionReceipt(${tx.id})" style="border-color:#a1a1aa; color:#71717a; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:600; cursor:pointer;" title="View Receipt">
                       <i class="fas fa-receipt"></i>
                     </button>
@@ -4710,13 +5160,14 @@ async function renderTransactions(c) {
                   </td>
                   ` : ''}
                   <td style="color:var(--text-muted); font-size:13px;">${tx.created_at ? new Date(tx.created_at).toLocaleString() : '—'}</td>
-                  <td><strong style="font-size:13px;">${tx.cashier || 'Staff'}</strong></td>
-                  <td style="color:var(--text-main); font-size:13px;" title="${itemsSummary || 'No items'}">
+                  <td><strong style="font-size:13px;">${Utils.escapeHtml(tx.cashier || 'Staff')}</strong></td>
+                  <td style="color:var(--text-main); font-size:13px;" title="${Utils.escapeHtml(itemsSummary || 'No items')}">
                     <span style="cursor:pointer; color:#c9a227; font-weight:600;" onclick="viewOrderItemsModal(${tx.id})">
                       ${(tx.items || []).length} items <i class="fas fa-info-circle" style="font-size:11px; margin-left:2px;"></i>
                     </span>
-                    ${itemsSummary ? `<div style="font-size:11px; color:var(--text-muted); max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${itemsSummary}</div>` : ''}
+                    ${itemsSummary ? `<div style="font-size:11px; color:var(--text-muted); max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${Utils.escapeHtml(itemsSummary)}</div>` : ''}
                   </td>
+                  <td style="font-size:12px;">${(tx.payments || []).map(p => `${Utils.escapeHtml(p.payment_method)}${p.verification ? ' <span title="Amount confirmed by the cashier from GCash history" style="color:#047857; font-weight:700;">&#10003; cashier-verified</span>' : ''}${p.status === 'cancelled' ? ' <span style="color:#b91c1c;">(void)</span>' : ''}`).join('<br>') || '—'}</td>
                   <td><strong style="color:#c9a227; font-size:13px;">${Utils.formatCurrency(tx.net_amount)}</strong></td>
                   <td>${statusBadge}</td>
                   <td style="text-align:center;">${actionHtml}</td>
@@ -4743,13 +5194,13 @@ window.viewOrderItemsModal = function(txId) {
         <span class="badge" style="font-size:11px; font-weight:700;">${(tx.status || 'completed').toUpperCase()}</span>
       </div>
       <div style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">
-        <span>Cashier: <strong>${tx.cashier || 'Staff'}</strong></span> &bull; 
+        <span>Cashier: <strong>${Utils.escapeHtml(tx.cashier || 'Staff')}</strong></span> &bull; 
         <span>Time: <strong>${tx.created_at ? new Date(tx.created_at).toLocaleString() : '—'}</strong></span>
       </div>
       <div style="max-height:220px; overflow-y:auto; border:1px solid rgba(205,190,150,0.25); border-radius:8px; padding:10px 14px; margin-bottom:16px;">
         ${items.length ? items.map(it => `
           <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px dashed rgba(205,190,150,0.2); font-size:13px;">
-            <div><strong style="color:#c9a227;">${it.quantity}x</strong> <span style="font-weight:600;">${it.name}</span></div>
+            <div><strong style="color:#c9a227;">${Utils.escapeHtml(it.quantity)}x</strong> <span style="font-weight:600;">${Utils.escapeHtml(it.name)}</span></div>
             <span style="font-weight:700; color:var(--text-main); font-size:12px;">₱${(it.unit_price * it.quantity).toFixed(2)}</span>
           </div>
         `).join('') : '<div style="color:var(--text-muted); text-align:center; padding:12px;">No items found.</div>'}
@@ -4788,7 +5239,7 @@ window.promptRejectOrder = function(txId) {
           <i class="fas fa-exclamation-triangle"></i>
         </div>
         <div>
-          <h3 style="font-size:17px; font-weight:800; color:var(--text-main); margin:0;">Reject / Cancel Order #${txId}</h3>
+          <h3 style="font-size:17px; font-weight:800; color:var(--text-main); margin:0;">Reject / Cancel Order #${Utils.escapeHtml(txId)}</h3>
           <p style="font-size:12px; color:var(--text-muted); margin:3px 0 0 0;">Customer cancelled order. This will void the transaction.</p>
         </div>
       </div>
@@ -4824,6 +5275,71 @@ window.promptRejectOrder = function(txId) {
   `);
 };
 
+// Refund state of a voided sale. The POS never moves money: "Record refund" only records what staff did.
+function refundStatusHtml(tx) {
+  const role = String(((typeof Auth !== 'undefined' && Auth.getUser) ? (Auth.getUser() || {}) : {}).role || '').toLowerCase();
+  const canRecord = ['manager', 'admin', 'super_admin'].includes(role);
+  if (tx.refund_status === 'pending') {
+    return `<span title="Money was collected for this sale and has not been recorded as returned" style="color:#b45309; font-size:11px; font-weight:700;">Refund pending</span>`
+      + (canRecord ? `<button type="button" class="btn btn-sm btn-outline" onclick="promptRecordRefund(${Utils.jsArg(tx.id)})" style="border-color:#b45309; color:#b45309; border-radius:6px; padding:4px 8px; font-size:11px; font-weight:700;">Record refund</button>` : '');
+  }
+  if (tx.refund_status === 'refunded') return '<span style="color:#047857; font-size:11px; font-weight:700;">Refunded</span>';
+  if (tx.refund_status === 'not_required') return '<span style="color:#71717a; font-size:11px; font-weight:700;">No refund needed</span>';
+  return '';
+}
+
+window.promptRecordRefund = function(txId) {
+  const tx = (window._recentTransactionsCache || []).find(t => t.id === txId) || {};
+  const methods = [...new Set((tx.payments || []).map(p => String(p.payment_method || '').toUpperCase()).filter(Boolean))];
+  const collected = (tx.payments || []).reduce((s, p) => s + Number(p.amount || 0), 0);
+  Utils.openModal('Record refund', `
+    <div style="font-size:13px; margin-bottom:12px;">Sale ${Utils.escapeHtml(Utils.formatId ? Utils.formatId('TXN', txId) : txId)} was voided after payment. Record what was actually done. <strong>The POS does not send money</strong>: return it from the drawer, the store's GCash app or the card terminal first.</div>
+    <div id="refund-error" role="alert" style="display:none; padding:8px 10px; margin-bottom:10px; background:#fee2e2; color:#991b1b; border-radius:8px; font-size:12px; font-weight:600;"></div>
+    <label style="font-size:12px; font-weight:600;">Outcome</label>
+    <select id="refund-outcome" class="input-field" style="width:100%; margin-bottom:10px;">
+      <option value="refunded">Money returned to the customer (full amount)</option>
+      <option value="not_required">Nothing had actually been collected</option>
+    </select>
+    <label style="font-size:12px; font-weight:600;">Amount returned (₱)</label>
+    <input id="refund-amount" class="input-field" type="text" readonly value="${Utils.escapeHtml(collected.toFixed(2))}" style="width:100%; margin-bottom:10px;">
+    <label style="font-size:12px; font-weight:600;">Returned by</label>
+    <select id="refund-method" class="input-field" style="width:100%; margin-bottom:10px;">
+      ${methods.map(m => `<option value="${Utils.escapeHtml(m)}">${Utils.escapeHtml(m)}</option>`).join('')}
+    </select>
+    <label style="font-size:12px; font-weight:600;">Reference (e.g. GCash ref of the refund, optional)</label>
+    <input id="refund-reference" class="input-field" type="text" maxlength="60" style="width:100%; margin-bottom:10px;">
+    <label style="font-size:12px; font-weight:600;">Note (required)</label>
+    <input id="refund-note" class="input-field" type="text" maxlength="200" style="width:100%;">
+  `, `<button id="refund-submit-btn" class="btn btn-primary" onclick="submitRecordRefund(${Utils.jsArg(txId)})" style="width:100%;">Save refund record</button>`);
+};
+
+window.submitRecordRefund = async function(txId) {
+  const btn = document.getElementById('refund-submit-btn');
+  const errBox = document.getElementById('refund-error');
+  const outcome = document.getElementById('refund-outcome').value;
+  const body = { outcome, note: document.getElementById('refund-note').value.trim() };
+  if (outcome === 'refunded') {
+    body.amount = document.getElementById('refund-amount').value;
+    body.refund_method = document.getElementById('refund-method').value;
+    const ref = document.getElementById('refund-reference').value.trim();
+    if (ref) body.reference_no = ref;
+  }
+  if (btn) btn.disabled = true;
+  try {
+    const res = await Auth.fetch(`/api/v1/transactions/${txId}/refund`, { method: 'POST', body: JSON.stringify(body) });
+    let data = null;
+    try { data = await res.json(); } catch (e) { data = null; }
+    if (!res.ok) throw new Error((data && typeof data.detail === 'string') ? data.detail : `Could not save (HTTP ${res.status}).`);
+    Utils.closeModal();
+    Utils.showToast(outcome === 'refunded' ? 'Refund recorded.' : 'Recorded: no refund needed.', 'success');
+    if (typeof renderTransactions === 'function') renderTransactions(document.getElementById('view-container'));
+  } catch (err) {
+    if (errBox) { errBox.textContent = err.message; errBox.style.display = 'block'; }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+};
+
 window.submitRejectOrder = async function(txId) {
   const selectEl = document.getElementById("reject-reason-select");
   const customEl = document.getElementById("reject-custom-reason");
@@ -4846,8 +5362,12 @@ window.submitRejectOrder = async function(txId) {
       throw new Error(err.detail || "Failed to reject order.");
     }
 
+    let voided = null;
+    try { voided = await res.json(); } catch (e) { voided = null; }
     Utils.closeModal();
-    Utils.showToast(`Order #${txId} was successfully rejected / cancelled.`, "success");
+    Utils.showToast(voided && voided.refund_status === "pending"
+      ? `Order #${txId} was voided. Payment had been collected: return it and have a manager record the refund.`
+      : `Order #${txId} was successfully rejected / cancelled.`, voided && voided.refund_status === "pending" ? "warning" : "success");
 
     try {
       localStorage.setItem("RESTOTRACK_SYNC_KITCHEN", JSON.stringify({ timestamp: Date.now(), orderId: txId, status: "rejected" }));
@@ -4929,7 +5449,7 @@ async function renderUsers(c) {
         <div class="stat-icon gold"><i class="fas fa-users"></i></div>
         <div class="stat-info">
           <h3>Total Branch Staff</h3>
-          <div class="stat-count" style="color:#c9a227;">${users.length}</div>
+          <div class="stat-count" style="color:#c9a227;">${Utils.escapeHtml(users.length)}</div>
           <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-user-friends"></i> Active Staff</div>
         </div>
       </div>
@@ -4937,7 +5457,7 @@ async function renderUsers(c) {
         <div class="stat-icon purple"><i class="fas fa-user-tie"></i></div>
         <div class="stat-info">
           <h3>Managers</h3>
-          <div class="stat-count" style="color:#7b1fa2;">${stats.managers || 0}</div>
+          <div class="stat-count" style="color:#7b1fa2;">${Utils.escapeHtml(stats.managers || 0)}</div>
           <div class="stat-trend" style="color:#7b1fa2;"><i class="fas fa-briefcase"></i> Shift leaders</div>
         </div>
       </div>
@@ -4945,7 +5465,7 @@ async function renderUsers(c) {
         <div class="stat-icon green"><i class="fas fa-cash-register"></i></div>
         <div class="stat-info">
           <h3>Cashiers</h3>
-          <div class="stat-count" style="color:#10b981;">${stats.cashiers || 0}</div>
+          <div class="stat-count" style="color:#10b981;">${Utils.escapeHtml(stats.cashiers || 0)}</div>
           <div class="stat-trend" style="color:#10b981;"><i class="fas fa-receipt"></i> POS Staff</div>
         </div>
       </div>
@@ -4953,14 +5473,14 @@ async function renderUsers(c) {
         <div class="stat-icon orange"><i class="fas fa-utensils"></i></div>
         <div class="stat-info">
           <h3>Kitchen Crew</h3>
-          <div class="stat-count" style="color:#f97316;">${stats.kitchen || 0}</div>
+          <div class="stat-count" style="color:#f97316;">${Utils.escapeHtml(stats.kitchen || 0)}</div>
           <div class="stat-trend" style="color:#f97316;"><i class="fas fa-fire"></i> KDS Staff</div>
         </div>
       </div>
     </div>
 
     <div class="toolbar fade-up delay-1" style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; flex-wrap:wrap;">
-      <div style="font-size:13px; color:var(--text-muted);">${users.length} staff accounts registered</div>
+      <div style="font-size:13px; color:var(--text-muted);">${Utils.escapeHtml(users.length)} staff accounts registered</div>
       <button class="btn btn-primary" onclick="openAddStaffModal()" style="display:inline-flex; align-items:center; gap:8px;">
         <i class="fas fa-user-plus"></i> Add Staff Member
       </button>
@@ -4969,7 +5489,7 @@ async function renderUsers(c) {
     <div class="section-card">
       <div class="section-head">
         <h2>Branch Staff Members</h2>
-        <span style="font-size:13px; color:var(--text-muted);">${users.length} staff accounts</span>
+        <span style="font-size:13px; color:var(--text-muted);">${Utils.escapeHtml(users.length)} staff accounts</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -4985,9 +5505,9 @@ async function renderUsers(c) {
           <tbody>
             ${users.length ? users.map(u => `
               <tr>
-                <td><strong style="color:var(--text-main); font-size:13px;">${u.username}</strong></td>
-                <td style="color:var(--text-muted); font-size:13px;">${u.email || '—'}</td>
-                <td><span class="badge badge-info" style="font-size:11px; font-weight:700; text-transform:uppercase;">${u.role}</span></td>
+                <td><strong style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(u.username)}</strong></td>
+                <td style="color:var(--text-muted); font-size:13px;">${Utils.escapeHtml(u.email || '—')}</td>
+                <td><span class="badge badge-info" style="font-size:11px; font-weight:700; text-transform:uppercase;">${Utils.escapeHtml(u.role)}</span></td>
                 <td>
                   <span class="badge ${u.is_active ? 'badge-success' : 'badge-danger'}" style="font-size:11px; font-weight:700;">
                     ${u.is_active ? 'Active' : 'Inactive'}
@@ -4998,7 +5518,7 @@ async function renderUsers(c) {
                     <button class="btn btn-outline btn-sm" onclick="toggleStaffStatus(${u.id}, ${u.is_active})" style="padding:4px 8px; font-size:12px;" title="${u.is_active ? 'Deactivate User' : 'Activate User'}">
                       <i class="fas ${u.is_active ? 'fa-user-slash' : 'fa-user-check'}"></i> ${u.is_active ? 'Deactivate' : 'Activate'}
                     </button>
-                    <button class="btn btn-danger btn-sm" onclick="confirmDeleteStaff(${u.id}, '${u.username.replace(/'/g, "\\'")}')" style="padding:4px 8px; font-size:12px;" title="Delete Staff Account">
+                    <button class="btn btn-danger btn-sm" onclick="confirmDeleteStaff(${u.id}, ${Utils.jsArg(u.username)})" style="padding:4px 8px; font-size:12px;" title="Delete Staff Account">
                       <i class="fas fa-trash-alt"></i> Delete
                     </button>
                   </div>
@@ -5020,7 +5540,7 @@ window.confirmDeleteStaff = function(id, username) {
       </div>
       <h3 style="font-size:17px; font-weight:800; color:var(--text-main); margin-bottom:8px;">Delete Staff Account?</h3>
       <p style="font-size:14px; color:var(--text-muted); line-height:1.5; margin-bottom:0;">
-        Are you sure you want to permanently delete user account <strong style="color:var(--text-main);">@${username}</strong>? This action cannot be undone.
+        Are you sure you want to permanently delete user account <strong style="color:var(--text-main);">@${Utils.escapeHtml(username)}</strong>? This action cannot be undone.
       </p>
     </div>
   `, `
@@ -5165,7 +5685,7 @@ async function renderLogs(c) {
     <div class="section-card">
       <div class="section-head">
         <h2>Branch Activity Audit Trail</h2>
-        <span style="font-size:13px; color:var(--text-muted);">${logs.length} logged actions</span>
+        <span style="font-size:13px; color:var(--text-muted);">${Utils.escapeHtml(logs.length)} logged actions</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -5182,10 +5702,10 @@ async function renderLogs(c) {
             ${logs.length ? logs.map(l => `
               <tr>
                 <td style="color:var(--text-muted); font-size:13px;">${l.created_at ? new Date(l.created_at).toLocaleString() : '—'}</td>
-                <td><strong style="color:var(--text-main); font-size:13px;">${l.performed_by}</strong></td>
-                <td><span class="badge badge-info" style="font-size:11px; font-weight:700;">${l.role || 'Staff'}</span></td>
-                <td><strong style="font-size:13px;">${l.action}</strong></td>
-                <td style="color:var(--text-muted); font-size:13px;">${l.details || '—'}</td>
+                <td><strong style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(l.performed_by)}</strong></td>
+                <td><span class="badge badge-info" style="font-size:11px; font-weight:700;">${Utils.escapeHtml(l.role || 'Staff')}</span></td>
+                <td><strong style="font-size:13px;">${Utils.escapeHtml(l.action)}</strong></td>
+                <td style="color:var(--text-muted); font-size:13px;">${Utils.escapeHtml(l.details || '—')}</td>
               </tr>
             `).join('') : '<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-muted);">No activity logs found for this branch.</td></tr>'}
           </tbody>
@@ -5219,7 +5739,7 @@ async function renderReports(c) {
         <div class="stat-icon green"><i class="fas fa-shopping-basket"></i></div>
         <div class="stat-info">
           <h3>Total Completed Orders</h3>
-          <div class="stat-count" style="color:#10b981;">${transactions.length}</div>
+          <div class="stat-count" style="color:#10b981;">${Utils.escapeHtml(transactions.length)}</div>
           <div class="stat-trend" style="color:#10b981;"><i class="fas fa-check"></i> Orders billed</div>
         </div>
       </div>
@@ -5260,7 +5780,7 @@ async function renderSettings(c) {
       <div style="padding:22px 24px;">
         <div class="input-group" style="margin-bottom:14px;">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Logged-in Username</label>
-          <input class="input-field" value="${user.username}" disabled style="width:100%;">
+          <input class="input-field" value="${Utils.escapeHtml(user.username)}" disabled style="width:100%;">
         </div>
         <div class="input-group" style="margin-bottom:14px;">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Assigned Role</label>
@@ -5308,8 +5828,8 @@ async function renderSuppliers(c) {
       <div class="stat-card">
         <div class="stat-icon ${icons[i % icons.length]}"><i class="fas ${faIcons[i % faIcons.length]}"></i></div>
         <div class="stat-info">
-          <h3>${cat.name || 'General'}</h3>
-          <div class="stat-count">${cat.count}</div>
+          <h3>${Utils.escapeHtml(cat.name || 'General')}</h3>
+          <div class="stat-count">${Utils.escapeHtml(cat.count)}</div>
           <div class="stat-trend">Category</div>
         </div>
       </div>
@@ -5323,7 +5843,7 @@ async function renderSuppliers(c) {
             <div class="stat-icon gold"><i class="fas fa-truck"></i></div>
             <div class="stat-info">
               <h3>Active Suppliers</h3>
-              <div class="stat-count" style="color:#c9a227;">${statsData.active_suppliers}</div>
+              <div class="stat-count" style="color:#c9a227;">${Utils.escapeHtml(statsData.active_suppliers)}</div>
               <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-handshake"></i> Verified Vendors</div>
             </div>
           </div>
@@ -5346,7 +5866,7 @@ async function renderSuppliers(c) {
           <div class="section-head">
             <div>
               <h2 style="margin:0; font-size:15px; font-weight:700;">Registered Supplier Directory</h2>
-              <span id="supp-count-badge" style="font-size:12px; color:var(--text-muted);">${globalSuppliers.length} vendor partners</span>
+              <span id="supp-count-badge" style="font-size:12px; color:var(--text-muted);">${Utils.escapeHtml(globalSuppliers.length)} vendor partners</span>
             </div>
           </div>
           
@@ -5395,15 +5915,15 @@ function renderSupplierRows(suppliers) {
   }
   return suppliers.map(s => `
     <tr>
-      <td><strong style="color:var(--text-main); font-size:13px;">${s.supplier_name}</strong></td>
-      <td style="color:var(--text-muted); font-size:13px;">${s.contact_person || '—'}</td>
-      <td><span style="font-family:monospace; font-size:12px; color:var(--text-muted);">${s.contact_number || '—'}</span></td>
-      <td style="color:var(--text-muted); font-size:13px;">${s.email || '—'}</td>
-      <td><span class="badge badge-info" style="font-size:11px; font-weight:700;">${s.category || 'General'}</span></td>
-      <td style="color:var(--text-muted); font-size:12px;">${s.notes || '—'}</td>
+      <td><strong style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(s.supplier_name)}</strong></td>
+      <td style="color:var(--text-muted); font-size:13px;">${Utils.escapeHtml(s.contact_person || '—')}</td>
+      <td><span style="font-family:monospace; font-size:12px; color:var(--text-muted);">${Utils.escapeHtml(s.contact_number || '—')}</span></td>
+      <td style="color:var(--text-muted); font-size:13px;">${Utils.escapeHtml(s.email || '—')}</td>
+      <td><span class="badge badge-info" style="font-size:11px; font-weight:700;">${Utils.escapeHtml(s.category || 'General')}</span></td>
+      <td style="color:var(--text-muted); font-size:12px;">${Utils.escapeHtml(s.notes || '—')}</td>
       <td>
         <span class="badge ${s.status === 'Active' ? 'badge-success' : 'badge-danger'}" style="font-size:11px; font-weight:700;">
-          ${s.status || 'Active'}
+          ${Utils.escapeHtml(s.status || 'Active')}
         </span>
       </td>
       <td style="text-align:right; white-space:nowrap;">
@@ -5435,16 +5955,16 @@ function renderSupplierCards(suppliers) {
     const isActive = (s.status || 'Active').toLowerCase() === 'active';
     const statusBadge = isActive 
       ? `<span class="badge badge-success" style="font-size:11px; font-weight:700;"><i class="fas fa-check-circle" style="font-size:9px; margin-right:4px;"></i>Active</span>`
-      : `<span class="badge badge-danger" style="font-size:11px; font-weight:700;"><i class="fas fa-times-circle" style="font-size:9px; margin-right:4px;"></i>${s.status || 'Inactive'}</span>`;
+      : `<span class="badge badge-danger" style="font-size:11px; font-weight:700;"><i class="fas fa-times-circle" style="font-size:9px; margin-right:4px;"></i>${Utils.escapeHtml(s.status || 'Inactive')}</span>`;
 
     return `
       <div class="supplier-mobile-card">
         <div class="supplier-card-header">
           <div>
-            <div class="supplier-card-title">${s.supplier_name}</div>
+            <div class="supplier-card-title">${Utils.escapeHtml(s.supplier_name)}</div>
             <div class="supplier-card-badges">
               <span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; border:1px solid rgba(201,162,39,0.3); font-size:11px; font-weight:600;">
-                <i class="fas fa-tag" style="font-size:9px; margin-right:4px;"></i>${s.category || 'General'}
+                <i class="fas fa-tag" style="font-size:9px; margin-right:4px;"></i>${Utils.escapeHtml(s.category || 'General')}
               </span>
               ${statusBadge}
             </div>
@@ -5454,23 +5974,23 @@ function renderSupplierCards(suppliers) {
         <div class="supplier-card-body">
           <div class="supplier-field-row">
             <span class="supplier-field-label">Contact Person</span>
-            <span class="supplier-field-value">${s.contact_person || 'Not provided'}</span>
+            <span class="supplier-field-value">${Utils.escapeHtml(s.contact_person || 'Not provided')}</span>
           </div>
 
           <div class="supplier-field-row">
             <span class="supplier-field-label">Phone</span>
-            <span class="supplier-field-value phone">${s.contact_number || 'Not provided'}</span>
+            <span class="supplier-field-value phone">${Utils.escapeHtml(s.contact_number || 'Not provided')}</span>
           </div>
 
           <div class="supplier-field-row">
             <span class="supplier-field-label">Email</span>
-            <span class="supplier-field-value">${s.email || 'Not provided'}</span>
+            <span class="supplier-field-value">${Utils.escapeHtml(s.email || 'Not provided')}</span>
           </div>
 
           ${s.notes ? `
           <div class="supplier-field-row">
             <span class="supplier-field-label">Payment Terms / Notes</span>
-            <span class="supplier-field-value" style="color:var(--text-muted); font-size:12px;">${s.notes}</span>
+            <span class="supplier-field-value" style="color:var(--text-muted); font-size:12px;">${Utils.escapeHtml(s.notes)}</span>
           </div>
           ` : ''}
         </div>
@@ -5734,7 +6254,7 @@ function confirmDeleteSupplier(id) {
         <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px; padding:12px; border-radius:8px; background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25);">
           <i class="fas fa-exclamation-triangle" style="font-size:24px; color:var(--danger, #ef4444); flex-shrink:0;"></i>
           <div>
-            <strong>Are you sure you want to delete <span style="color:var(--danger, #ef4444);">${safeName}</span>?</strong>
+            <strong>Are you sure you want to delete <span style="color:var(--danger, #ef4444);">${Utils.escapeHtml(safeName)}</span>?</strong>
           </div>
         </div>
         <p style="margin-bottom:10px; color:var(--text-muted);">
@@ -6543,7 +7063,7 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
           <div class="pl-stat-info">
             <h3>Net Operating Profit</h3>
             <div class="pl-stat-count" style="color:${isProfitable ? '#10b981' : '#ef4444'};">${Utils.formatCurrency(netProfitVal)}</div>
-            <div class="pl-stat-trend" style="color:${isProfitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${profitMarginDisplay} margin</div>
+            <div class="pl-stat-trend" style="color:${isProfitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${Utils.escapeHtml(profitMarginDisplay)} margin</div>
           </div>
         </div>
 
@@ -6563,7 +7083,7 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
           <div class="pl-stat-info">
             <h3>Current Inventory Value</h3>
             <div class="pl-stat-count" style="color:#06b6d4;">${Utils.formatCurrency(inventoryValuationVal)}</div>
-            <div class="pl-stat-trend" style="color:#06b6d4;"><i class="fas fa-tags"></i> ${inv.total_items_count || 0} items at cost</div>
+            <div class="pl-stat-trend" style="color:#06b6d4;"><i class="fas fa-tags"></i> ${Utils.escapeHtml(inv.total_items_count || 0)} items at cost</div>
           </div>
         </div>
       </div>
@@ -6575,7 +7095,7 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
           <div class="pl-stat-info">
             <h3>Total Orders Revenue</h3>
             <div class="pl-stat-count" style="color:#c9a227;">${Utils.formatCurrency(rev.total_orders_revenue || 0)}</div>
-            <div class="pl-stat-trend" style="color:var(--success, #10b981);"><i class="fas fa-receipt"></i> ${rev.total_orders_count || 0} completed order(s)</div>
+            <div class="pl-stat-trend" style="color:var(--success, #10b981);"><i class="fas fa-receipt"></i> ${Utils.escapeHtml(rev.total_orders_count || 0)} completed order(s)</div>
           </div>
         </div>
 
@@ -6586,7 +7106,7 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
           <div class="pl-stat-info">
             <h3>Net Operating Profit</h3>
             <div class="pl-stat-count" style="color:${isProfitable ? '#10b981' : '#ef4444'};">${Utils.formatCurrency(netProfitVal)}</div>
-            <div class="pl-stat-trend" style="color:${isProfitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${profitMarginDisplay} profit margin</div>
+            <div class="pl-stat-trend" style="color:${isProfitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${Utils.escapeHtml(profitMarginDisplay)} profit margin</div>
           </div>
         </div>
 
@@ -6604,7 +7124,7 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
           <div class="pl-stat-info">
             <h3>Inventory Stock Price Value</h3>
             <div class="pl-stat-count" style="color:#6366f1;">${Utils.formatCurrency(inventoryValuationVal)}</div>
-            <div class="pl-stat-trend" style="color:#6366f1;"><i class="fas fa-tags"></i> Across ${inv.total_items_count || 0} items</div>
+            <div class="pl-stat-trend" style="color:#6366f1;"><i class="fas fa-tags"></i> Across ${Utils.escapeHtml(inv.total_items_count || 0)} items</div>
           </div>
         </div>
       </div>
@@ -6690,8 +7210,8 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
           </div>
 
           <div class="pl-card-footer">
-            <span>Operating Margin: <strong>${profitMarginDisplay}</strong></span>
-            <span>Period Sales Count: <strong>${rev.today_orders_count || 0} order(s)</strong></span>
+            <span>Operating Margin: <strong>${Utils.escapeHtml(profitMarginDisplay)}</strong></span>
+            <span>Period Sales Count: <strong>${Utils.escapeHtml(rev.today_orders_count || 0)} order(s)</strong></span>
           </div>
         </div>
 
@@ -6790,10 +7310,10 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
               <i class="fas fa-file-invoice-dollar"></i> Operating Expenses (${(tables.expenses || []).length})
             </button>
             <button class="pl-tab-btn ${window._currentPlTab === 'transfers' ? 'active' : ''}" onclick="switchPlTab('transfers')">
-              <i class="fas ${isAdmin ? 'fa-inbox' : 'fa-paper-plane'}"></i> ${isAdmin ? 'Incoming Transfers' : 'Transfer Ledger'} (${history.length})
+              <i class="fas ${isAdmin ? 'fa-inbox' : 'fa-paper-plane'}"></i> ${isAdmin ? 'Incoming Transfers' : 'Transfer Ledger'} (${Utils.escapeHtml(history.length)})
             </button>
             <button class="pl-tab-btn ${window._currentPlTab === 'inventory' ? 'active' : ''}" onclick="switchPlTab('inventory')">
-              <i class="fas fa-boxes-stacked"></i> Stock Valuation (${inv.total_items_count || 0})
+              <i class="fas fa-boxes-stacked"></i> Stock Valuation (${Utils.escapeHtml(inv.total_items_count || 0)})
             </button>
             <button class="pl-tab-btn ${window._currentPlTab === 'reconciliation' ? 'active' : ''}" onclick="switchPlTab('reconciliation')">
               <i class="fas fa-scale-balanced"></i> Reconciliation Audit (${recon.checks ? recon.checks.length : 0})
@@ -6818,9 +7338,9 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
             <tbody>
               ${(tables.sales_orders && tables.sales_orders.length > 0) ? tables.sales_orders.map(o => `
                 <tr>
-                  <td><strong style="color:var(--text-main); font-size:13px;">${o.order_code}</strong></td>
+                  <td><strong style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(o.order_code)}</strong></td>
                   <td style="color:var(--text-muted); font-size:12px;">${o.created_at ? new Date(o.created_at).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'}</td>
-                  <td>${o.cashier}</td>
+                  <td>${Utils.escapeHtml(o.cashier)}</td>
                   <td style="color:var(--text-main); font-weight:600;">${Utils.formatCurrency(o.gross_amount)}</td>
                   <td style="color:#ef4444;">${o.discount_amount > 0 ? '-' + Utils.formatCurrency(o.discount_amount) : '₱0.00'}</td>
                   <td><strong style="color:#10b981; font-weight:800;">${Utils.formatCurrency(o.net_amount)}</strong></td>
@@ -6851,10 +7371,10 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
               ${(tables.expenses && tables.expenses.length > 0) ? tables.expenses.map(e => `
                 <tr>
                   <td style="color:var(--text-muted); font-size:12px;">${e.expense_date ? new Date(e.expense_date).toLocaleDateString([], { month:'short', day:'numeric', year:'numeric' }) : '—'}</td>
-                  <td><strong style="color:#c9a227;">${e.category}</strong></td>
-                  <td style="color:var(--text-main); font-size:13px;">${e.description}</td>
-                  <td>${e.payment_method}</td>
-                  <td style="color:var(--text-muted);">${e.recorded_by}</td>
+                  <td><strong style="color:#c9a227;">${Utils.escapeHtml(e.category)}</strong></td>
+                  <td style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(e.description)}</td>
+                  <td>${Utils.escapeHtml(e.payment_method)}</td>
+                  <td style="color:var(--text-muted);">${Utils.escapeHtml(e.recorded_by)}</td>
                   <td><strong style="color:#ef4444; font-weight:800;">-${Utils.formatCurrency(e.amount)}</strong></td>
                   <td><span class="pl-badge ${e.status === 'paid' ? 'pl-badge-success' : 'pl-badge-warning'}">${e.status.toUpperCase()}</span></td>
                 </tr>
@@ -6882,10 +7402,10 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
               ${history.length > 0 ? history.map(h => `
                 <tr>
                   <td style="color:var(--text-muted); font-size:12px;">${h.created_at ? new Date(h.created_at).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'}</td>
-                  <td><strong style="color:var(--text-main); font-size:13px;">${h.cashier}</strong><span style="font-size:11px; color:var(--text-muted); display:block;">Shift #${h.shift_id}</span></td>
+                  <td><strong style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(h.cashier)}</strong><span style="font-size:11px; color:var(--text-muted); display:block;">Shift #${Utils.escapeHtml(h.shift_id)}</span></td>
                   <td><strong style="color:#10b981; font-size:14px; font-variant-numeric:tabular-nums;">+${Utils.formatCurrency(h.amount)}</strong></td>
-                  <td style="color:var(--text-main); font-size:13px;">${isAdmin ? 'Admin Safe' : h.reason}</td>
-                  <td style="color:var(--text-muted); font-size:12px;">${isAdmin ? (h.cashier || 'Store Manager') : (h.cashier || 'Cashier')}</td>
+                  <td style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(isAdmin ? 'Admin Safe' : h.reason)}</td>
+                  <td style="color:var(--text-muted); font-size:12px;">${Utils.escapeHtml(isAdmin ? (h.cashier || 'Store Manager') : (h.cashier || 'Cashier'))}</td>
                   <td><span class="pl-badge pl-badge-success"><i class="fas fa-check-circle"></i> ${isAdmin ? 'RECEIVED' : 'CASHED OUT'}</span></td>
                 </tr>
               `).join('') : `
@@ -6911,9 +7431,9 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
             <tbody>
               ${(tables.inventory_valuation && tables.inventory_valuation.length > 0) ? tables.inventory_valuation.map(iv => `
                 <tr>
-                  <td><strong style="color:var(--text-main);">${iv.name}</strong></td>
-                  <td>${iv.category || 'General'}</td>
-                  <td>${iv.quantity} ${iv.unit}</td>
+                  <td><strong style="color:var(--text-main);">${Utils.escapeHtml(iv.name)}</strong></td>
+                  <td>${Utils.escapeHtml(iv.category || 'General')}</td>
+                  <td>${Utils.escapeHtml(iv.quantity)} ${Utils.escapeHtml(iv.unit)}</td>
                   <td>${Utils.formatCurrency(iv.unit_price)}</td>
                   <td><strong style="color:#06b6d4;">${Utils.formatCurrency(iv.valuation)}</strong></td>
                   <td><span class="pl-badge ${iv.is_negative ? 'pl-badge-danger' : 'pl-badge-success'}">${iv.is_negative ? 'NEGATIVE STOCK' : 'VALID'}</span></td>
@@ -6938,13 +7458,13 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
             <tbody>
               ${(recon.checks && recon.checks.length > 0) ? recon.checks.map(rc => `
                 <tr>
-                  <td><strong style="color:var(--text-main); font-size:13.5px;">${rc.check}</strong></td>
+                  <td><strong style="color:var(--text-main); font-size:13.5px;">${Utils.escapeHtml(rc.check)}</strong></td>
                   <td>
                     <span class="pl-badge ${rc.status === 'PASS' ? 'pl-badge-success' : 'pl-badge-warning'}">
-                      <i class="fas ${rc.status === 'PASS' ? 'fa-check' : 'fa-exclamation-triangle'}"></i> ${rc.status}
+                      <i class="fas ${rc.status === 'PASS' ? 'fa-check' : 'fa-exclamation-triangle'}"></i> ${Utils.escapeHtml(rc.status)}
                     </span>
                   </td>
-                  <td style="color:var(--text-main); font-size:12.5px; line-height:1.4;">${rc.message}</td>
+                  <td style="color:var(--text-main); font-size:12.5px; line-height:1.4;">${Utils.escapeHtml(rc.message)}</td>
                 </tr>
               `).join('') : `
                 <tr><td colspan="3" class="text-center" style="padding:30px; color:var(--text-muted);">All verification checks completed successfully.</td></tr>
@@ -7101,7 +7621,7 @@ async function renderWastage(c) {
         <div class="stat-icon red"><i class="fas fa-trash-alt"></i></div>
         <div class="stat-info">
           <h3>Total Spoilage Incidents</h3>
-          <div class="stat-count" style="color:#ef4444;">${cachedWastageLogs.length}</div>
+          <div class="stat-count" style="color:#ef4444;">${Utils.escapeHtml(cachedWastageLogs.length)}</div>
           <div class="stat-trend" style="color:#ef4444;"><i class="fas fa-exclamation-triangle"></i> Logged Discards</div>
         </div>
       </div>
@@ -7132,7 +7652,7 @@ async function renderWastage(c) {
     </div>
 
     <div class="toolbar fade-up delay-1" style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; flex-wrap:wrap;">
-      <div style="font-size:13px; color:var(--text-muted);">${cachedWastageLogs.length} wastage incidents logged</div>
+      <div style="font-size:13px; color:var(--text-muted);">${Utils.escapeHtml(cachedWastageLogs.length)} wastage incidents logged</div>
       <button class="btn btn-danger" onclick="openLogWastageModal()" style="display:inline-flex; align-items:center; gap:8px;">
         <i class="fas fa-plus"></i> Record Wastage / Spoilage
       </button>
@@ -7158,12 +7678,12 @@ async function renderWastage(c) {
           <tbody>
             ${cachedWastageLogs.length ? cachedWastageLogs.map(w => `
               <tr>
-                <td><strong style="color:var(--text-main); font-size:13px;">${w.item}</strong></td>
-                <td><span style="font-weight:700; color:var(--danger);">${w.qty}</span></td>
-                <td><span class="badge badge-danger" style="font-size:11px; font-weight:700;">${w.reason}</span></td>
+                <td><strong style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(w.item)}</strong></td>
+                <td><span style="font-weight:700; color:var(--danger);">${Utils.escapeHtml(w.qty)}</span></td>
+                <td><span class="badge badge-danger" style="font-size:11px; font-weight:700;">${Utils.escapeHtml(w.reason)}</span></td>
                 <td><strong style="color:#c9a227; font-size:13px;">${Utils.formatCurrency(w.cost)}</strong></td>
-                <td style="color:var(--text-muted); font-size:13px;">${w.logged_by}</td>
-                <td style="color:var(--text-muted); font-size:13px;">${w.date}</td>
+                <td style="color:var(--text-muted); font-size:13px;">${Utils.escapeHtml(w.logged_by)}</td>
+                <td style="color:var(--text-muted); font-size:13px;">${Utils.escapeHtml(w.date)}</td>
               </tr>
             `).join('') : `
               <tr>
@@ -7278,6 +7798,7 @@ let pendingOnlineOrders = [];
 
 function startPOSOnlineOrdersPolling() {
   fetchPendingOnlineOrders();
+  if (window.posOnlineOrdersInterval) clearInterval(window.posOnlineOrdersInterval);
   window.posOnlineOrdersInterval = setInterval(fetchPendingOnlineOrders, 10000);
 }
 
@@ -7286,6 +7807,7 @@ async function fetchPendingOnlineOrders() {
     const res = await Auth.fetch("/api/v1/customer-orders/pending");
     if (res.ok) {
       pendingOnlineOrders = await res.json();
+      indexCustomerOrders(pendingOnlineOrders);
       updateOnlineOrdersBadge();
     }
   } catch (err) {
@@ -7316,22 +7838,23 @@ function openOnlineOrdersModal() {
   let ordersHtml = "<p style='color:var(--text-muted);'>No pending online orders.</p>";
   if (pendingOnlineOrders.length > 0) {
     ordersHtml = pendingOnlineOrders.map(o => {
-      let itemsHtml = o.items.map(it => `<li><strong style="color:#c9a227;">${it.quantity}x</strong> ${it.name} <span style="color:var(--text-muted); font-size:12px;">(₱${it.price})</span></li>`).join('');
+      let itemsHtml = o.items.map(it => `<li><strong style="color:#c9a227;">${Utils.escapeHtml(it.quantity)}x</strong> ${Utils.escapeHtml(it.name)} <span style="color:var(--text-muted); font-size:12px;">(₱${Utils.escapeHtml(it.price)})</span></li>`).join('');
       return `
         <div style="padding:16px; border:1px solid rgba(205,190,150,0.3); border-radius:12px; margin-bottom:12px; background:#fff;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
             <div>
-              <span style="background:#c9a227; color:#18181b; font-size:11px; padding:3px 8px; border-radius:4px; font-weight:bold; margin-right:8px;">TABLE ${o.table_number || 'Takeout'}</span>
-              <strong style="color:var(--text-main); font-size:14px;">${o.order_number}</strong>
+              <span style="background:#c9a227; color:#18181b; font-size:11px; padding:3px 8px; border-radius:4px; font-weight:bold; margin-right:8px;">TABLE ${Utils.escapeHtml(o.table_number || 'Takeout')}</span>
+              <strong style="color:var(--text-main); font-size:14px;">${Utils.escapeHtml(o.order_number)}</strong>
+              <div style="margin-top:6px;">${paymentBadgeHtml(o)}</div>
             </div>
             <div style="font-size:12px; color:var(--text-muted);">
               ${new Date(o.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
             </div>
           </div>
           <div style="font-size:13px; color:var(--text-main); margin-bottom:12px;">
-            <div><i class="fas fa-user" style="color:var(--text-muted); margin-right:6px;"></i> <strong>${o.customer_name}</strong></div>
-            <div><i class="fas fa-chair" style="color:var(--text-muted); margin-right:6px;"></i> ${o.table_number || o.order_type}</div>
-            ${o.notes ? `<div style="background:#fef3c7; color:#92400e; padding:4px 8px; border-radius:6px; font-size:11px; margin-top:6px;"><i class="fas fa-comment"></i> ${o.notes}</div>` : ''}
+            <div><i class="fas fa-user" style="color:var(--text-muted); margin-right:6px;"></i> <strong>${Utils.escapeHtml(o.customer_name)}</strong></div>
+            <div><i class="fas fa-chair" style="color:var(--text-muted); margin-right:6px;"></i> ${Utils.escapeHtml(o.table_number || o.order_type)}</div>
+            ${o.notes ? `<div style="background:#fef3c7; color:#92400e; padding:4px 8px; border-radius:6px; font-size:11px; margin-top:6px;"><i class="fas fa-comment"></i> ${Utils.escapeHtml(o.notes)}</div>` : ''}
           </div>
           <ul style="list-style:none; padding:0; margin:0 0 16px 0; font-size:13px;">
             ${itemsHtml}
@@ -7354,55 +7877,331 @@ function openOnlineOrdersModal() {
   `);
 }
 
-function processOnlineOrder(orderId) {
-  const order = pendingOnlineOrders.find(o => o.id === orderId);
-  if (!order) return;
-  
-  // Clear cart and push items
-  clearCart();
-  
-  order.items.forEach(it => {
-    let resolvedProduct = null;
-    if (it.product_id) {
-      resolvedProduct = cachedProducts.find(p => p.id === it.product_id);
-    }
-    if (!resolvedProduct && it.name) {
-      resolvedProduct = cachedProducts.find(p => (p.name || '').toLowerCase().trim() === (it.name || '').toLowerCase().trim());
-    }
+// ─────────────────────────────────────────────────────────────────────────────
+// CUSTOMER ONLINE ORDERS: payment choice, manual GCash verification, settlement
+// ─────────────────────────────────────────────────────────────────────────────
+// Payment verification is a cashier-reported check: the cashier reads the GCash transaction history and
+// types the amount received. The POS compares it with the amount due; it never contacts GCash.
 
-    if (resolvedProduct) {
-      const existing = posCart.find(c => c.product_id === resolvedProduct.id);
-      if (existing) {
-        existing.quantity += it.quantity;
-      } else {
-        posCart.push({ product_id: resolvedProduct.id, name: resolvedProduct.name, price: it.price || resolvedProduct.price, quantity: it.quantity });
-      }
-    } else {
-      posCart.push({ product_id: it.product_id || 0, name: it.name, price: it.price, quantity: it.quantity });
-    }
+function paymentBadgeHtml(o) {
+  const method = o.payment_method === "GCASH" ? "GCash"
+    : o.payment_method === "PAY_AT_COUNTER" ? "Pay at Counter"
+    : "Method not recorded";
+  const ps = o.payment_status || "unpaid";
+  let label = "Unpaid";
+  let color = "#92400e";
+  let bg = "#fef3c7";
+  if (ps === "unpaid" && o.payment_method === "GCASH") label = "GCash verification pending";
+  else if (ps === "verified") { label = "GCash verified (cashier-reported)"; color = "#047857"; bg = "#d1fae5"; }
+  else if (ps === "discrepancy") { label = "AMOUNT MISMATCH - review"; color = "#b91c1c"; bg = "#fee2e2"; }
+  else if (ps === "invalid") { label = "Payment invalid"; color = "#b91c1c"; bg = "#fee2e2"; }
+  else if (ps === "counter_paid") { label = "Paid at counter"; color = "#047857"; bg = "#d1fae5"; }
+  const methodColor = o.payment_method === "GCASH" ? "#1d4ed8" : "#3f3f46";
+  return `<span style="display:inline-block; padding:2px 8px; border-radius:6px; font-size:10.5px; font-weight:800; background:#eef2ff; color:${methodColor}; margin-right:4px;">${Utils.escapeHtml(method)}</span>` +
+         `<span style="display:inline-block; padding:2px 8px; border-radius:6px; font-size:10.5px; font-weight:800; background:${bg}; color:${color};">${Utils.escapeHtml(label)}</span>`;
+}
+
+function indexCustomerOrders(list) {
+  if (!Array.isArray(list)) return;
+  list.forEach(o => { window._customerOrderIndex[o.id] = o; });
+}
+
+async function refreshCurrentOnlineOrder() {
+  const cur = window.currentOnlineOrder;
+  if (!cur) return null;
+  const res = await Auth.fetch(`/api/v1/customer-orders/${Number(cur.id)}`);
+  if (!res.ok) {
+    let detail = "Could not load the customer order.";
+    try { detail = (await res.json()).detail || detail; } catch (e) {}
+    throw new Error(detail);
+  }
+  const fresh = await res.json();
+  Object.assign(cur, {
+    status: fresh.status,
+    payment_method: fresh.payment_method,
+    payment_status: fresh.payment_status,
+    payment_attempt: fresh.payment_attempt,
+    sale_recorded: fresh.sale_recorded,
+    total_amount: fresh.total_amount
   });
-  
-  window.currentOnlineOrderId = order.id;
-  updateCartUI();
-  Utils.closeModal();
-  
-  const posContainer = document.getElementById("pos-grid");
-  if (!posContainer && typeof renderView === "function") {
+  window._customerOrderIndex[fresh.id] = fresh;
+  return cur;
+}
+
+function processOnlineOrder(orderId) {
+  const order = window._customerOrderIndex[orderId] || pendingOnlineOrders.find(o => o.id === orderId);
+  if (!order) {
+    Utils.showToast("Order not found. Refresh the list and try again.", "danger");
+    return;
+  }
+  if (order.sale_recorded) {
+    Utils.showToast("This order already has a sale recorded.", "warning");
+    return;
+  }
+  if (window.currentOnlineOrder && window.currentOnlineOrder.id === order.id) {
+    Utils.closeModal();
+    goToPOSView();
+    return;
+  }
+  const load = () => loadOnlineOrderIntoPOS(order);
+  if (posCart.length) {
+    const count = posCart.reduce((sum, i) => sum + i.quantity, 0);
+    Utils.confirmAction(
+      "Replace the current cart?",
+      `The POS cart has ${Utils.escapeHtml(count)} item(s). Loading customer order ${Utils.escapeHtml(order.order_number)} discards them.`,
+      load
+    );
+  } else {
+    load();
+  }
+}
+
+async function goToPOSView() {
+  if (!document.getElementById("pos-grid") && typeof renderView === "function") {
     document.querySelectorAll("aside.sidebar .nav-link").forEach(el => el.classList.remove("active"));
     const posLink = document.querySelector("a[href='#pos']");
     if (posLink) posLink.classList.add("active");
-    renderView("pos").then(() => {
-      posCart = [];
-      order.items.forEach(it => {
-        posCart.push({ product_id: it.product_id, name: it.name, price: it.price, quantity: it.quantity });
-      });
-      window.currentOnlineOrderId = order.id;
-      updateCartUI();
-      Utils.showToast("Loaded Table " + (order.table_number || "") + " Order (" + order.order_number + ") into POS.", "success");
-    });
-  } else {
-    Utils.showToast("Loaded Table " + (order.table_number || "") + " Order (" + order.order_number + ") into POS.", "success");
+    await renderView("pos");
   }
+}
+
+async function loadOnlineOrderIntoPOS(order) {
+  Utils.closeModal();
+  // Set first so that rendering the POS does not restore an unrelated draft over this order.
+  window.currentOnlineOrder = {
+    id: order.id,
+    order_number: order.order_number,
+    customer_name: order.customer_name,
+    order_type: order.order_type,
+    table_number: order.table_number,
+    status: order.status,
+    payment_method: order.payment_method || null,
+    payment_status: order.payment_status || "unpaid",
+    payment_attempt: order.payment_attempt || null,
+    sale_recorded: !!order.sale_recorded,
+    total_amount: order.total_amount
+  };
+  window.currentOnlineOrderId = order.id;
+  posCheckout.key = null;
+  posCheckout.signature = null;
+  await goToPOSView();
+  // Lines and prices are the ones the server stored for this order; the server re-reads them at sale time.
+  posCart = (order.items || []).map(it => ({
+    product_id: it.product_id || 0,
+    name: it.name,
+    price: Number(it.price),
+    quantity: it.quantity
+  }));
+  updateCartUI();
+  Utils.showToast(`Loaded ${order.table_number ? "Table " + order.table_number + " " : ""}order ${order.order_number} into the POS.`, "success");
+}
+
+// ── GCash verification dialog ────────────────────────────────────────────────────────────────────
+async function openGcashModal(orderId, checkoutMode = false) {
+  let order;
+  try {
+    const res = await Auth.fetch(`/api/v1/customer-orders/${Number(orderId)}`);
+    if (!res.ok) {
+      let detail = "Could not load the order.";
+      try { detail = (await res.json()).detail || detail; } catch (e) {}
+      throw new Error(detail);
+    }
+    order = await res.json();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+    return;
+  }
+  window._customerOrderIndex[order.id] = order;
+  const cur = window.currentOnlineOrder;
+  if (cur && cur.id === order.id) {
+    Object.assign(cur, {
+      status: order.status, payment_method: order.payment_method, payment_status: order.payment_status,
+      payment_attempt: order.payment_attempt, sale_recorded: order.sale_recorded
+    });
+    renderOnlineOrderBanner();
+  }
+
+  const role = (typeof Auth !== "undefined" && Auth.getRole) ? String(Auth.getRole() || "").toLowerCase() : "";
+  const isReviewer = ["manager", "admin", "super_admin"].includes(role);
+  const ps = order.payment_status;
+  const att = order.payment_attempt;
+  const due = Utils.formatCurrency(order.total_amount);
+  const itemsHtml = (order.items || []).map(it =>
+    `<li><strong>${Utils.escapeHtml(it.quantity)}x</strong> ${Utils.escapeHtml(it.name)} <span style="color:var(--text-muted);">(${Utils.formatCurrency(it.price)})</span></li>`
+  ).join("");
+
+  let statusBox = "";
+  let formHtml = "";
+  let footer = `<button class="btn btn-outline" onclick="Utils.closeModal()">Close</button>`;
+
+  if (order.status === "rejected") {
+    statusBox = `<div style="padding:12px; background:#fee2e2; color:#991b1b; border-radius:10px; font-weight:700; margin-bottom:12px;">This order was rejected.</div>`;
+  } else if (ps === "verified") {
+    statusBox = `<div style="padding:12px; background:#d1fae5; color:#065f46; border-radius:10px; margin-bottom:12px;">
+        <strong><i class="fas fa-check-circle"></i> Amount matches: ${due}</strong>
+        <div style="font-size:12px; margin-top:4px;">Recorded as reported by the cashier from the GCash transaction history. The POS did not check GCash itself.</div>
+      </div>`;
+    if (checkoutMode && !order.sale_recorded) {
+      footer = `<button id="checkout-confirm-btn" class="btn btn-primary" onclick="submitCheckout()" style="width:100%; height:44px; font-size:14px; font-weight:700;"><i class="fas fa-check-circle"></i> Confirm &amp; Complete Sale</button>`;
+    }
+  } else if (ps === "invalid") {
+    statusBox = `<div style="padding:12px; background:#fee2e2; color:#991b1b; border-radius:10px; margin-bottom:12px;">
+        <strong><i class="fas fa-ban"></i> This payment was closed as invalid by a manager.</strong>
+        <div style="font-size:12px; margin-top:4px;">The order cannot be paid or prepared. Reject it from the order list.</div>
+      </div>`;
+  } else {
+    if (ps === "discrepancy" && att) {
+      const diff = Number(att.discrepancy_amount);
+      statusBox = `<div style="padding:14px; background:#fee2e2; color:#991b1b; border:2px solid #ef4444; border-radius:10px; margin-bottom:12px;">
+          <strong style="font-size:14px;"><i class="fas fa-exclamation-triangle"></i> AMOUNT DOES NOT MATCH - PAYMENT NOT CONFIRMED</strong>
+          <table style="width:100%; font-size:13px; margin-top:8px;">
+            <tr><td>Expected</td><td style="text-align:right;"><strong>${Utils.formatCurrency(att.expected_amount)}</strong></td></tr>
+            <tr><td>You reported</td><td style="text-align:right;"><strong>${Utils.formatCurrency(att.reported_amount)}</strong></td></tr>
+            <tr><td>Difference</td><td style="text-align:right;"><strong>${diff > 0 ? "+" : "-"}${Utils.formatCurrency(Math.abs(diff))} (${diff > 0 ? "over" : "short"})</strong></td></tr>
+          </table>
+          <div style="font-size:12px; margin-top:8px;">This order cannot be prepared or completed until the amount is corrected below or a manager reviews it. This records a payment difference only.</div>
+        </div>`;
+    }
+    formHtml = `
+      <div style="padding:10px 12px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px; font-size:12px; margin-bottom:12px; color:#1e3a8a;">
+        <strong>Check GCash first.</strong> Open the GCash transaction history for the store account, find this customer's payment, and enter
+        what you actually see. The POS cannot see your GCash account: the amount you type is recorded as <u>reported by you</u>.
+      </div>
+      <div class="input-group" style="margin-bottom:10px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Amount actually received (₱) <span style="color:var(--danger);">*</span></label>
+        <input id="gc-amount" class="input-field" inputmode="decimal" autocomplete="off" placeholder="0.00" style="width:100%; font-size:18px; font-weight:800;" onkeydown="if(event.key==='Enter'){event.preventDefault(); submitGcashVerification(${Number(order.id)}, ${checkoutMode ? "true" : "false"});}">
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+        <div class="input-group" style="flex:1 1 180px;">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">GCash reference no. (if shown)</label>
+          <input id="gc-ref" class="input-field" autocomplete="off" maxlength="60" placeholder="e.g. 1234 567 890 123" style="width:100%;">
+        </div>
+        <div class="input-group" style="flex:1 1 180px;">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Transaction time (optional)</label>
+          <input id="gc-time" type="datetime-local" class="input-field" style="width:100%;">
+        </div>
+      </div>
+      <div id="gc-error" role="alert" style="display:none; padding:10px 12px; margin-bottom:10px; background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; border-radius:10px; font-size:13px; font-weight:600;"></div>`;
+    footer = `<button class="btn btn-outline" onclick="Utils.closeModal()">Cancel</button>
+              <button id="gc-verify-btn" class="btn btn-primary" onclick="submitGcashVerification(${Number(order.id)}, ${checkoutMode ? "true" : "false"})"><i class="fas fa-search-dollar"></i> Verify amount</button>`;
+  }
+
+  let reviewHtml = "";
+  if (isReviewer && (ps === "discrepancy" || att)) {
+    reviewHtml = `
+      <div style="margin-top:14px; border-top:1px dashed rgba(205,190,150,0.5); padding-top:12px;">
+        <div style="font-size:12px; font-weight:800; text-transform:uppercase; color:var(--text-muted); margin-bottom:6px;">Manager review</div>
+        ${ps === "discrepancy" ? `
+          <textarea id="gc-resolve-note" class="input-field" rows="2" maxlength="200" placeholder="Why is this payment invalid? (required, min 5 characters)" style="width:100%; margin-bottom:8px;"></textarea>
+          <button class="btn btn-outline btn-sm" style="border-color:#ef4444; color:#ef4444;" onclick="resolveGcashDiscrepancy(${Number(order.id)}, ${checkoutMode ? "true" : "false"})">Close discrepancy as invalid payment</button>` : ""}
+        <div id="gc-attempts" style="margin-top:8px; font-size:12px;"></div>
+      </div>`;
+  }
+
+  Utils.openModal(
+    '<i class="fas fa-mobile-alt" style="color:#1d4ed8; margin-right:8px;"></i> GCash payment check',
+    `<div>
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px;">
+        <div>
+          <strong>${Utils.escapeHtml(order.order_number)}</strong>
+          <div style="font-size:12px; color:var(--text-muted);">${Utils.escapeHtml(order.customer_name)} &bull; ${Utils.escapeHtml(order.table_number ? "Table " + order.table_number : order.order_type)}</div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Amount due</div>
+          <div style="font-size:22px; font-weight:800; color:#c9a227;">${due}</div>
+        </div>
+      </div>
+      <ul style="list-style:none; padding:0; margin:0 0 10px 0; font-size:13px;">${itemsHtml}</ul>
+      <div style="margin-bottom:10px;">${paymentBadgeHtml(order)}</div>
+      <div id="checkout-error" role="alert" style="display:none; padding:10px 12px; margin-bottom:12px; background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; border-radius:10px; font-size:13px; font-weight:600;"></div>
+      ${statusBox}
+      ${formHtml}
+      ${reviewHtml}
+    </div>`,
+    footer
+  );
+  const amountInput = document.getElementById("gc-amount");
+  if (amountInput) amountInput.focus();
+  if (isReviewer && att) loadPaymentAttempts(order.id);
+}
+
+async function submitGcashVerification(orderId, checkoutMode) {
+  const btn = document.getElementById("gc-verify-btn");
+  const errorBox = document.getElementById("gc-error");
+  const show = (msg) => { if (errorBox) { errorBox.textContent = msg; errorBox.style.display = "block"; } };
+  if (btn && btn.disabled) return;
+  const amount = (document.getElementById("gc-amount") || {}).value || "";
+  if (!amount.trim()) { show("Enter the amount you see in GCash history."); return; }
+  const body = { amount_received: amount.trim() };
+  const ref = ((document.getElementById("gc-ref") || {}).value || "").trim();
+  const when = ((document.getElementById("gc-time") || {}).value || "").trim();
+  if (ref) body.reference_no = ref;
+  if (when) body.transaction_time = when;
+  if (errorBox) errorBox.style.display = "none";
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...'; }
+  try {
+    const res = await Auth.fetch(`/api/v1/customer-orders/${Number(orderId)}/payment/verify`, {
+      method: "POST",
+      body: JSON.stringify(body)
+    });
+    let data = null;
+    try { data = await res.json(); } catch (e) {}
+    if (!res.ok) {
+      show((data && typeof data.detail === "string" && data.detail) || `Verification failed (HTTP ${res.status}).`);
+      return;
+    }
+    // Re-open from the server's state so the cashier sees exactly what was recorded.
+    await openGcashModal(orderId, checkoutMode);
+    Utils.showToast(data.verified ? "Amount matches. GCash payment verified." : "Amount does NOT match. Flagged for review.", data.verified ? "success" : "danger");
+    fetchPendingOnlineOrders();
+    if (document.getElementById("cust-orders-content")) loadCustomerOrdersTable();
+  } catch (err) {
+    show("Could not reach the server. Nothing was changed on screen; try again.");
+  } finally {
+    const again = document.getElementById("gc-verify-btn");
+    if (again) { again.disabled = false; again.innerHTML = '<i class="fas fa-search-dollar"></i> Verify amount'; }
+  }
+}
+
+async function resolveGcashDiscrepancy(orderId, checkoutMode) {
+  const note = ((document.getElementById("gc-resolve-note") || {}).value || "").trim();
+  if (note.length < 5) { Utils.showToast("Write a short reason (at least 5 characters).", "warning"); return; }
+  try {
+    const res = await Auth.fetch(`/api/v1/customer-orders/${Number(orderId)}/payment/resolve`, {
+      method: "POST",
+      body: JSON.stringify({ resolution: "invalid", note })
+    });
+    if (!res.ok) {
+      let detail = "Could not close the discrepancy.";
+      try { detail = (await res.json()).detail || detail; } catch (e) {}
+      Utils.showToast(typeof detail === "string" ? detail : "Could not close the discrepancy.", "danger");
+      return;
+    }
+    Utils.showToast("Discrepancy closed as an invalid payment.", "success");
+    await openGcashModal(orderId, checkoutMode);
+    fetchPendingOnlineOrders();
+    if (document.getElementById("cust-orders-content")) loadCustomerOrdersTable();
+  } catch (err) {
+    Utils.showToast("Could not reach the server.", "danger");
+  }
+}
+
+async function loadPaymentAttempts(orderId) {
+  const box = document.getElementById("gc-attempts");
+  if (!box) return;
+  try {
+    const res = await Auth.fetch(`/api/v1/customer-orders/${Number(orderId)}/payment/attempts`);
+    if (!res.ok) return;
+    const rows = await res.json();
+    box.innerHTML = rows.length ? `<table style="width:100%; border-collapse:collapse;">
+        <thead><tr style="text-align:left; color:var(--text-muted);"><th>When</th><th>By</th><th>Reported</th><th>Result</th><th>Ref</th></tr></thead>
+        <tbody>${rows.map(r => `<tr style="border-top:1px solid rgba(205,190,150,0.25);">
+          <td>${Utils.escapeHtml(r.attempted_at ? new Date(r.attempted_at).toLocaleString() : "")}</td>
+          <td>${Utils.escapeHtml(r.attempted_by || "")}</td>
+          <td>${Utils.formatCurrency(r.reported_amount)}</td>
+          <td>${Utils.escapeHtml(r.outcome)}${r.resolution ? " / " + Utils.escapeHtml(r.resolution) : ""}${r.resolution_note ? ` <em>(${Utils.escapeHtml(r.resolution_note)})</em>` : ""}</td>
+          <td>${Utils.escapeHtml(r.reference_no || "")}</td></tr>`).join("")}</tbody></table>` : "";
+  } catch (e) {}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -7436,6 +8235,24 @@ async function renderCustomerOrdersView(c) {
   window.custOrdersInterval = setInterval(loadCustomerOrdersTable, 6000);
 }
 
+function customerOrderVerifyButton(o) {
+  if (o.payment_method !== 'GCASH' || o.status === 'rejected' || ['verified', 'invalid', 'counter_paid'].includes(o.payment_status)) return '';
+  return `<button class="btn btn-outline btn-sm" onclick="openGcashModal(${Number(o.id)})" title="Check the GCash transaction history, then enter the amount received" style="border-color:#1d4ed8; color:#1d4ed8;"><i class="fas fa-mobile-alt"></i> Verify GCash</button>`;
+}
+
+// Orders that left the "pending" queue can still need payment: verify GCash, or record payment at the POS.
+function customerOrderRowActions(h) {
+  if (h.status === 'rejected') return '<span style="color:var(--text-muted); font-size:11px;">Rejected</span>';
+  if (h.sale_recorded) return '<span style="color:#047857; font-size:11px; font-weight:700;"><i class="fas fa-check"></i> Sale recorded</span>';
+  const parts = [customerOrderVerifyButton(h)];
+  const blocked = ['discrepancy', 'invalid'].includes(h.payment_status);
+  const gcashNotReady = h.payment_method === 'GCASH' && h.payment_status !== 'verified';
+  if (!blocked && !gcashNotReady) {
+    parts.push(`<button class="btn btn-primary btn-sm" onclick="processOnlineOrder(${Number(h.id)})"><i class="fas fa-cash-register"></i> Record payment</button>`);
+  }
+  return `<div style="display:flex; gap:6px; flex-wrap:wrap;">${parts.join('')}</div>`;
+}
+
 async function loadCustomerOrdersTable() {
   const container = document.getElementById("cust-orders-content");
   if (!container) {
@@ -7458,6 +8275,8 @@ async function loadCustomerOrdersTable() {
     const history = await historyRes.json();
     
     pendingOnlineOrders = pending;
+    indexCustomerOrders(pending);
+    indexCustomerOrders(history);
     updateOnlineOrdersBadge();
 
     let html = "";
@@ -7467,7 +8286,7 @@ async function loadCustomerOrdersTable() {
       <div class="section-card" style="margin-bottom:24px;">
         <div class="section-head" style="display:flex; justify-content:space-between; align-items:center;">
           <h2 style="font-size:16px; font-weight:700; color:var(--text-main); margin:0;">
-            Pending Customer Orders (${pending.length})
+            Pending Customer Orders (${Utils.escapeHtml(pending.length)})
           </h2>
           <span class="badge ${pending.length > 0 ? 'badge-danger' : 'badge-success'}" style="font-size:11px;">
             ${pending.length > 0 ? pending.length + ' Awaiting Cashier' : 'All Clear'}
@@ -7490,7 +8309,7 @@ async function loadCustomerOrdersTable() {
         const timeStr = o.created_at ? new Date(o.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'Just now';
         const itemsList = (o.items || []).map(it => `
           <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 0; border-bottom:1px dashed rgba(205,190,150,0.2); font-size:13px;">
-            <div><strong style="color:#c9a227;">${it.quantity}x</strong> <span style="font-weight:600;">${it.name}</span></div>
+            <div><strong style="color:#c9a227;">${Utils.escapeHtml(it.quantity)}x</strong> <span style="font-weight:600;">${Utils.escapeHtml(it.name)}</span></div>
             <span style="color:var(--text-muted); font-size:12px;">₱${(parseFloat(it.price) * it.quantity).toFixed(2)}</span>
           </div>
         `).join('');
@@ -7500,16 +8319,18 @@ async function loadCustomerOrdersTable() {
             <div>
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                 <span style="background:#c9a227; color:#18181b; font-weight:800; font-size:12px; padding:4px 10px; border-radius:16px; letter-spacing:0.5px;">
-                  <i class="fas fa-chair" style="margin-right:4px;"></i> TABLE ${o.table_number || 'Takeout'}
+                  <i class="fas fa-chair" style="margin-right:4px;"></i> TABLE ${Utils.escapeHtml(o.table_number || 'Takeout')}
                 </span>
                 <span style="font-size:11px; font-family:monospace; background:rgba(201,162,39,0.12); color:#c9a227; padding:3px 8px; border-radius:4px; font-weight:800; letter-spacing:0.5px;">
                   ${(typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('CUST', o.id) : (o.order_number || `CUST-${o.id}`)}
                 </span>
               </div>
               <div style="margin-bottom:8px; font-size:13px;">
-                <div><i class="fas fa-user" style="color:var(--text-muted); margin-right:6px;"></i> <strong>${o.customer_name}</strong></div>
-                <div style="color:var(--text-muted); font-size:11px; margin-top:2px;"><i class="fas fa-clock" style="margin-right:4px;"></i> Ordered at ${timeStr} • ${o.order_type || 'Dine In'}</div>
-                ${o.notes ? `<div style="background:#fef3c7; color:#92400e; padding:4px 8px; border-radius:6px; font-size:11px; margin-top:6px;"><i class="fas fa-comment"></i> ${o.notes}</div>` : ''}
+                <div><i class="fas fa-user" style="color:var(--text-muted); margin-right:6px;"></i> <strong>${Utils.escapeHtml(o.customer_name)}</strong></div>
+                <div style="color:var(--text-muted); font-size:11px; margin-top:2px;"><i class="fas fa-clock" style="margin-right:4px;"></i> Ordered at ${Utils.escapeHtml(timeStr)} • ${Utils.escapeHtml(o.order_type || 'Dine In')}</div>
+                <div style="margin-top:8px;">${paymentBadgeHtml(o)}</div>
+                ${o.payment_attempt && o.payment_attempt.outcome === 'mismatch' && o.payment_status === 'discrepancy' ? `<div style="margin-top:6px; padding:6px 8px; background:#fee2e2; color:#991b1b; border-radius:6px; font-size:11px; font-weight:700;"><i class="fas fa-exclamation-triangle"></i> Expected ${Utils.formatCurrency(o.payment_attempt.expected_amount)}, reported ${Utils.formatCurrency(o.payment_attempt.reported_amount)}</div>` : ''}
+                ${o.notes ? `<div style="background:#fef3c7; color:#92400e; padding:4px 8px; border-radius:6px; font-size:11px; margin-top:6px;"><i class="fas fa-comment"></i> ${Utils.escapeHtml(o.notes)}</div>` : ''}
               </div>
               <div style="margin:12px 0; max-height:140px; overflow-y:auto;">
                 ${itemsList}
@@ -7520,8 +8341,9 @@ async function loadCustomerOrdersTable() {
                 <span style="font-size:12px; color:var(--text-muted); font-weight:600;">TOTAL AMOUNT:</span>
                 <span style="font-size:18px; font-weight:800; color:#c9a227;">₱${parseFloat(o.total_amount).toFixed(2)}</span>
               </div>
-              <div style="display:flex; gap:8px; margin-top:8px;">
-                <button class="btn btn-primary btn-sm" onclick="processOnlineOrder(${o.id})" style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; font-weight:700;">
+              <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+                ${customerOrderVerifyButton(o)}
+                <button class="btn btn-primary btn-sm" onclick="processOnlineOrder(${Number(o.id)})" style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; font-weight:700;">
                   <i class="fas fa-cash-register"></i> Send to POS
                 </button>
                 <button class="btn btn-outline btn-sm" onclick="setCustomerOrderStatus(${o.id}, 'accepted')" title="Accept Order">
@@ -7558,22 +8380,26 @@ async function loadCustomerOrdersTable() {
                   <th>Total</th>
                   <th>Status</th>
                   <th>Time</th>
+                  <th>Payment</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
                 ${pastOrders.map(h => `
                   <tr>
                     <td><strong style="font-family:monospace; font-size:12px; color:#c9a227;">${(typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('CUST', h.id) : h.order_number}</strong></td>
-                    <td><span class="badge" style="background:rgba(201,162,39,0.15); color:#c9a227; font-weight:700;">${h.table_number || h.order_type}</span></td>
-                    <td><strong>${h.customer_name}</strong></td>
-                    <td style="font-size:12px; color:var(--text-muted);">${(h.items || []).map(i => `${i.quantity}x ${i.name}`).join(', ')}</td>
+                    <td><span class="badge" style="background:rgba(201,162,39,0.15); color:#c9a227; font-weight:700;">${Utils.escapeHtml(h.table_number || h.order_type)}</span></td>
+                    <td><strong>${Utils.escapeHtml(h.customer_name)}</strong></td>
+                    <td style="font-size:12px; color:var(--text-muted);">${(h.items || []).map(i => `${i.quantity}x ${Utils.escapeHtml(i.name)}`).join(', ')}</td>
                     <td><strong style="color:#c9a227;">₱${parseFloat(h.total_amount).toFixed(2)}</strong></td>
                     <td>
                       <span class="badge ${h.status === 'completed' ? 'badge-success' : h.status === 'accepted' ? 'badge-warning' : 'badge-danger'}" style="font-size:11px; text-transform:capitalize;">
-                        ${h.status}
+                        ${Utils.escapeHtml(h.status)}
                       </span>
                     </td>
                     <td style="font-size:12px; color:var(--text-muted);">${h.created_at ? new Date(h.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '—'}</td>
+                    <td>${paymentBadgeHtml(h)}</td>
+                    <td>${customerOrderRowActions(h)}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -7585,7 +8411,7 @@ async function loadCustomerOrdersTable() {
 
     container.innerHTML = html;
   } catch (err) {
-    container.innerHTML = `<div style="color:var(--danger); padding:20px;">Failed to load customer orders: ${err.message}</div>`;
+    container.innerHTML = `<div style="color:var(--danger); padding:20px;">Failed to load customer orders: ${Utils.escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -7652,15 +8478,15 @@ async function fetchAndRenderTablesGrid() {
       
       card.innerHTML = `
         <h3 style="font-size:16px; font-weight:700; color: #18181b; margin-bottom: 4px;">BLESSIE FOOD HUB</h3>
-        <h4 style="font-size:18px; font-weight:800; color: #c9a227; margin-bottom: 8px;">TABLE ${t.table_number}</h4>
+        <h4 style="font-size:18px; font-weight:800; color: #c9a227; margin-bottom: 8px;">TABLE ${Utils.escapeHtml(t.table_number)}</h4>
         <p style="font-size:12px; font-weight:600; color: #71717a; margin-bottom: 16px;">SCAN TO ORDER</p>
         
-        <div id="${qrContainerId}" style="display:flex; justify-content:center; margin-bottom: 24px; min-height: 150px;" data-url="${qrUrl}"></div>
+        <div id="${Utils.escapeHtml(qrContainerId)}" style="display:flex; justify-content:center; margin-bottom: 24px; min-height: 150px;" data-url="${Utils.escapeHtml(qrUrl)}"></div>
         
         <div style="display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
-          <a href="${qrUrl}" target="_blank" class="btn btn-outline btn-sm" title="Preview Customer Menu"><i class="fas fa-external-link-alt"></i> Test Menu</a>
-          <button class="btn btn-outline btn-sm" onclick="downloadQR('${qrContainerId}', 'Table_${t.table_number}_QR')" title="Download QR Image"><i class="fas fa-download"></i></button>
-          <button class="btn btn-outline btn-sm" onclick="printSingleQR('${t.id}', '${t.table_number}')" title="Print QR"><i class="fas fa-print"></i></button>
+          <a href="${Utils.escapeHtml(qrUrl)}" target="_blank" class="btn btn-outline btn-sm" title="Preview Customer Menu"><i class="fas fa-external-link-alt"></i> Test Menu</a>
+          <button class="btn btn-outline btn-sm" onclick="downloadQR(${Utils.jsArg(qrContainerId)}, 'Table_' + decodeURIComponent('${encodeURIComponent(t.table_number).replace(/'/g, '%27')}') + '_QR')" title="Download QR Image"><i class="fas fa-download"></i></button>
+          <button class="btn btn-outline btn-sm" onclick="printSingleQR('${Number(t.id)}', decodeURIComponent('${encodeURIComponent(t.table_number).replace(/'/g, '%27')}'))" title="Print QR"><i class="fas fa-print"></i></button>
           <button class="btn btn-danger btn-sm" onclick="deleteTable(${t.id})" title="Delete Table"><i class="fas fa-trash"></i></button>
         </div>
       `;
@@ -7683,7 +8509,7 @@ async function fetchAndRenderTablesGrid() {
     });
     
   } catch (err) {
-    grid.innerHTML = `<p style="color:var(--danger);">${err.message}</p>`;
+    grid.innerHTML = `<p style="color:var(--danger);">${Utils.escapeHtml(err.message)}</p>`;
   }
 }
 
@@ -7787,9 +8613,9 @@ function getPrintableHTML(qrs) {
       <div class="qr-page">
         <div class="qr-badge">
           <h1>BLESSIE FOOD HUB</h1>
-          <h2>TABLE ${qr.number}</h2>
+          <h2>TABLE ${Utils.escapeHtml(qr.number)}</h2>
           <h3>SCAN TO ORDER</h3>
-          <img src="${qr.src}" alt="QR">
+          <img src="${Utils.escapeHtml(qr.src)}" alt="QR">
         </div>
       </div>
     `;
@@ -7890,7 +8716,7 @@ async function renderCashDrawerTracker(c, silent = false) {
       container.innerHTML = `
         <div class="section-card" style="padding:24px; border:1px solid rgba(239,68,68,0.35);">
           <h3 style="color:var(--danger, #ef4444); font-size:16px; font-weight:700;"><i class="fas fa-exclamation-triangle"></i> Error Loading Cash Drawer Data</h3>
-          <p style="color:var(--text-muted, #71717a); margin:10px 0; font-size:13px;">${err.message || "Failed to communicate with backend."}</p>
+          <p style="color:var(--text-muted, #71717a); margin:10px 0; font-size:13px;">${Utils.escapeHtml(err.message || "Failed to communicate with backend.")}</p>
           <button class="btn btn-outline btn-sm" onclick="renderCashDrawerTracker()"><i class="fas fa-redo"></i> Retry</button>
         </div>
       `;
@@ -7964,7 +8790,7 @@ function renderCashDrawerTrackerUI(container, data) {
           <h2><i class="fas fa-cash-register" style="color:#c9a227; margin-right:8px;"></i> Cashier Drawer to Track Cashier Overall Income</h2>
           <span style="font-size:12px; color:var(--text-muted);">Real-time tracking of active cashier drawers and cashier overall income from complete orders</span>
         </div>
-        <span class="badge badge-info" style="font-size:11px; font-weight:700;">${shifts.length} Recorded Shifts</span>
+        <span class="badge badge-info" style="font-size:11px; font-weight:700;">${Utils.escapeHtml(shifts.length)} Recorded Shifts</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -8009,19 +8835,19 @@ function renderDrawerTableRows(shifts) {
               ${(s.cashier_username || 'C').substring(0,2).toUpperCase()}
             </div>
             <div style="min-width:0;">
-              <strong style="color:var(--text-main); font-size:13.5px; font-weight:700; text-transform:capitalize; white-space:nowrap; display:block; letter-spacing:0.2px;">${s.cashier_name}</strong>
+              <strong style="color:var(--text-main); font-size:13.5px; font-weight:700; text-transform:capitalize; white-space:nowrap; display:block; letter-spacing:0.2px;">${Utils.escapeHtml(s.cashier_name)}</strong>
             </div>
           </div>
         </td>
         <td>${statusBadge}</td>
-        <td style="color:var(--text-muted); font-size:12px;">${startDate}</td>
+        <td style="color:var(--text-muted); font-size:12px;">${Utils.escapeHtml(startDate)}</td>
         <td style="background:rgba(201,162,39,0.08); min-width:170px;">
           ${isOpen ? `
           <div style="display:flex; align-items:center; gap:8px;">
             <div style="display:inline-flex; align-items:center; padding:6px 14px; border:1.5px solid #c9a227; border-radius:8px; font-weight:800; color:#c9a227; background:var(--bg-card, #fff); font-size:13.5px; cursor:default; user-select:none; pointer-events:none;" title="Active Cashier Drawer Float">
               ${Utils.formatCurrency(s.expected_cash || 0)}
             </div>
-            <button type="button" class="btn btn-outline btn-sm" onclick="openEditCashierDrawerModal(${s.id}, '${(s.cashier_name || '').replace(/'/g, "\\'")}', ${s.expected_cash || 0})" 
+            <button type="button" class="btn btn-outline btn-sm" onclick="openEditCashierDrawerModal(${s.id}, ${Utils.jsArg(s.cashier_name)}, ${s.expected_cash || 0})" 
               title="Edit Cashier Drawer"
               style="padding:5px 8px; font-size:12px; color:#c9a227; border-color:#c9a227; cursor:pointer; border-radius:6px;">
               <i class="fas fa-pen-to-square"></i>
@@ -8076,10 +8902,10 @@ function renderMovementsTableRows(movements) {
 
     return `
       <tr>
-        <td style="color:var(--text-muted); font-size:12px;">${timeStr}</td>
+        <td style="color:var(--text-muted); font-size:12px;">${Utils.escapeHtml(timeStr)}</td>
         <td>
-          <strong style="color:var(--text-main); font-size:13px;">${m.cashierName || 'Shift #' + m.shiftId}</strong>
-          <div style="font-size:11px; color:var(--text-muted);">Shift #${m.shiftId}</div>
+          <strong style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(m.cashierName || 'Shift #' + m.shiftId)}</strong>
+          <div style="font-size:11px; color:var(--text-muted);">Shift #${Utils.escapeHtml(m.shiftId)}</div>
         </td>
         <td>${typeBadge}</td>
         <td>
@@ -8087,8 +8913,8 @@ function renderMovementsTableRows(movements) {
             ${isDrop ? '-' : '+'}${Utils.formatCurrency(m.amount)}
           </strong>
         </td>
-        <td style="color:var(--text-main); font-size:13px;">${m.reason || 'No description provided'}</td>
-        <td style="color:var(--text-muted); font-size:12px;">${m.recorded_by || 'Staff'}</td>
+        <td style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(m.reason || 'No description provided')}</td>
+        <td style="color:var(--text-muted); font-size:12px;">${Utils.escapeHtml(m.recorded_by || 'Staff')}</td>
       </tr>
     `;
   }).join('');
@@ -8165,8 +8991,8 @@ async function reloadTransferDialogData(showToast = true) {
       shiftSelect.innerHTML = openShifts.map(s => {
         const sIncome = s.cashier_overall_income !== undefined ? s.cashier_overall_income : (s.total_sales || 0);
         return `
-        <option value="${s.id}" ${s.id === (targetShift ? targetShift.id : "") ? 'selected' : ''}>
-          Shift #${s.id} — ${s.cashier_name} (@${s.cashier_username}) [Overall Income: ${Utils.formatCurrency(sIncome)} | Drawer: ${Utils.formatCurrency(s.expected_cash)}]
+        <option value="${Utils.escapeHtml(s.id)}" ${s.id === (targetShift ? targetShift.id : "") ? 'selected' : ''}>
+          Shift #${Utils.escapeHtml(s.id)} — ${Utils.escapeHtml(s.cashier_name)} (@${Utils.escapeHtml(s.cashier_username)}) [Overall Income: ${Utils.formatCurrency(sIncome)} | Drawer: ${Utils.formatCurrency(s.expected_cash)}]
         </option>
         `;
       }).join('');
@@ -8247,8 +9073,8 @@ async function openAddCashMovementModal(defaultShiftId = null, targetType = null
   const shiftOptions = openShifts.length > 0 ? openShifts.map(s => {
     const sIncome = s.cashier_overall_income !== undefined ? s.cashier_overall_income : (s.total_sales || 0);
     return `
-    <option value="${s.id}" ${(defaultShiftId && defaultShiftId === s.id) || s.id === targetShiftId ? 'selected' : ''}>
-      Shift #${s.id} — ${s.cashier_name} (@${s.cashier_username}) [Overall Income: ${Utils.formatCurrency(sIncome)} | Drawer: ${Utils.formatCurrency(s.expected_cash)}]
+    <option value="${Utils.escapeHtml(s.id)}" ${(defaultShiftId && defaultShiftId === s.id) || s.id === targetShiftId ? 'selected' : ''}>
+      Shift #${Utils.escapeHtml(s.id)} — ${Utils.escapeHtml(s.cashier_name)} (@${Utils.escapeHtml(s.cashier_username)}) [Overall Income: ${Utils.formatCurrency(sIncome)} | Drawer: ${Utils.formatCurrency(s.expected_cash)}]
     </option>
     `;
   }).join('') : `
@@ -8257,7 +9083,7 @@ async function openAddCashMovementModal(defaultShiftId = null, targetType = null
 
   Utils.openModal(modalTitle, `
     <form id="form-cash-movement" onsubmit="event.preventDefault(); submitAddCashMovement();">
-      <input type="hidden" id="cm-transfer-reason" value="${transferReason}">
+      <input type="hidden" id="cm-transfer-reason" value="${Utils.escapeHtml(transferReason)}">
 
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; padding:8px 12px; background:var(--bg-main, #f8fafc); border-radius:10px; border:1px solid var(--border-color, #e2e8f0);">
         <span id="cm-network-badge" style="display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#10b981;">
@@ -8275,11 +9101,11 @@ async function openAddCashMovementModal(defaultShiftId = null, targetType = null
             ${shiftOptions}
           </select>
         </div>
-      ` : `<input type="hidden" id="cm-shift-id" value="${targetShiftId}">`}
+      ` : `<input type="hidden" id="cm-shift-id" value="${Utils.escapeHtml(targetShiftId)}">`}
 
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:13px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:8px; text-align:center;">
-          ${labelText} <span style="color:var(--danger);">*</span>
+          ${Utils.escapeHtml(labelText)} <span style="color:var(--danger);">*</span>
         </label>
         <input type="number" step="0.01" min="0.01" id="cm-amount" class="input-field" required value="${defaultCashoutAmount > 0 ? defaultCashoutAmount.toFixed(2) : ''}" placeholder="0.00" style="width:100%; font-size:26px; font-weight:800; padding:12px; text-align:center; color:#10b981; border:2px solid #10b981; border-radius:10px;">
         <div id="cm-expected-info-container" style="text-align:center; font-size:12px; color:var(--text-muted); margin-top:8px;">
@@ -8293,7 +9119,7 @@ async function openAddCashMovementModal(defaultShiftId = null, targetType = null
         </div>
       </div>
     </form>
-  `, `<button id="btn-submit-cash-movement" class="btn btn-primary" onclick="submitAddCashMovement()" style="width:100%; justify-content:center; padding:12px; font-size:14px; font-weight:700; border-radius:10px;"><i class="fas ${btnIcon}"></i> ${btnText}</button>`);
+  `, `<button id="btn-submit-cash-movement" class="btn btn-primary" onclick="submitAddCashMovement()" style="width:100%; justify-content:center; padding:12px; font-size:14px; font-weight:700; border-radius:10px;"><i class="fas ${btnIcon}"></i> ${Utils.escapeHtml(btnText)}</button>`);
 }
 
 async function submitAddCashMovement() {
@@ -8373,7 +9199,7 @@ async function submitAddCashMovement() {
       submitBtn.disabled = false;
       const btnIcon = isManagerIncome ? "fa-vault" : "fa-paper-plane";
       const btnText = isManagerIncome ? "Transfer to Manager Profit Income & Reset Cashier to ₱0.00" : "Transfer to Admin (Decreases Realized Cash)";
-      submitBtn.innerHTML = `<i class="fas ${btnIcon}"></i> ${btnText}`;
+      submitBtn.innerHTML = `<i class="fas ${btnIcon}"></i> ${Utils.escapeHtml(btnText)}`;
     }
   }
 }
@@ -8391,7 +9217,7 @@ function openShiftMovementsModal(shiftId) {
   } else {
     bodyHtml = `
       <div style="margin-bottom:14px; font-size:13px; color:var(--text-muted);">
-        Cashier: <strong style="color:var(--text-main);">${s.cashier_name}</strong> &bull; Start Float: <strong style="color:var(--text-main);">${Utils.formatCurrency(s.start_cash)}</strong> &bull; Expected: <strong style="color:#c9a227;">${Utils.formatCurrency(s.expected_cash)}</strong>
+        Cashier: <strong style="color:var(--text-main);">${Utils.escapeHtml(s.cashier_name)}</strong> &bull; Start Float: <strong style="color:var(--text-main);">${Utils.formatCurrency(s.start_cash)}</strong> &bull; Expected: <strong style="color:#c9a227;">${Utils.formatCurrency(s.expected_cash)}</strong>
       </div>
       <div class="table-wrap" style="max-height:50vh; overflow-y:auto;">
         <table>
@@ -8414,8 +9240,8 @@ function openShiftMovementsModal(shiftId) {
                   </span>
                 </td>
                 <td><strong style="color:${m.type === 'PAID_OUT' ? '#ef4444' : '#10b981'}; font-size:13px;">${m.type === 'PAID_OUT' ? '-' : '+'}${Utils.formatCurrency(m.amount)}</strong></td>
-                <td style="font-size:13px;">${m.reason || '—'}</td>
-                <td style="font-size:12px; color:var(--text-muted);">${m.recorded_by || 'Staff'}</td>
+                <td style="font-size:13px;">${Utils.escapeHtml(m.reason || '—')}</td>
+                <td style="font-size:12px; color:var(--text-muted);">${Utils.escapeHtml(m.recorded_by || 'Staff')}</td>
               </tr>
             `).join('')}
           </tbody>
@@ -8447,7 +9273,7 @@ function openEditCashierDrawerModal(shiftId = null, cashierName = null, currentC
     <form id="edit-cashier-drawer-form" onsubmit="submitEditCashierDrawer(event, ${shiftId})" style="display:flex; flex-direction:column; gap:16px;">
       <div style="background:rgba(201,162,39,0.1); border:1px solid rgba(201,162,39,0.3); border-radius:10px; padding:14px;">
         <div style="font-size:12px; color:var(--text-muted); margin-bottom:4px;">Cashier Shift Details</div>
-        <div style="font-size:14px; font-weight:700; color:var(--text-main);">Shift #${shiftId} &bull; ${cashierName || 'Cashier'}</div>
+        <div style="font-size:14px; font-weight:700; color:var(--text-main);">Shift #${Utils.escapeHtml(shiftId)} &bull; ${Utils.escapeHtml(cashierName || 'Cashier')}</div>
         <div style="font-size:13px; color:#c9a227; font-weight:700; margin-top:4px;">
           Current Drawer Balance: <strong>${Utils.formatCurrency(currentCash || 0)}</strong>
         </div>
@@ -8686,8 +9512,7 @@ window.reloadTransferDialogData = reloadTransferDialogData;
             Auth.fetch("/api/v1/shifts/drawer-summary").then(r => r.ok ? r.json() : null).then(dData => {
               if (!dData) return;
               const cUser = Auth.getUser();
-              const myS = (dData.shifts || []).find(s => s.status === 'open' && (cUser ? s.cashier_id === cUser.id : true))
-                       || (dData.shifts || []).find(s => s.status === 'open');
+              const myS = (dData.shifts || []).find(s => s.status === 'open' && !!cUser && s.cashier_id === cUser.id);   // own drawer only, never another person's
               const dCashEl = document.getElementById("pos-cash-in-drawer-display");
               const dOrdEl = document.getElementById("pos-complete-orders-display");
               if (dCashEl) dCashEl.textContent = Utils.formatCurrency(myS ? myS.expected_cash : 0);
@@ -8965,7 +9790,7 @@ window.previewTransactionReceipt = async function(txId) {
       payment_method: payment.payment_method || "Cash",
       payment_status: tx.status || "completed",
       amount_paid: Number(payment.amount !== undefined ? payment.amount : (tx.net_amount || 0)),
-      change: (payment.payment_method || "Cash").toUpperCase().includes("CASH") ? Math.max(0, Number(payment.amount || 0) - Number(tx.net_amount || 0)) : 0
+      change: (payment.payment_method || "Cash").toUpperCase() === "CASH" ? Math.max(0, Number(payment.amount || 0) - Number(tx.net_amount || 0)) : 0
     };
     window.lastCompletedOrder = orderForReceipt;
     Utils.showReceiptModal(orderForReceipt);
@@ -9009,7 +9834,7 @@ window.printTransactionReceiptDirect = async function(txId) {
       payment_method: payment.payment_method || "Cash",
       payment_status: tx.status || "completed",
       amount_paid: Number(payment.amount !== undefined ? payment.amount : (tx.net_amount || 0)),
-      change: (payment.payment_method || "Cash").toUpperCase().includes("CASH") ? Math.max(0, Number(payment.amount || 0) - Number(tx.net_amount || 0)) : 0
+      change: (payment.payment_method || "Cash").toUpperCase() === "CASH" ? Math.max(0, Number(payment.amount || 0) - Number(tx.net_amount || 0)) : 0
     };
     window.lastCompletedOrder = orderForReceipt;
     Utils.printReceipt(orderForReceipt);

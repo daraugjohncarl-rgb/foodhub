@@ -31,6 +31,11 @@ load_dotenv()
 # Determine DB Engine (defaulting to MySQL for phpMyAdmin / XAMPP, or PostgreSQL if specified)
 db_engine_type = os.getenv("DB_ENGINE", "").lower()
 raw_db_url = os.getenv("DATABASE_URL")
+_IS_PRODUCTION = os.getenv("APP_ENV", "development").strip().lower() == "production"
+
+if _IS_PRODUCTION and not raw_db_url:
+    # Never fall back to a guessed local database (or default credentials) in production.
+    raise RuntimeError("DATABASE_URL must be set explicitly when APP_ENV=production.")
 
 # Resolve DB configuration
 if raw_db_url:
@@ -115,7 +120,7 @@ def check_and_create_db():
                 autocommit=True
             )
             with conn.cursor() as cursor:
-                cursor.execute(f"SELECT 1 FROM pg_database WHERE datname = '{DB_NAME}'")
+                cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", (DB_NAME,))
                 if not cursor.fetchone():
                     cursor.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(DB_NAME)))
             conn.close()
@@ -130,18 +135,16 @@ check_and_create_db()
 # pool_pre_ping=True verifies connections before using them, preventing disconnected socket errors
 # pool_recycle=300 prevents timeouts on persistent connections
 connect_args = {}
+engine_kwargs = {"pool_pre_ping": True}
+if DATABASE_URL.startswith("sqlite"):
+    # Used only by the automated tests (disposable database file); never a production target.
+    connect_args["check_same_thread"] = False
+else:
+    engine_kwargs.update(pool_recycle=300, pool_size=5, max_overflow=5, pool_timeout=30)
 if is_postgres:
     connect_args["prepare_threshold"] = None
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args=connect_args,
-    pool_pre_ping=True,
-    pool_recycle=300,
-    pool_size=5,
-    max_overflow=5,
-    pool_timeout=30
-)
+engine = create_engine(DATABASE_URL, connect_args=connect_args, **engine_kwargs)
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

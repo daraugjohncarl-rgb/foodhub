@@ -156,21 +156,21 @@ function initUsersApp() {
                         <tr>
                             <td>
                                 <div class="user-cell">
-                                    <div class="user-avatar">${initials}</div>
+                                    <div class="user-avatar">${Utils.escapeHtml(initials)}</div>
                                     <div>
-                                        <div class="user-info-name">${displayName}</div>
-                                        <div class="user-info-email">${user.email || user.username}</div>
+                                        <div class="user-info-name">${Utils.escapeHtml(displayName)}</div>
+                                        <div class="user-info-email">${Utils.escapeHtml(user.email || user.username)}</div>
                                     </div>
                                 </div>
                             </td>
-                            <td>${user.phone || '—'}</td>
-                            <td><span class="badge badge-${roleLower}">${formattedRole}</span></td>
+                            <td>${Utils.escapeHtml(user.phone || '—')}</td>
+                            <td><span class="badge badge-${Utils.escapeHtml(roleLower)}">${Utils.escapeHtml(formattedRole)}</span></td>
                             <td>
                                 <span class="${user.is_active ? 'status-active' : 'status-inactive'}">
                                     ${user.is_active ? 'Active' : 'Inactive'}
                                 </span>
                             </td>
-                            <td style="color:var(--text-muted); font-size:13px;">${createdDate}</td>
+                            <td style="color:var(--text-muted); font-size:13px;">${Utils.escapeHtml(createdDate)}</td>
                             <td>
                                 <div class="action-btns">
                                     <button class="btn btn-outline" style="padding:6px 10px; height:32px; font-size:12px;" onclick="openViewModal(${user.id})" title="View Details">
@@ -216,11 +216,11 @@ function initUsersApp() {
         if (body) {
             body.innerHTML = `
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; font-size:13px;">
-                    <div><strong>Username:</strong> <div>${user.username}</div></div>
-                    <div><strong>Full Name:</strong> <div>${user.first_name || ''} ${user.last_name || ''}</div></div>
-                    <div><strong>Email:</strong> <div>${user.email || '—'}</div></div>
-                    <div><strong>Phone:</strong> <div>${user.phone || '—'}</div></div>
-                    <div><strong>Role:</strong> <div><span class="badge badge-${(user.role || '').toLowerCase()}">${user.role}</span></div></div>
+                    <div><strong>Username:</strong> <div>${Utils.escapeHtml(user.username)}</div></div>
+                    <div><strong>Full Name:</strong> <div>${Utils.escapeHtml(user.first_name || '')} ${Utils.escapeHtml(user.last_name || '')}</div></div>
+                    <div><strong>Email:</strong> <div>${Utils.escapeHtml(user.email || '—')}</div></div>
+                    <div><strong>Phone:</strong> <div>${Utils.escapeHtml(user.phone || '—')}</div></div>
+                    <div><strong>Role:</strong> <div><span class="badge badge-${(user.role || '').toLowerCase()}">${Utils.escapeHtml(user.role)}</span></div></div>
                     <div><strong>Status:</strong> <div>${user.is_active ? 'Active' : 'Inactive'}</div></div>
                     <div><strong>Created At:</strong> <div>${new Date(user.created_at).toLocaleString()}</div></div>
                 </div>
@@ -248,19 +248,19 @@ function initUsersApp() {
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
                     <div class="input-group">
                         <label>First Name</label>
-                        <input class="input-field" id="edit_first_name" value="${user.first_name || ''}" placeholder="First name">
+                        <input class="input-field" id="edit_first_name" value="${Utils.escapeHtml(user.first_name || '')}" placeholder="First name">
                     </div>
                     <div class="input-group">
                         <label>Last Name</label>
-                        <input class="input-field" id="edit_last_name" value="${user.last_name || ''}" placeholder="Last name">
+                        <input class="input-field" id="edit_last_name" value="${Utils.escapeHtml(user.last_name || '')}" placeholder="Last name">
                     </div>
                     <div class="input-group">
                         <label>Email</label>
-                        <input class="input-field" type="email" id="edit_email" value="${user.email || ''}" placeholder="Email">
+                        <input class="input-field" type="email" id="edit_email" value="${Utils.escapeHtml(user.email || '')}" placeholder="Email">
                     </div>
                     <div class="input-group">
                         <label>Phone</label>
-                        <input class="input-field" id="edit_phone" value="${user.phone || ''}" placeholder="Phone">
+                        <input class="input-field" id="edit_phone" value="${Utils.escapeHtml(user.phone || '')}" placeholder="Phone">
                     </div>
                     <div class="input-group">
                         <label>Role</label>

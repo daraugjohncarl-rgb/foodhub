@@ -1,16 +1,16 @@
---prefer-binary
-fastapi>=0.110.0
-uvicorn[standard]>=0.28.0
-SQLAlchemy>=2.0.0
-pymysql>=1.1.0
-cryptography>=42.0.0
-psycopg[binary]>=3.1.18
-pydantic>=2.0.0
-pydantic-settings>=2.0.0
-python-dotenv>=1.0.0
-PyJWT>=2.8.0
-bcrypt>=4.0.0
-python-multipart>=0.0.9
-httpx>=0.27.0
-greenlet>=3.0.0
-typing-extensions>=4.8.0
+# Production runtime dependencies (exact pins; update deliberately and run `pip-audit`).
+# Pins were chosen to clear every advisory pip-audit reported for the previous pins (2026-10-24) and the
+# full test suite passes on them. Re-run `pip-audit -r fastapi/requirements.txt` regularly.
+fastapi==0.161.1
+starlette==1.9.0
+uvicorn[standard]==0.35.0
+SQLAlchemy==2.0.52
+psycopg[binary]==3.3.6
+pydantic==2.14.1
+python-dotenv==1.2.4
+PyJWT==2.15.1
+bcrypt==4.3.0
+python-multipart==0.0.32
+# Only needed when developing against a local MySQL/XAMPP database (not a production target).
+PyMySQL==1.1.1
+cryptography==50.0.2

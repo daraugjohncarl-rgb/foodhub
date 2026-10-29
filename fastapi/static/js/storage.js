@@ -1,14 +1,22 @@
+try { localStorage.removeItem("access_token"); sessionStorage.removeItem("access_token"); } catch (e) {} // legacy JWT copies are purged: the session lives only in the HttpOnly cookie
+// Minimal HTML-escaping helpers shared by every page (utils.js replaces this with the full Utils object).
+if (typeof window !== "undefined" && !window.Utils) {
+  window.Utils = {
+    escapeHtml(value) {
+      return String(value === null || value === undefined ? "" : value).replace(/[&<>"']/g, (ch) => (
+        { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]
+      ));
+    },
+    jsArg(value) {
+      return this.escapeHtml(JSON.stringify(String(value === null || value === undefined ? "" : value)));
+    }
+  };
+}
 /**
  * Storage & UI Utility Helper Module (storage.js)
  * Manages localStorage session data, theme preferences, and UI toast alerts.
  */
 const Storage = {
-    getToken() {
-        return localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
-    },
-    setToken(token) {
-        localStorage.setItem('access_token', token);
-    },
     getUser() {
         const fullName = localStorage.getItem('full_name') || sessionStorage.getItem('full_name');
         const username = localStorage.getItem('username') || sessionStorage.getItem('username') || 'Super Admin';
@@ -69,7 +77,7 @@ function showToast(message, type = 'success') {
 
     toast.innerHTML = `
         <i class="fas fa-${icon}" style="color:${iconColor}; font-size:16px;"></i>
-        <span>${message}</span>
+        <span>${Utils.escapeHtml(message)}</span>
     `;
 
     container.appendChild(toast);

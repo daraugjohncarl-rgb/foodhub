@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, case
 
 import app.models as models
+from app.services.payments import cash_method_clause, is_cash_method
 
 TWO_PLACES = Decimal("0.01")
 
@@ -416,10 +417,10 @@ def get_consolidated_financial_report(
 
     for p in payments_in_period:
         amt = to_decimal(p.amount)
-        method = (p.payment_method or "Cash").strip()
-        method_lower = method.lower()
+        # Grouped by the normalised method so "Cash" and "CASH" are one bucket.
+        method = (p.payment_method or "Cash").strip().upper()
 
-        if "cash" in method_lower:
+        if is_cash_method(method):
             cash_collections += amt
         else:
             digital_collections += amt
@@ -436,8 +437,8 @@ def get_consolidated_financial_report(
         models.Payment.status == "completed",
         models.Transaction.status == "completed"
     ).all()
-    all_cash_collections = quantize(sum((to_decimal(p.amount) for p in all_payments if "cash" in (p.payment_method or "").lower()), Decimal("0.00")))
-    all_digital_collections = quantize(sum((to_decimal(p.amount) for p in all_payments if "cash" not in (p.payment_method or "").lower()), Decimal("0.00")))
+    all_cash_collections = quantize(sum((to_decimal(p.amount) for p in all_payments if is_cash_method(p.payment_method)), Decimal("0.00")))
+    all_digital_collections = quantize(sum((to_decimal(p.amount) for p in all_payments if not is_cash_method(p.payment_method)), Decimal("0.00")))
 
     # 7. Inventory Valuation
     all_inv_items = db.query(models.InventoryItem).filter(
@@ -460,7 +461,7 @@ def get_consolidated_financial_report(
             models.Transaction.shift_id == s.id,
             models.Payment.status == "completed",
             models.Transaction.status == "completed",
-            func.lower(models.Payment.payment_method).like("%cash%")
+            cash_method_clause(models.Payment.payment_method)
         ).scalar() or Decimal("0.00")
 
         p_in = db.query(

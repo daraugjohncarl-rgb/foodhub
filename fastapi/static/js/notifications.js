@@ -79,7 +79,7 @@ function initNotificationsApp() {
         notifList.innerHTML = notifications.map(n => `
             <div class="notif-item ${n.unread ? 'unread' : ''}">
                 <div>${n.text}</div>
-                <div class="notif-time">${n.time}</div>
+                <div class="notif-time">${Utils.escapeHtml(n.time)}</div>
             </div>
         `).join('');
     }
@@ -99,7 +99,7 @@ function initNotificationsApp() {
 
             notifications = logs.map(l => ({
                 id: l.id,
-                text: `${l.performed_by ? '<strong>' + (l.performed_by || '') + ':</strong> ' : ''}${l.action || l.details || 'System event'}`,
+                text: `${l.performed_by ? '<strong>' + Utils.escapeHtml(l.performed_by) + ':</strong> ' : ''}${Utils.escapeHtml(l.action || l.details || 'System event')}`, // pre-escaped HTML
                 time: timeAgo(l.created_at),
                 unread: !readIds.includes(l.id)
             }));

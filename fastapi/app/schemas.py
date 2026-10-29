@@ -28,7 +28,7 @@ class UserCreate(BaseModel):
     last_name: Optional[str] = Field(None, max_length=50)
     email: Optional[str] = Field(None, max_length=100)
     phone: Optional[str] = Field(None, max_length=30)
-    password: str = Field(..., min_length=6, description="Plaintext password to hash")
+    password: str = Field(..., min_length=8, max_length=128, description="Plaintext password to hash")
     role: UserRole = Field(UserRole.ADMIN)
     tenant_id: Optional[int] = Field(None, description="Nullable. Required for non-superadmin users")
     is_active: Optional[bool] = Field(True)
@@ -44,14 +44,14 @@ class UserUpdate(BaseModel):
 
 class PasswordChangeRequest(BaseModel):
     current_password: str
-    new_password: str = Field(..., min_length=6)
+    new_password: str = Field(..., min_length=8, max_length=128)
 
 class PasswordResetRequest(BaseModel):
-    new_password: str = Field(..., min_length=6)
+    new_password: str = Field(..., min_length=8, max_length=128)
 
 class CustomerRegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50, description="Desired customer username")
-    password: str = Field(..., min_length=6, description="Password (at least 6 characters)")
+    password: str = Field(..., min_length=8, max_length=128, description="Password (at least 8 characters)")
     first_name: Optional[str] = Field(None, max_length=50)
     last_name: Optional[str] = Field(None, max_length=50)
     email: Optional[str] = Field(None, max_length=100)
@@ -79,11 +79,13 @@ class UserResponse(BaseModel):
 
 # Activity Log Schemas
 class ActivityLogCreate(BaseModel):
-    action: str
-    performed_by: str
-    target_user: Optional[str] = None
+    action: str = Field(..., max_length=50)
+    # Actor identity fields are accepted for backward compatibility but ignored:
+    # the server always derives them from the authenticated session.
+    performed_by: Optional[str] = None
+    target_user: Optional[str] = Field(None, max_length=100)
     role: Optional[str] = None
-    details: Optional[str] = None
+    details: Optional[str] = Field(None, max_length=255)
 
 class ActivityLogResponse(BaseModel):
     id: int
@@ -410,6 +412,11 @@ class AdminProductResponse(BaseModel):
             obj["category_name"] = data.category.name
             return obj
         return data
+
+
+class ProductListResponse(AdminProductResponse):
+    """Product list shape: `cost` is optional so non-management callers can be served without it."""
+    cost: Optional[Decimal] = None
 
 
 # ─────────────────────────────────────────────

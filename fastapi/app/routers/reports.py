@@ -17,7 +17,7 @@ from typing import List, Optional
 from app.db import get_db
 import app.models as models
 from app.schemas import ReportCreate, ReportUpdateStatus, ReportResponse
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, require_staff
 
 
 router = APIRouter(tags=["Incident Reports"])
@@ -44,7 +44,7 @@ def _require_super_admin(current_user: models.User) -> None:
 def submit_report(
     report_in: ReportCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_staff),
 ):
     """
     Submit a new incident/bug/issue report.
@@ -106,7 +106,7 @@ def get_my_reports(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_staff),
 ):
     """
     Retrieve all incident reports previously submitted by the authenticated user.

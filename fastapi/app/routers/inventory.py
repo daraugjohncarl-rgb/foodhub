@@ -451,9 +451,9 @@ def list_inventory(
     low_stock_only: bool = Query(False, description="If true, return only items at or below min_stock"),
     category: Optional[str] = Query(None, description="Filter by masterlist department category"),
     search: Optional[str] = Query(None, description="Partial match on item name or SKU"),
-    limit: int = Query(500, le=1000),
+    limit: int = Query(500, ge=1, le=1000),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_inventory_access),
 ):
     q = db.query(models.InventoryItem)
     if current_user.tenant_id:
