@@ -29,6 +29,9 @@ def parse_masterlist_file(file_bytes: bytes, filename: str) -> Dict[str, List[Di
     if fn.endswith('.docx'):
         try:
             with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+                # Checked before reading so a small "zip bomb" cannot expand into a huge document in memory.
+                if z.getinfo('word/document.xml').file_size > MAX_DOCX_XML_BYTES:
+                    raise ValueError("the document text is too large")
                 xml_content = z.read('word/document.xml')
             root = ET.fromstring(xml_content)
             w = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
@@ -140,6 +143,29 @@ def parse_masterlist_file(file_bytes: bytes, filename: str) -> Dict[str, List[Di
         raise HTTPException(status_code=400, detail="Unsupported file format. Please upload a .docx, .csv, or .txt file.")
 
     return departments
+
+
+MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024      # masterlist upload (.docx / .csv / .txt)
+MAX_DOCX_XML_BYTES = 10 * 1024 * 1024        # uncompressed word/document.xml inside a .docx
+IMPORT_FILE_EXTENSIONS = ('.docx', '.csv', '.txt')
+
+
+async def read_masterlist_upload(file: UploadFile) -> bytes:
+    """Read a masterlist upload in chunks, refusing a missing/unsupported name (400), more than 5 MB (413) or an empty file (400)."""
+    if not file.filename or not file.filename.lower().endswith(IMPORT_FILE_EXTENSIONS):
+        raise HTTPException(status_code=400, detail="Unsupported file format. Please upload a .docx, .csv, or .txt file.")
+    chunks, total = [], 0
+    while True:
+        chunk = await file.read(64 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_IMPORT_FILE_BYTES:
+            raise HTTPException(status_code=413, detail="The file is too large (max 5 MB).")
+        chunks.append(chunk)
+    if not chunks:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+    return b"".join(chunks)
 
 
 router = APIRouter(tags=["Admin — Inventory"])
@@ -680,9 +706,7 @@ async def parse_inventory_file(
     file: UploadFile = File(...),
     current_user: models.User = Depends(require_inventory_access),
 ):
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+    content = await read_masterlist_upload(file)
     
     depts = parse_masterlist_file(content, file.filename)
     total_items = sum(len(items) for items in depts.values())
@@ -705,9 +729,7 @@ async def import_inventory_file(
     current_user: models.User = Depends(require_inventory_access),
     tenant_id: int = Depends(get_inventory_tenant_id),
 ):
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+    content = await read_masterlist_upload(file)
     
     depts = parse_masterlist_file(content, file.filename)
     if not depts:

@@ -289,3 +289,58 @@ def test_select_for_update_is_really_emitted_and_blocks(api):
     t.join()
     holder.close()
     assert r.status_code == 200 and time.monotonic() - started >= 0.7
+
+
+# ---------------------------------------------------------------------------------------------- cash drawer (2026-10-29)
+def open_shift(client, h, who="c1", cash="300"):
+    r = client.post("/api/v1/shifts/start", headers=h[who], json={"start_cash": cash})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def test_concurrent_cashouts_of_one_shift_close_it_once(api):
+    import app.models as models
+    client, h, ids, Session = api
+    sid = open_shift(client, h)
+    results = race(*[lambda: client.post("/api/v1/shifts/cashout", headers=h["m1"], json={"shift_id": sid})] * THREADS)
+    codes = sorted(r.status_code for r in results)
+    assert codes == [200] + [409] * (THREADS - 1), [r.text for r in results]
+    assert count(Session, models.ShiftCashMovement, shift_id=sid, type="PAID_OUT") == 1
+    assert count(Session, models.Shift, status="closed") == 1 and count(Session, models.Shift, status="open") == 1
+
+
+def test_cashout_racing_a_drawer_edit_never_writes_to_a_closed_shift(api):
+    import app.models as models
+    client, h, ids, Session = api
+    sid = open_shift(client, h, cash="300")
+    for _ in range(5):
+        movements_before = count(Session, models.ShiftCashMovement, shift_id=sid)
+        cash, edit = race(lambda: client.post("/api/v1/shifts/cashout", headers=h["m1"], json={"shift_id": sid}),
+                          lambda: client.put(f"/api/v1/shifts/{sid}/drawer-cash", headers=h["m1"], json={"amount": "50"}))
+        assert cash.status_code == 200, cash.text
+        if edit.status_code == 200:      # the edit won the lock: the cash-out then empties the edited drawer
+            assert cash.json()["amount_cashed_out"] == 50.0
+        else:                            # the cash-out won: the edit found the shift closed and wrote nothing
+            assert edit.status_code == 400, edit.text
+            assert count(Session, models.ShiftCashMovement, shift_id=sid) == movements_before + 1
+        db = Session()
+        try:
+            assert db.get(models.Shift, sid).end_cash == Decimal("0.00")
+        finally:
+            db.close()
+        sid = cash.json()["new_shift_id"]
+        client.put(f"/api/v1/shifts/{sid}/drawer-cash", headers=h["m1"], json={"amount": "300"})
+
+
+def test_concurrent_first_sales_open_one_shift_for_the_cashier(api):
+    """Intended rule: one open shift per cashier. NOT expected to pass yet: the sale path's auto-open (and
+    POST /shifts/start) is check-then-insert with no lock or unique index, so this documents a known gap."""
+    import app.models as models
+    client, h, ids, Session = api
+    calls = [lambda i=i: client.post("/api/v1/transactions", headers=h["c1"], json={
+        "client_tx_id": f"33333333-0000-0000-0000-{i:012d}", "payment_method": "CASH", "amount_paid": 100,
+        "items": [{"product_id": ids["cake"], "quantity": 1}]}) for i in range(THREADS)]
+    results = race(*calls)
+    assert all(r.status_code == 201 for r in results), [r.text for r in results]
+    assert count(Session, models.Shift, status="open") == 1
+

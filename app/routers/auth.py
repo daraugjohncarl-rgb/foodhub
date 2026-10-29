@@ -7,39 +7,77 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 import app.models as models
 from app.schemas import UserResponse
-from app.core.security import verify_password, create_access_token
+from app.core.security import verify_password, get_password_hash, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, IS_PRODUCTION
 from app.core.dependencies import get_current_user, get_current_user_optional
+from app.core.rate_limit import rate_limit, SlidingWindowLimiter, client_ip
+from sqlalchemy import func
+
+# Per-IP throttles for unauthenticated endpoints, plus a failed-login counter per (username, IP).
+login_ip_limit = rate_limit(max_calls=20, window_seconds=60, scope="login")
+register_ip_limit = rate_limit(max_calls=10, window_seconds=3600, scope="register")
+failed_login_limiter = SlidingWindowLimiter(max_calls=5, window_seconds=900, scope="login-failures")
+# Wrong "current password" guesses against /change-password (e.g. with a stolen session), per user.
+password_change_limiter = SlidingWindowLimiter(max_calls=5, window_seconds=900, scope="password-change-failures")
+
+# Verified against when the username is unknown so response time does not reveal valid accounts.
+_DUMMY_HASH = get_password_hash(uuid.uuid4().hex)
 
 router = APIRouter(
     prefix="/auth",
     tags=["Authentication"]
 )
 
+def set_session_cookie(response: Response, access_token: str) -> None:
+    """The JWT is delivered to browsers only as an HttpOnly, SameSite=Lax cookie (Secure in production)."""
+    response.set_cookie(
+        key="session_token",
+        value=access_token,
+        httponly=True,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        path="/",
+        samesite="lax",
+        secure=IS_PRODUCTION
+    )
+
+
 @router.post("/login", summary="Sign in and establish a secure authenticated session")
 def login(
     request: Request,
     response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _rl: None = Depends(login_ip_limit),
 ):
     """
     Authenticate a user using username/email & password.
     Creates a new secure server-side session, increments token_version to prevent session fixation,
     sets a secure HttpOnly session cookie, and returns access token and role redirect information.
     """
-    # Look up user by username or email
+    identifier = (form_data.username or "").strip().lower()
+    failure_key = f"{identifier}|{client_ip(request)}"
+    if failed_login_limiter.is_limited(failure_key):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed sign-in attempts. Please try again later.",
+            headers={"Retry-After": "900"},
+        )
+
+    # Look up user by username or email (case-insensitive)
     user = db.query(models.User).filter(
-        (models.User.username == form_data.username) | (models.User.email == form_data.username)
+        (func.lower(models.User.username) == identifier) | (func.lower(models.User.email) == identifier)
     ).first()
-    
+
     # Verify username and password hash match
+    if not user:
+        verify_password(form_data.password, _DUMMY_HASH)
     if not user or not verify_password(form_data.password, user.password_hash):
+        failed_login_limiter.record(failure_key)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-        
+
     # Verify the user account is active
     if not user.is_active:
         raise HTTPException(
@@ -47,7 +85,9 @@ def login(
             detail="Your account is deactivated. Please contact your administrator.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-        
+
+    failed_login_limiter.clear(failure_key)
+
     # Single-device / session regeneration: increment token_version to invalidate any previous session
     user.token_version = (user.token_version or 0) + 1
     db.commit()
@@ -64,23 +104,12 @@ def login(
         "token_version": user.token_version,
         "jti": session_id
     }
-    
-    # Generate the access token (valid for 1 day / 24 hours)
-    access_token = create_access_token(data=token_payload, expires_delta=timedelta(days=1))
-    
-    # Set secure HttpOnly session cookie
-    is_production = os.getenv("APP_ENV", "development").lower() == "production"
-    response.set_cookie(
-        key="session_token",
-        value=access_token,
-        httponly=True,
-        max_age=86400,
-        expires=86400,
-        path="/",
-        samesite="lax",
-        secure=is_production
-    )
-    
+
+    # Generate the access token (lifetime from ACCESS_TOKEN_EXPIRE_MINUTES, default 1 day)
+    access_token = create_access_token(data=token_payload)
+
+    set_session_cookie(response, access_token)
+
     # Audit log: record login event
     try:
         log = models.ActivityLog(
@@ -96,7 +125,7 @@ def login(
         db.commit()
     except Exception:
         pass  # Never block login due to log failure
-    
+
     # Determine appropriate redirect URL based on user role
     role_lower = role_str.lower()
     if role_lower == "super_admin":
@@ -234,13 +263,13 @@ def get_session_status(
 
 from app.schemas import UserResponse, UserUpdate, PasswordChangeRequest, CustomerRegisterRequest
 from app.core.security import verify_password, create_access_token, get_password_hash
-from sqlalchemy import func
-
 @router.post("/customer-register", status_code=status.HTTP_201_CREATED, summary="Create a new Customer account")
 @router.post("/register", status_code=status.HTTP_201_CREATED, summary="Register a customer account")
 def register_customer(
     body: CustomerRegisterRequest,
-    db: Session = Depends(get_db)
+    response: Response,
+    db: Session = Depends(get_db),
+    _rl: None = Depends(register_ip_limit),
 ):
     """
     Allows a customer to create a customer account.
@@ -275,11 +304,19 @@ def register_customer(
                 detail=f"Email '{clean_email}' is already registered."
             )
 
-    # Determine tenant
+    # Determine tenant. The customer account only ever gets the CUSTOMER role, which has no
+    # access to staff APIs, so the tenant is just the branch whose menu the QR code opened.
+    # It must exist and be active; with no tenant supplied it is only inferred when unambiguous.
     tenant_id = body.tenant_id
-    if not tenant_id:
-        first_tenant = db.query(models.Tenant).first()
-        tenant_id = first_tenant.id if first_tenant else 1
+    if tenant_id:
+        tenant = db.query(models.Tenant).filter(models.Tenant.id == tenant_id, models.Tenant.is_active.is_(True)).first()
+        if not tenant:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown branch.")
+    else:
+        active = db.query(models.Tenant).filter(models.Tenant.is_active.is_(True)).limit(2).all()
+        if len(active) != 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Branch is required.")
+        tenant_id = active[0].id
 
     hashed_pw = get_password_hash(body.password)
 
@@ -311,7 +348,8 @@ def register_customer(
         "token_version": new_user.token_version or 0
     }
     # Generate access token so customer is logged in immediately (valid for 1 day / 24 hours)
-    access_token = create_access_token(data=token_payload, expires_delta=timedelta(days=1))
+    access_token = create_access_token(data=token_payload)
+    set_session_cookie(response, access_token)
 
     return {
         "success": True,
@@ -339,30 +377,33 @@ def update_users_me(
 ):
     """
     Update profile details for the currently authenticated user.
+    Role, tenant, token_version and is_active are never read from this payload.
     """
     if user_in.username is not None:
         # Check uniqueness if username changed
-        existing = db.query(models.User).filter(models.User.username == user_in.username, models.User.id != current_user.id).first()
+        existing = db.query(models.User).filter(func.lower(models.User.username) == user_in.username.strip().lower(), models.User.id != current_user.id).first()
         if existing:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already in use.")
-        current_user.username = user_in.username
-        
+        current_user.username = user_in.username.strip()
+
     if user_in.email is not None:
-        existing_email = db.query(models.User).filter(models.User.email == user_in.email, models.User.id != current_user.id).first()
-        if existing_email:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already in use.")
-        current_user.email = user_in.email
-        
+        new_email = user_in.email.strip().lower() or None
+        if new_email:
+            existing_email = db.query(models.User).filter(func.lower(models.User.email) == new_email, models.User.id != current_user.id).first()
+            if existing_email:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already in use.")
+        current_user.email = new_email
+
     if user_in.first_name is not None:
         current_user.first_name = user_in.first_name
     if user_in.last_name is not None:
         current_user.last_name = user_in.last_name
     if user_in.phone is not None:
         current_user.phone = user_in.phone
-        
+
     db.commit()
     db.refresh(current_user)
-    
+
     # Audit log: profile updated
     try:
         log = models.ActivityLog(
@@ -378,27 +419,38 @@ def update_users_me(
         db.commit()
     except Exception:
         pass
-    
+
     return current_user
 
 @router.put("/change-password")
 def change_password(
     req: PasswordChangeRequest,
+    response: Response,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
     """
     Change password for the currently authenticated user.
     """
+    limiter_key = f"user:{current_user.id}"
+    if password_change_limiter.is_limited(limiter_key):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed attempts. Please try again later.",
+            headers={"Retry-After": "900"},
+        )
     if not verify_password(req.current_password, current_user.password_hash):
+        password_change_limiter.record(limiter_key)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Current password does not match."
         )
-        
+
     current_user.password_hash = get_password_hash(req.new_password)
+    current_user.token_version = (current_user.token_version or 0) + 1  # revoke all existing sessions
     db.commit()
-    
+    response.delete_cookie(key="session_token", path="/", httponly=True, samesite="lax")
+
     # Audit log: password change by self
     try:
         log = models.ActivityLog(
@@ -414,5 +466,5 @@ def change_password(
         db.commit()
     except Exception:
         pass
-    
-    return {"message": "Password updated successfully."}
+
+    return {"message": "Password updated successfully. Please sign in again.", "reauthenticate": True}

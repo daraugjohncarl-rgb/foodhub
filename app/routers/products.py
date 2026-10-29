@@ -13,6 +13,7 @@ import os
 import uuid
 import shutil
 import re
+from fastapi.responses import JSONResponse
 
 from app.db import get_db
 import app.models as models
@@ -22,10 +23,12 @@ from app.core.dependencies import (
     get_admin_tenant_id,
     require_manager_or_admin,
     get_manager_or_admin_tenant_id,
-    get_current_user
+    require_menu_read
 )
 
 router = APIRouter(tags=["Admin & Manager — Products & Categories"])
+
+COST_VISIBLE_ROLES = {models.UserRole.MANAGER, models.UserRole.ADMIN, models.UserRole.SUPER_ADMIN}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -39,7 +42,7 @@ router = APIRouter(tags=["Admin & Manager — Products & Categories"])
 )
 def list_categories(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_menu_read),
 ):
     q = db.query(models.Category)
     if current_user.tenant_id:
@@ -153,16 +156,16 @@ def delete_category(
 
 @router.get(
     "/products",
-    response_model=List[schemas.AdminProductResponse],
-    summary="List products for the calling user's tenant"
+    response_model=None,  # serialised by hand so non-management roles get no `cost` key at all
+    summary="List products for the calling user's tenant (purchase cost only for MANAGER/ADMIN/SUPER_ADMIN)"
 )
 def list_products(
     search: Optional[str] = Query(None, description="Partial match on product name or SKU"),
     category_id: Optional[int] = Query(None, description="Filter by category"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
-    limit: int = Query(200, le=500),
+    limit: int = Query(200, ge=1, le=500),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_menu_read),
 ):
     q = (
         db.query(models.Product)
@@ -179,7 +182,12 @@ def list_products(
         q = q.filter(models.Product.category_id == category_id)
     if is_active is not None:
         q = q.filter(models.Product.is_active == is_active)
-    return q.order_by(models.Product.name).limit(limit).all()
+    products = q.order_by(models.Product.name).limit(limit).all()
+    # Purchase cost is margin-sensitive: cashier, kitchen and inventory staff get an allowlisted shape
+    # without it (the key is absent from the JSON, not merely hidden by the UI).
+    if current_user.role in COST_VISIBLE_ROLES:
+        return JSONResponse([schemas.AdminProductResponse.model_validate(p).model_dump(mode="json") for p in products])
+    return JSONResponse([schemas.ProductListResponse.model_validate(p).model_dump(mode="json", exclude={"cost"}) for p in products])
 
 
 @router.post(
@@ -356,6 +364,14 @@ def upload_product_image(
     ext = os.path.splitext(file.filename)[1].lower() if file.filename else ".jpg"
     if ext not in [".jpg", ".jpeg", ".png", ".webp", ".gif"]:
         raise HTTPException(status_code=400, detail="Only image files (.jpg, .jpeg, .png, .webp, .gif) are allowed.")
+
+    # Reject oversized uploads (5 MB) before anything is written to disk.
+    max_bytes = 5 * 1024 * 1024
+    file.file.seek(0, os.SEEK_END)
+    size = file.file.tell()
+    file.file.seek(0)
+    if size > max_bytes:
+        raise HTTPException(status_code=413, detail="Image is too large (max 5 MB).")
 
     unique_name = f"prod_{uuid.uuid4().hex[:12]}{ext}"
 

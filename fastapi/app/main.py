@@ -224,7 +224,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(self), geolocation=()")
         response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
         if IS_PRODUCTION:
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")

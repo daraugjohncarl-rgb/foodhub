@@ -4,14 +4,15 @@ Kitchen Router — Kitchen Display System (KDS) & Drinks Counter
 Handles live kitchen orders (food only) and cashier drinks orders (drinks only).
 Implements authoritative station-based item routing and cross-role order handoff.
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional, Any
 from datetime import datetime, timedelta
 
 from app.db import get_db
 import app.models as models
-from app.core.dependencies import get_current_user
+from app.core.dependencies import require_kitchen_access, resolve_tenant_id
+from app.routers.customer_orders import apply_customer_order_status
 
 router = APIRouter(prefix="/kitchen", tags=["Kitchen — KDS & Drinks"])
 
@@ -40,6 +41,9 @@ RETAIL_KEYWORDS = {
     'canned', 'can of', 'coke can', 'sprite can', 'royal can',
     'packaged', 'retail', 'chips'
 }
+
+
+KITCHEN_STATUSES = {"pending", "accepted", "preparing", "ready", "completed", "cancelled", "rejected"}
 
 
 def get_product_station(product: Any) -> str:
@@ -101,9 +105,10 @@ def is_drink_name(name: str) -> bool:
 
 @router.get("/orders", summary="Fetch active kitchen or drinks orders")
 def get_kitchen_orders(
+    request: Request,
     type: Optional[str] = Query("food", description="Filter order items: 'food', 'drinks', or 'all'"),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_kitchen_access),
 ):
     """
     Returns orders formatted for KDS / Drinks counter.
@@ -113,6 +118,7 @@ def get_kitchen_orders(
     - Prevents empty tickets.
     """
     filter_type = (type or "food").lower().strip()
+    tenant_id = resolve_tenant_id(current_user, db, request)
     since_time = datetime.now() - timedelta(hours=24)
     orders = []
 
@@ -126,8 +132,7 @@ def get_kitchen_orders(
         ~models.Transaction.fulfillment_status.in_(["cancelled", "rejected"])
     )
 
-    if current_user.tenant_id:
-        tx_q = tx_q.filter(models.Transaction.tenant_id == current_user.tenant_id)
+    tx_q = tx_q.filter(models.Transaction.tenant_id == tenant_id)
 
     transactions = tx_q.order_by(models.Transaction.created_at.desc()).limit(60).all()
 
@@ -178,8 +183,7 @@ def get_kitchen_orders(
         models.CustomerOrder.status.in_(["accepted", "preparing", "ready"])
     )
 
-    if current_user.tenant_id:
-        cust_q = cust_q.filter(models.CustomerOrder.tenant_id == current_user.tenant_id)
+    cust_q = cust_q.filter(models.CustomerOrder.tenant_id == tenant_id)
 
     customer_orders = cust_q.order_by(models.CustomerOrder.created_at.desc()).limit(40).all()
 
@@ -239,30 +243,37 @@ def get_kitchen_orders(
 
 @router.get("/drinks-orders", summary="Fetch active drinks orders for Cashier")
 def get_cashier_drink_orders(
+    request: Request,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_kitchen_access),
 ):
     """
     Convenience endpoint for cashier to fetch live drink orders.
     """
-    return get_kitchen_orders(type="drinks", db=db, current_user=current_user)
+    return get_kitchen_orders(request=request, type="drinks", db=db, current_user=current_user)
 
 
 @router.put("/orders/{order_id}/status", summary="Update kitchen or customer order status")
 def update_order_status(
     order_id: str,
     body: dict,
+    request: Request,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_kitchen_access),
 ):
     """
     Updates the preparation/fulfillment status of a kitchen or drinks order.
     Supports both Transaction orders ('ORD-0005', '5') and Customer orders ('CUST-0005', 'CUST-5').
     Preserves financial status and prevents duplicate state collisions.
     """
-    new_status = (body.get("status") or "COMPLETED").lower().strip()
-    station = (body.get("station") or "food").lower().strip()
+    new_status = str(body.get("status") or "COMPLETED").lower().strip()
+    station = str(body.get("station") or "food").lower().strip()
     order_str = str(order_id).strip()
+    if new_status not in KITCHEN_STATUSES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid status.")
+    if station not in ("food", "drinks", "kitchen"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid station.")
+    tenant_id = resolve_tenant_id(current_user, db, request)
 
     # 1. HANDLE CUSTOMER QR ORDERS (CUST- prefix)
     if order_str.startswith("CUST-"):
@@ -271,29 +282,34 @@ def update_order_status(
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid customer order ID.")
 
-        order = db.query(models.CustomerOrder).filter(models.CustomerOrder.id == cust_id).first()
+        order = db.query(models.CustomerOrder).filter(
+            models.CustomerOrder.id == cust_id,
+            models.CustomerOrder.tenant_id == tenant_id
+        ).first()
         if not order:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer order not found.")
 
         # Map KDS statuses to CustomerOrder statuses
         target_status = "completed" if new_status in ["completed", "ready"] else new_status
-        order.status = target_status
+        if target_status == "cancelled":
+            target_status = "rejected"
+        apply_customer_order_status(order, target_status)
         db.commit()
 
         # Real-time WebSocket notifications
         try:
             from app.core.websocket import notify_realtime_event
-            notify_realtime_event(order.tenant_id or 1, "KITCHEN_UPDATED", {
+            notify_realtime_event(order.tenant_id, "KITCHEN_UPDATED", {
                 "order_id": order_str,
                 "status": target_status,
                 "station": station
             })
-            notify_realtime_event(order.tenant_id or 1, "CUSTOMER_ORDER_UPDATED", {
+            notify_realtime_event(order.tenant_id, "CUSTOMER_ORDER_UPDATED", {
                 "order_id": order.id,
                 "order_number": order.order_number,
                 "status": target_status
             })
-            notify_realtime_event(order.tenant_id or 1, "ORDER_UPDATED", {
+            notify_realtime_event(order.tenant_id, "ORDER_UPDATED", {
                 "order_id": order.id,
                 "status": target_status
             })
@@ -316,7 +332,10 @@ def update_order_status(
 
     tx = db.query(models.Transaction).options(
         joinedload(models.Transaction.items).joinedload(models.TransactionItem.product)
-    ).filter(models.Transaction.id == tx_id).first()
+    ).filter(
+        models.Transaction.id == tx_id,
+        models.Transaction.tenant_id == tenant_id
+    ).first()
 
     if not tx:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction order not found.")
@@ -337,13 +356,13 @@ def update_order_status(
     # Real-time WebSocket event broadcast
     try:
         from app.core.websocket import notify_realtime_event
-        notify_realtime_event(tx.tenant_id or 1, "KITCHEN_UPDATED", {
+        notify_realtime_event(tx.tenant_id, "KITCHEN_UPDATED", {
             "order_id": f"ORD-{tx.id:04d}",
             "raw_id": tx.id,
             "status": new_status.upper(),
             "station": station
         })
-        notify_realtime_event(tx.tenant_id or 1, "ORDER_UPDATED", {
+        notify_realtime_event(tx.tenant_id, "ORDER_UPDATED", {
             "order_id": tx.id,
             "status": tx.fulfillment_status
         })
@@ -362,11 +381,12 @@ def update_order_status(
 def update_drinks_order_status(
     order_id: str,
     body: dict,
+    request: Request,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_kitchen_access),
 ):
     """
     Dedicated endpoint for Cashier to update drink preparation/served status.
     """
     body["station"] = "drinks"
-    return update_order_status(order_id=order_id, body=body, db=db, current_user=current_user)
+    return update_order_status(order_id=order_id, body=body, request=request, db=db, current_user=current_user)

@@ -321,16 +321,16 @@ async function renderDashboard(c) {
           <div class="stat-trend" style="color:${plStats.profit_loss?.is_profitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${Utils.escapeHtml(plStats.profit_loss?.profit_margin_percent || 0)}% margin</div>
         </div>
       </div>
-      <div class="stat-card" style="cursor:pointer;" onclick="renderView('profit_loss')" title="Click to view ${isAdmin ? 'Income Received from Manager' : 'Transfer Income to Admin'}">
-        <div class="stat-icon emerald" style="background:rgba(16,185,129,0.12); color:#10b981;"><i class="fas ${isAdmin ? 'fa-inbox' : 'fa-paper-plane'}"></i></div>
+      <div class="stat-card" style="cursor:pointer;" onclick="renderView('profit_loss')" title="Click to view ${isAdmin ? 'Income Received from Manager' : 'Manager Safe Income'}">
+        <div class="stat-icon emerald" style="background:rgba(16,185,129,0.12); color:#10b981;"><i class="fas ${isAdmin ? 'fa-inbox' : 'fa-vault'}"></i></div>
         <div class="stat-info">
-          <h3>${isAdmin ? 'Income Received from Manager' : 'Transfer Income to Admin'}</h3>
+          <h3>${isAdmin ? 'Income Received from Manager' : 'Manager Safe Income'}</h3>
           <div class="stat-count" style="color:#10b981;">${Utils.formatCurrency(
             isAdmin
               ? (plStats.cashout?.admin_transfer_income !== undefined ? plStats.cashout.admin_transfer_income : (plStats.cashout?.total_transferred_to_admin ?? 0))
               : (plStats.cashout?.manager_safe_cash !== undefined ? plStats.cashout.manager_safe_cash : Math.max(0, (plStats.cashout?.total_cashout_income || 0) - (plStats.cashout?.total_transferred_to_admin || 0)))
           )}</div>
-          <div class="stat-trend" style="color:#10b981;"><i class="fas ${isAdmin ? 'fa-shield-halved' : 'fa-vault'}"></i> ${isAdmin ? 'Income secured in admin safe' : 'Transfer income to admin'}</div>
+          <div class="stat-trend" style="color:#10b981;"><i class="fas ${isAdmin ? 'fa-shield-halved' : 'fa-vault'}"></i> ${isAdmin ? 'Income secured in admin safe' : 'Manager safe balance (from cashier transfers)'}</div>
         </div>
       </div>
       <div class="stat-card">
@@ -3376,6 +3376,27 @@ let posVoiceRecognition = null;
 let isVoiceListening = false;
 let voiceActiveLanguage = 'fil-PH';
 
+const VOICE_CODE_PHONETICS = {
+  'double u': 'w', 'double you': 'w', 'dabalyu': 'w', 'dabolyu': 'w', 'doble u': 'w',
+  'see': 'c', 'sea': 'c', 'si': 'c', 'cee': 'c',
+  'jay': 'j', 'jey': 'j',
+  'em': 'm', 'emme': 'm',
+  'bee': 'b',
+  'pee': 'p', 'pi': 'p',
+  'es': 's', 'ess': 's',
+  'tee': 't', 'tea': 't', 'ti': 't',
+  'vee': 'v', 'vi': 'v',
+  'eye': 'i', 'aye': 'i',
+  'dee': 'd', 'di': 'd',
+  'ef': 'f', 'eff': 'f',
+  'gee': 'g',
+  'el': 'l', 'ell': 'l',
+  'ay': 'a', 'ey': 'a',
+  'why': 'y', 'wai': 'y',
+  'zee': 'z', 'zed': 'z',
+  'kay': 'k', 'en': 'n', 'ar': 'r', 'ex': 'x', 'cue': 'q', 'kyu': 'q'
+};
+
 function normalizeVoicePhonetics(str) {
   if (!str) return '';
   let s = str.toLowerCase().trim();
@@ -3397,7 +3418,9 @@ function normalizeVoicePhonetics(str) {
   s = s.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g, ' ');
 
   // Strip conversational fillers in Tagalog/English/Filipino speech
-  s = s.replace(/\b(ah+|eh+|ay+|um+|uh+|oh+|yung|yun|nga|kuya|ate|miss|bossing)\b/gi, ' ');
+  // "ay" is also the spoken letter A ("ay 1" = A1), so it is a filler only when no number follows.
+  s = s.replace(/\bay+\b(?!\s*(?:\d|one|wan|juan|want|two|tu|to|too|three|tri|four|for|five|six|seven|eight|nine)\b)/gi, ' ');
+  s = s.replace(/\b(ah+|eh+|um+|uh+|oh+|yung|yun|nga|kuya|ate|miss|bossing)\b/gi, ' ');
   // Strip standalone 'po' only if not followed by 's'
   s = s.replace(/\bpo\b(?!\s*s\b)/gi, ' ');
 
@@ -3437,7 +3460,7 @@ function normalizeVoicePhonetics(str) {
   s = s.replace(/\b([b-z])\s+(?:1|one|wan|juan|want)\b/gi, '$11');
   s = s.replace(/\b([b-z])\s+(?:2|two|tu|to|too)\b/gi, '$12');
   s = s.replace(/\b([b-z])\s+(?:3|three|tri)\b/gi, '$13');
-  s = s.replace(/\b([a-z])\s+(\d{1,2})\b/gi, '$1$2');
+  s = s.replace(/\b([a-z])\s+(\d{1,4})\b/gi, '$1$2');
 
   // Convert sequences of digit words into numeric digits (e.g. "nine nine four six" -> "9946", "five three four one" -> "5341")
   const words = s.split(/\s+/).filter(Boolean);
@@ -3468,6 +3491,36 @@ function normalizeVoicePhonetics(str) {
   }
 
   s = converted.join(' ');
+
+  // Spoken product code letter pronunciations (e.g. "see" -> "c" in "see 122", "see jay 122" -> "cj122", "ay 1" -> "a1")
+  // Only converts letters when directly related to a product code (followed by digits or dash + digits)
+  s = s.replace(/\b(?:double\s+(?:u|you)|dabalyu|dabolyu|doble\s+u)\b/gi, 'double_u');
+  s = s.replace(/((?:\b[a-z_]+\s*[-–—\s]?\s*){1,4})(\d{1,4})\b/gi, (match, wordsPart, digits) => {
+    const rawTokens = wordsPart.trim().split(/[-–—\s]+/).filter(Boolean);
+    const convertedLetters = [];
+    let consumedCount = 0;
+    for (let i = rawTokens.length - 1; i >= 0; i--) {
+      const tok = rawTokens[i].toLowerCase();
+      if (tok === 'double_u') {
+        convertedLetters.unshift('w');
+        consumedCount++;
+      } else if (VOICE_CODE_PHONETICS[tok]) {
+        convertedLetters.unshift(VOICE_CODE_PHONETICS[tok]);
+        consumedCount++;
+      } else if (/^[a-z]$/i.test(tok)) {
+        convertedLetters.unshift(tok.toLowerCase());
+        consumedCount++;
+      } else {
+        break; // stop when hitting a non-letter word (e.g. quantity 'two', 'dalawa', 'order')
+      }
+      if (convertedLetters.length >= 4) break;
+    }
+    if (convertedLetters.length === 0) return match;
+    const unconsumedTokens = rawTokens.slice(0, rawTokens.length - consumedCount);
+    const prefix = unconsumedTokens.length ? unconsumedTokens.join(' ') + ' ' : '';
+    return prefix + convertedLetters.join('') + digits;
+  });
+
   s = s.replace(/\s+/g, ' ').trim();
   return s;
 }
@@ -3517,8 +3570,8 @@ function parseVoiceSegment(seg, pendingQty = null) {
 
   // Robust Code + Quantity pattern:
   // Extracts code and quantity even if there are conversational words like "order", "orders", "pcs"
-  // Matches: "y1 2", "y1 to", "c1 1", "c1 want", "c2 2", "pos 5341 2", "why want to"
-  const mCodeQty = text.match(/\b([a-z]\d+|pos\s+\d+|sku\s+\d+|\d{4,5})\s+(\d{1,2}|[a-z]+)(?:\s+(?:orders?|pcs|pieces?|buok|ka\s+bilog))?$/i);
+  // Matches: "y1 2", "y1 to", "c1 1", "c1 want", "c2 2", "pos 5341 2", "why want to", "c122 2", "cj122 2"
+  const mCodeQty = text.match(/\b([a-z]{1,4}\s*[-–—]?\s*\d{1,4}|pos\s+\d+|sku\s+\d+|\d{3,5})\s+(\d{1,2}|[a-z]+)(?:\s+(?:orders?|pcs|pieces?|buok|ka\s+bilog))?$/i);
   if (mCodeQty) {
     const candCode = mCodeQty[1].trim();
     const candQ = mCodeQty[2].trim().toLowerCase();
@@ -3534,8 +3587,8 @@ function parseVoiceSegment(seg, pendingQty = null) {
   }
 
   // Robust Quantity + Code pattern:
-  // Matches: "2 y1", "two y1", "to y1", "1 c2", "one c2", "3 c2"
-  const mQtyCode = text.match(/\b(\d{1,2}|[a-z]+)\s+(?:of\s+)?([a-z]\d+|pos\s+\d+|sku\s+\d+|\d{4,5})$/i);
+  // Matches: "2 y1", "two y1", "to y1", "1 c2", "one c2", "3 c2", "2 cj122", "two c122"
+  const mQtyCode = text.match(/\b(\d{1,2}|[a-z]+)\s+(?:of\s+)?([a-z]{1,4}\s*[-–—]?\s*\d{1,4}|pos\s+\d+|sku\s+\d+|\d{3,5})$/i);
   if (mQtyCode) {
     const candQ = mQtyCode[1].trim().toLowerCase();
     const candCode = mQtyCode[2].trim();
@@ -3550,7 +3603,7 @@ function parseVoiceSegment(seg, pendingQty = null) {
     }
   }
 
-  // 1. Check digit at start (1 or 2 digits only, e.g. "1 c1", "3 c2", "2 y1")
+  // 1. Check digit at start (1 or 2 digits only, e.g. "1 c1", "3 c2", "2 y1", "2 c122")
   const mDigitStart = text.match(/^(\d{1,2})\s+(.*)$/);
   if (mDigitStart) {
     qty = parseInt(mDigitStart[1], 10);
@@ -3589,15 +3642,15 @@ function parseVoiceSegment(seg, pendingQty = null) {
     }
 
     if (!matchedEnd) {
-      // 3b. Code with trailing numeric quantity (e.g. "pos 7928 2", "sku 85372 3", "c1 1")
-      const mCodeWithQty = text.match(/^(pos\s+\d+|sku\s+\d+|\d{4,5}|[a-z]\d+)\s+(\d{1,2})$/i);
+      // 3b. Code with trailing numeric quantity (e.g. "pos 7928 2", "sku 85372 3", "c1 1", "cj122 2")
+      const mCodeWithQty = text.match(/^(pos\s+\d+|sku\s+\d+|code\s+\d+|\d{3,5}|[a-z]{1,4}\s*[-–—]?\s*\d{1,4})\s+(\d{1,2})$/i);
       if (mCodeWithQty) {
         itemStr = mCodeWithQty[1].trim();
         qty = parseInt(mCodeWithQty[2], 10);
       } else {
         // 3c. Regular trailing quantity (e.g. "burger 2")
         const mDigitEnd = text.match(/^(.*?)\s+(\d{1,2})$/);
-        if (mDigitEnd && !/^(?:pos|sku|code|item|c|y|z)$/i.test(mDigitEnd[1].trim())) {
+        if (mDigitEnd && !/^(?:pos|sku|code|item|c|y|z|[a-z]{1,4}\s*[-–—]?\s*\d{1,4})$/i.test(mDigitEnd[1].trim())) {
           qty = parseInt(mDigitEnd[2], 10);
           itemStr = mDigitEnd[1].trim();
         }
@@ -3623,7 +3676,10 @@ function parseFullVoiceOrder(speechText, products, pendingQty = null) {
   cleaned = cleaned.replace(/\b(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2}),\s*/gi, '$1 ');
 
   // Split multiple items if separated by conjunctions, punctuation, "next order", "then", "next", "period"
-  const rawSegments = cleaned.split(/[,;]|\s+(?:kag|at|and|tsaka|saka|\+|with|then\s+next|next\s+order|then|next|period)\s+/i);
+  // "with" separates items only before a quantity ("c1 with 2 fries"); otherwise it is part of a
+  // product name ("carbonara with bread").
+  cleaned = cleaned.replace(/\s+with\s+(?=(\S+))/gi, (m, next) => (/^\d/.test(next) || VOICE_NUMBER_WORDS[next] !== undefined) ? ' and ' : m);
+  const rawSegments = cleaned.split(/[,;]|\s+(?:kag|at|and|tsaka|saka|\+|then\s+next|next\s+order|then|next|period)\s+/i);
   const items = [];
 
   for (const raw of rawSegments) {
@@ -3679,13 +3735,17 @@ function matchVoiceProductDetailed(query, products) {
   const qDigits = qDigitMatch ? qDigitMatch[0] : '';
   const isCodeQuery = /^(?:pos|sku|code|item)?\s*\d+$/i.test(query.trim());
 
-  // Incomplete POS code check: All POS codes have 4 digits (e.g. POS-5341, POS-2631, POS-2931).
-  // If query is an incomplete code with < 4 digits (e.g. "pos 2", "pos 26", "pos 263"), NEVER match!
-  if (isCodeQuery && qDigits && qDigits.length < 4) {
+  // Incomplete POS code check: explicit POS codes have 4 digits (e.g. POS-5341, POS-2631, POS-2931).
+  // If query specifically starts with 'pos' and has < 4 digits (e.g. "pos 2", "pos 26", "pos 263"), NEVER match!
+  if (/^pos\s*\d+$/i.test(query.trim()) && qDigits && qDigits.length < 4) {
+    return NONE;
+  }
+  // Standalone numbers with < 3 digits (e.g. "1", "2") are quantities, not product codes
+  if (isCodeQuery && qDigits && qDigits.length < 3) {
     return NONE;
   }
 
-  // 1. Exact match on normalized SKU / Code (e.g. "c1 solo" or "c1solo" matching "C1-SOLO", or "pos 7928", "pos 2631")
+  // 1. Exact match on normalized SKU / Code (e.g. "c1 solo" or "c1solo" matching "C1-SOLO", or "pos 7928", "pos 2631", "cj122" matching "CJ-122")
   for (const p of activeProducts) {
     const sku = (p.sku || '').toLowerCase();
     const normSku = sku.replace(/[\-_,.]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -3695,14 +3755,30 @@ function matchVoiceProductDetailed(query, products) {
     }
   }
 
-  // 2. Code digits match (4 digits for POS-XXXX, 5 digits for SKU-XXXXX)
-  if (isCodeQuery && qDigits && qDigits.length >= 4) {
+  // 2. Code digits match (3 digits for menu SKUs like 122, 4 digits for POS-XXXX, 5 digits for SKU-XXXXX)
+  if ((isCodeQuery || /^[a-z]{1,4}\s*[-–—]?\s*\d+$/i.test(query.trim())) && qDigits && qDigits.length >= 3) {
     const byDigits = activeProducts.filter(p => {
       const skuDigitMatch = (p.sku || '').toLowerCase().match(/\d+/);
-      return skuDigitMatch && skuDigitMatch[0].length >= 4 && skuDigitMatch[0] === qDigits;
+      return skuDigitMatch && skuDigitMatch[0] === qDigits;
     });
-    if (byDigits.length === 1) return hit(byDigits[0], 'exact');
-    if (byDigits.length > 1) return { product: null, confidence: 'ambiguous', candidates: byDigits };
+    if (byDigits.length === 1) {
+      const qLetters = qClean.replace(/\d+/g, '').replace(/^(pos|sku|code|item)/g, '');
+      const pLetters = (byDigits[0].sku || '').toLowerCase().replace(/[^a-z0-9]/g, '').replace(/\d+/g, '');
+      if (!qLetters || pLetters.startsWith(qLetters) || pLetters.includes(qLetters)) {
+        return hit(byDigits[0], 'exact');
+      }
+    } else if (byDigits.length > 1) {
+      const qLetters = qClean.replace(/\d+/g, '').replace(/^(pos|sku|code|item)/g, '');
+      if (qLetters) {
+        const matchingLetters = byDigits.filter(p => {
+          const pLetters = (p.sku || '').toLowerCase().replace(/[^a-z0-9]/g, '').replace(/\d+/g, '');
+          return pLetters.startsWith(qLetters) || pLetters.includes(qLetters);
+        });
+        if (matchingLetters.length === 1) return hit(matchingLetters[0], 'exact');
+        if (matchingLetters.length > 1) return { product: null, confidence: 'ambiguous', candidates: matchingLetters };
+      }
+      return { product: null, confidence: 'ambiguous', candidates: byDigits };
+    }
   }
 
   // 3. Embedded code in query (e.g. "bucket ice c2", "1 c1", query contains code word "c2" or "c1")
@@ -7111,11 +7187,11 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
         </div>
 
         <div class="pl-stat-card">
-          <div class="pl-stat-icon green"><i class="fas fa-vault"></i></div>
+          <div class="pl-stat-icon green"><i class="fas ${isAdmin ? 'fa-inbox' : 'fa-vault'}"></i></div>
           <div class="pl-stat-info">
-            <h3>Transfer Income to Admin</h3>
-            <div class="pl-stat-count" style="color:#10b981;">${Utils.formatCurrency(managerSafeBalanceVal)}</div>
-            <div class="pl-stat-trend" style="color:#10b981;"><i class="fas fa-vault"></i> Manager safe balance (after transfers to Admin)</div>
+            <h3>${isAdmin ? 'Income Received from Manager' : 'Manager Safe Income'}</h3>
+            <div class="pl-stat-count" style="color:#10b981;">${Utils.formatCurrency(isAdmin ? adminIncomingTransfersVal : managerSafeBalanceVal)}</div>
+            <div class="pl-stat-trend" style="color:#10b981;"><i class="fas ${isAdmin ? 'fa-shield-halved' : 'fa-vault'}"></i> ${isAdmin ? 'Secured in admin safe' : 'Manager safe balance (after transfers to Admin)'}</div>
           </div>
         </div>
 
@@ -7219,11 +7295,11 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
         <div class="pl-card">
           <div class="pl-card-header">
             <div class="pl-card-header-left">
-              <h2><i class="fas ${isAdmin ? 'fa-inbox' : 'fa-paper-plane'}" style="color:#10b981;"></i> ${isAdmin ? 'Income Received from Manager' : 'Transfer Income to Admin'}</h2>
-              <span>${isAdmin ? 'Internal remittances received from store managers secured in admin safe' : 'Transfer income to admin secured in store safe vs active cashier drawer float'}</span>
+              <h2><i class="fas ${isAdmin ? 'fa-inbox' : 'fa-vault'}" style="color:#10b981;"></i> ${isAdmin ? 'Income Received from Manager' : 'Manager Safe Income'}</h2>
+              <span>${isAdmin ? 'Internal remittances received from store managers secured in admin safe' : 'Manager safe balance from cashier drawer transfers vs active cashier drawer float'}</span>
             </div>
             <span class="pl-badge pl-badge-success">
-              <i class="fas fa-shield-halved"></i> ${isAdmin ? 'ADMIN SAFE' : 'STORE SAFE'}
+              <i class="fas ${isAdmin ? 'fa-shield-halved' : 'fa-vault'}"></i> ${isAdmin ? 'ADMIN SAFE' : 'STORE SAFE'}
             </span>
           </div>
 
@@ -7232,13 +7308,13 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
             <div class="pl-row">
               <span class="pl-row-label">
                 <i class="fas ${isAdmin ? 'fa-inbox' : 'fa-vault'}" style="color:#10b981; font-size:12px;"></i>
-                ${isAdmin ? 'Total Income Received from Manager:' : 'Total Transfer Income to Admin:'}
+                ${isAdmin ? 'Total Income Received from Manager:' : 'Total Manager Safe Income:'}
               </span>
               <strong class="pl-row-value" style="color:#10b981;">${Utils.formatCurrency(isAdmin ? adminIncomingTransfersVal : managerSafeBalanceVal)}</strong>
             </div>
 
             <div class="pl-sub-row">
-              <span>↳ ${isAdmin ? "Today's Transfer Remittance:" : "Today's Transfer Income to Admin:"}</span>
+              <span>↳ ${isAdmin ? "Today's Transfer Remittance:" : "Today's Cashier Transfers into Safe:"}</span>
               <span class="pl-row-value" style="color:var(--text-main);">${Utils.formatCurrency(isAdmin ? (csh.today_transferred_to_admin || 0) : (csh.today_cashout_income || 0))}</span>
             </div>
 
@@ -8706,9 +8782,15 @@ async function renderCashDrawerTracker(c, silent = false) {
   }
 
   try {
-    const res = await Auth.fetch("/api/v1/shifts/drawer-summary");
+    const [res, plRes] = await Promise.all([
+      Auth.fetch("/api/v1/shifts/drawer-summary"),
+      !cachedProfitLossData ? Auth.fetch("/api/v1/analytics/profit-loss").catch(() => null) : Promise.resolve(null)
+    ]);
     if (!res.ok) throw new Error("Failed to fetch cash drawer summary.");
     cachedDrawerData = await res.json();
+    if (plRes && plRes.ok) {
+      cachedProfitLossData = await plRes.json();
+    }
     renderCashDrawerTrackerUI(container, cachedDrawerData);
   } catch (err) {
     console.error("Cash Drawer Error:", err);
@@ -8741,6 +8823,11 @@ function renderCashDrawerTrackerUI(container, data) {
 
   const totalDrops = shifts.reduce((sum, s) => sum + (s.paid_out || 0), 0);
   const totalPaidIn = shifts.reduce((sum, s) => sum + (s.paid_in || 0), 0);
+  const managerIncomeVal = data.manager_safe_cash !== undefined 
+    ? data.manager_safe_cash 
+    : (cachedProfitLossData?.cashout?.manager_safe_cash !== undefined 
+        ? cachedProfitLossData.cashout.manager_safe_cash 
+        : totalDrops);
 
   container.innerHTML = `
     <!-- Top Toolbar -->
@@ -8750,10 +8837,13 @@ function renderCashDrawerTrackerUI(container, data) {
           <i class="fas fa-vault" style="color:#c9a227;"></i> Cash Drawer
         </h2>
         <p style="font-size:12px; color:var(--text-muted); margin:4px 0 0 0;">
-          Live cash drawer balance, cashier floats, sales collections, and safe drops
+          Live cash drawer balance, cashier floats, sales collections, and manager safe income
         </p>
       </div>
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <button class="btn btn-primary btn-sm" onclick="openAddCashMovementModal(null, 'manager_income')" title="Transfer Cashier Drawer to Manager Income Safe" style="display:inline-flex; align-items:center; gap:6px; font-weight:700; border-radius:10px; padding:6px 14px; background:linear-gradient(135deg, #10b981 0%, #059669 100%); border:none; color:#fff; cursor:pointer;">
+          <i class="fas fa-paper-plane"></i> Transfer Income
+        </button>
         <button class="btn btn-outline btn-sm" onclick="openEditCashierDrawerModal(null)" title="Edit Cashier Drawer" style="display:inline-flex; align-items:center; gap:6px; color:#c9a227; border-color:#c9a227; font-weight:700; border-radius:10px; padding:6px 14px;">
           <i class="fas fa-pen-to-square"></i> Edit Drawer
         </button>
@@ -8763,7 +8853,7 @@ function renderCashDrawerTrackerUI(container, data) {
       </div>
     </div>
 
-    <!-- Metrics Cards Grid: Cashier Drawer & Overall Income -->
+    <!-- Metrics Cards Grid: Cashier Drawer, Overall Income & Manager Income -->
     <div class="stats-grid fade-up delay-1" style="grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); margin-bottom:16px;">
       <div class="stat-card">
         <div class="stat-icon gold"><i class="fas fa-vault"></i></div>
@@ -8779,6 +8869,14 @@ function renderCashDrawerTrackerUI(container, data) {
           <h3>Overall Income</h3>
           <div class="stat-count" style="color:#10b981;">${Utils.formatCurrency(data.overall_income !== undefined ? data.overall_income : (data.orders_overall_income || 0))}</div>
           <div class="stat-trend" style="color:#10b981;"><i class="fas fa-circle-check"></i> Orders revenue from completed sales</div>
+        </div>
+      </div>
+      <div class="stat-card" style="cursor:pointer;" onclick="openAddCashMovementModal(null, 'manager_income')" title="Click to Transfer Cashier Drawer to Manager Income">
+        <div class="stat-icon purple" style="background:rgba(123,31,162,0.12); color:#7b1fa2;"><i class="fas fa-vault"></i></div>
+        <div class="stat-info">
+          <h3>Manager Income</h3>
+          <div class="stat-count" style="color:#7b1fa2;">${Utils.formatCurrency(managerIncomeVal || 0)}</div>
+          <div class="stat-trend" style="color:#7b1fa2;"><i class="fas fa-vault"></i> Manager safe balance (transferred from cashiers)</div>
         </div>
       </div>
     </div>
@@ -8803,6 +8901,7 @@ function renderCashDrawerTrackerUI(container, data) {
               <th style="background:rgba(16,185,129,0.12); color:#10b981; font-size:13px;">Cashier Overall Income</th>
               <th style="font-size:12px;"><i class="fas fa-money-bill-wave" style="color:#10b981; margin-right:4px;"></i> Overall Cash</th>
               <th style="font-size:12px;"><i class="fas fa-mobile-screen-button" style="color:#007dfe; margin-right:4px;"></i> GCash</th>
+              <th style="background:rgba(123,31,162,0.12); color:#7b1fa2; font-size:12px;"><i class="fas fa-paper-plane" style="margin-right:4px;"></i> Transfer to Manager</th>
               <th style="text-align:right;">Actions</th>
             </tr>
           </thead>
@@ -8817,7 +8916,7 @@ function renderCashDrawerTrackerUI(container, data) {
 
 function renderDrawerTableRows(shifts) {
   if (!shifts || !shifts.length) {
-    return '<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--text-muted);"><i class="fas fa-info-circle"></i> No cashier shifts recorded yet.</td></tr>';
+    return '<tr><td colspan="9" style="text-align:center; padding:30px; color:var(--text-muted);"><i class="fas fa-info-circle"></i> No cashier shifts recorded yet.</td></tr>';
   }
   return shifts.map(s => {
     const isOpen = s.status === 'open';
@@ -8876,8 +8975,17 @@ function renderDrawerTableRows(shifts) {
           <strong style="color:#007dfe; font-weight:800; font-size:13.5px;">+${Utils.formatCurrency(s.non_cash_sales || 0)}</strong>
           <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">GCash / Online</div>
         </td>
-        <td style="text-align:right;">
-          <div style="display:inline-flex; gap:6px;">
+        <td style="background:rgba(123,31,162,0.06); min-width:140px;">
+          <strong style="color:#7b1fa2; font-weight:800; font-size:13.5px;">${Utils.formatCurrency(s.cashed_out || s.paid_out || 0)}</strong>
+          <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">Transferred to Manager Safe</div>
+        </td>
+        <td style="text-align:right; white-space:nowrap;">
+          <div style="display:inline-flex; gap:6px; align-items:center;">
+            ${isOpen ? `
+            <button type="button" class="btn btn-sm" onclick="openAddCashMovementModal(${s.id}, 'manager_income')" title="Transfer Drawer & Income to Manager Safe" style="padding:4px 10px; font-size:11px; background:rgba(16,185,129,0.12); color:#10b981; border:1px solid rgba(16,185,129,0.3); border-radius:6px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
+              <i class="fas fa-paper-plane"></i> Transfer to Manager
+            </button>
+            ` : ''}
             <button class="btn btn-outline btn-sm" onclick="openShiftMovementsModal(${s.id})" title="View Cash Movement History" style="padding:4px 8px; font-size:11px;">
               <i class="fas fa-list-check"></i> Audit
             </button>
@@ -8968,7 +9076,7 @@ async function reloadTransferDialogData(showToast = true) {
       : Math.max(0, (cachedProfitLossData?.cashout?.total_cashout_income || 0) - (cachedProfitLossData?.cashout?.total_transferred_to_admin || 0));
 
     const freshAmount = isManagerProfitIncome
-      ? (cashierOverallIncome > 0 ? cashierOverallIncome : (expectedCash > 0 ? expectedCash : 0))
+      ? (expectedCash > 0 ? expectedCash : (cashierOverallIncome > 0 ? cashierOverallIncome : 0))
       : (availableSafeCash > 0 ? availableSafeCash : 0);
 
     const amountInput = document.getElementById("cm-amount");
@@ -8979,8 +9087,8 @@ async function reloadTransferDialogData(showToast = true) {
     const infoEl = document.getElementById("cm-expected-info-container");
     if (infoEl) {
       infoEl.innerHTML = isManagerProfitIncome ? `
-        Cashier Overall Income: <strong id="cm-expected-info" style="color:#10b981;">${Utils.formatCurrency(cashierOverallIncome)}</strong>
-        &bull; Live Drawer: <strong>${Utils.formatCurrency(expectedCash)}</strong>
+        Cashier Drawer (All Cash to Manager Income): <strong id="cm-expected-info" style="color:#10b981;">${Utils.formatCurrency(expectedCash)}</strong>
+        &bull; Sales Income: <strong>${Utils.formatCurrency(cashierOverallIncome)}</strong>
       ` : `
         Available in Manager Safe: <strong id="cm-expected-info" style="color:#10b981;">${Utils.formatCurrency(availableSafeCash)}</strong>
         &bull; <span style="color:#ef4444; font-weight:700;"><i class="fas fa-arrow-down"></i> Decreases Manager Realized Income</span>
@@ -9061,13 +9169,13 @@ async function openAddCashMovementModal(defaultShiftId = null, targetType = null
     : Math.max(0, (cachedProfitLossData?.cashout?.total_cashout_income || 0) - (cachedProfitLossData?.cashout?.total_transferred_to_admin || 0));
 
   const defaultCashoutAmount = isManagerProfitIncome
-    ? (cashierOverallIncome > 0 ? cashierOverallIncome : (expectedCash > 0 ? expectedCash : 0))
+    ? (expectedCash > 0 ? expectedCash : (cashierOverallIncome > 0 ? cashierOverallIncome : 0))
     : (availableSafeCash > 0 ? availableSafeCash : 0);
 
-  const modalTitle = isManagerProfitIncome ? "Transfer to Manager Profit Income" : "Transfer to Admin";
-  const labelText = isManagerProfitIncome ? "Transfer Amount to Manager Profit Income (₱)" : "Transfer Amount to Admin (₱)";
+  const modalTitle = isManagerProfitIncome ? "Transfer Cashier Drawer to Manager Income" : "Transfer to Admin";
+  const labelText = isManagerProfitIncome ? "Transfer Amount to Manager Income (₱)" : "Transfer Amount to Admin (₱)";
   const btnIcon = isManagerProfitIncome ? "fa-vault" : "fa-paper-plane";
-  const btnText = isManagerProfitIncome ? "Transfer to Manager Profit Income & Reset Cashier to ₱0.00" : "Transfer to Admin (Decreases Realized Cash)";
+  const btnText = isManagerProfitIncome ? "Transfer to Manager Income & Reset Drawer to ₱0.00" : "Transfer to Admin (Decreases Realized Cash)";
   const transferReason = isManagerProfitIncome ? "Transfer to Manager Profit Income" : "Transfer to Admin";
 
   const shiftOptions = openShifts.length > 0 ? openShifts.map(s => {
@@ -9094,10 +9202,30 @@ async function openAddCashMovementModal(defaultShiftId = null, targetType = null
         </button>
       </div>
 
+      ${isManagerProfitIncome ? `
+        <div style="background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25); border-radius:8px; padding:10px 14px; margin-bottom:14px; font-size:12px;">
+          <div style="display:flex; align-items:center; gap:6px; font-weight:700; color:#10b981; margin-bottom:2px;">
+            <i class="fas fa-shield-halved"></i> Destination: Manager Income Safe (Not Admin)
+          </div>
+          <div style="color:var(--text-muted); font-size:11.5px; line-height:1.4;">
+            Transfers all cashier cash drawer balance and sales income into the <strong>Manager Income</strong> safe. It is <strong>NOT</strong> an Admin transfer. Cashier drawer resets to ₱0.00.
+          </div>
+        </div>
+      ` : `
+        <div style="background:rgba(59,130,246,0.08); border:1px solid rgba(59,130,246,0.25); border-radius:8px; padding:10px 14px; margin-bottom:14px; font-size:12px;">
+          <div style="display:flex; align-items:center; gap:6px; font-weight:700; color:#3b82f6; margin-bottom:2px;">
+            <i class="fas fa-paper-plane"></i> Destination: Admin Safe Remittance
+          </div>
+          <div style="color:var(--text-muted); font-size:11.5px; line-height:1.4;">
+            Transfers cash from Manager Safe to Admin Safe. This deducts from Manager Safe cash.
+          </div>
+        </div>
+      `}
+
       ${isManagerProfitIncome && openShifts.length > 1 && !defaultShiftId ? `
         <div class="input-group" style="margin-bottom:14px;">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Select Active Cashier Shift <span style="color:var(--danger);">*</span></label>
-          <select id="cm-shift-id" class="input-field" required style="width:100%;" onchange="const s = ((cachedDrawerData && cachedDrawerData.shifts) || []).find(x => x.id == this.value); if (s && document.getElementById('cm-amount')) { const inc = s.cashier_overall_income !== undefined ? s.cashier_overall_income : (s.total_sales || 0); const val = inc > 0 ? inc : (s.expected_cash || 0); document.getElementById('cm-amount').value = val.toFixed(2); const info = document.getElementById('cm-expected-info'); if (info) info.textContent = Utils.formatCurrency(val); }">
+          <select id="cm-shift-id" class="input-field" required style="width:100%;" onchange="const s = ((cachedDrawerData && cachedDrawerData.shifts) || []).find(x => x.id == this.value); if (s && document.getElementById('cm-amount')) { const exp = s.expected_cash || 0; const inc = s.cashier_overall_income !== undefined ? s.cashier_overall_income : (s.total_sales || 0); const val = exp > 0 ? exp : (inc > 0 ? inc : 0); document.getElementById('cm-amount').value = val > 0 ? val.toFixed(2) : ''; const info = document.getElementById('cm-expected-info'); if (info) info.textContent = Utils.formatCurrency(val); }">
             ${shiftOptions}
           </select>
         </div>
@@ -9110,8 +9238,8 @@ async function openAddCashMovementModal(defaultShiftId = null, targetType = null
         <input type="number" step="0.01" min="0.01" id="cm-amount" class="input-field" required value="${defaultCashoutAmount > 0 ? defaultCashoutAmount.toFixed(2) : ''}" placeholder="0.00" style="width:100%; font-size:26px; font-weight:800; padding:12px; text-align:center; color:#10b981; border:2px solid #10b981; border-radius:10px;">
         <div id="cm-expected-info-container" style="text-align:center; font-size:12px; color:var(--text-muted); margin-top:8px;">
           ${isManagerProfitIncome ? `
-            Cashier Overall Income: <strong id="cm-expected-info" style="color:#10b981;">${Utils.formatCurrency(cashierOverallIncome)}</strong>
-            &bull; Live Drawer: <strong>${Utils.formatCurrency(expectedCash)}</strong>
+            Cashier Drawer (All Cash to Manager Income): <strong id="cm-expected-info" style="color:#10b981;">${Utils.formatCurrency(expectedCash)}</strong>
+            &bull; Sales Income: <strong>${Utils.formatCurrency(cashierOverallIncome)}</strong>
           ` : `
             Available in Manager Safe: <strong id="cm-expected-info" style="color:#10b981;">${Utils.formatCurrency(availableSafeCash)}</strong>
             &bull; <span style="color:#ef4444; font-weight:700;"><i class="fas fa-arrow-down"></i> Decreases Manager Realized Income</span>
@@ -9157,7 +9285,7 @@ async function submitAddCashMovement() {
     }
 
     const data = await res.json();
-    const destName = isManagerIncome ? "Manager Profit Income" : "Admin";
+    const destName = isManagerIncome ? "Manager Income Safe" : "Admin";
     Utils.showToast(data.message || `Successfully transferred ₱${amount.toFixed(2)} to ${destName}! ${isManagerIncome ? 'Cashier drawer reset to ₱0.00.' : 'Manager realized cash decreased.'}`, "success");
     Utils.closeModal();
 
@@ -9198,7 +9326,7 @@ async function submitAddCashMovement() {
     if (submitBtn) {
       submitBtn.disabled = false;
       const btnIcon = isManagerIncome ? "fa-vault" : "fa-paper-plane";
-      const btnText = isManagerIncome ? "Transfer to Manager Profit Income & Reset Cashier to ₱0.00" : "Transfer to Admin (Decreases Realized Cash)";
+      const btnText = isManagerIncome ? "Transfer to Manager Income & Reset Drawer to ₱0.00" : "Transfer to Admin (Decreases Realized Cash)";
       submitBtn.innerHTML = `<i class="fas ${btnIcon}"></i> ${Utils.escapeHtml(btnText)}`;
     }
   }
@@ -9558,6 +9686,14 @@ window.reloadTransferDialogData = reloadTransferDialogData;
       case "ORDER_UPDATED":
       case "CUSTOMER_ORDER_UPDATED":
       case "KITCHEN_UPDATED":
+        // A cashier sale just created a ticket: tell kitchen staff what arrived (the chime plays on ORDER_CREATED).
+        if (event === "KITCHEN_UPDATED" && data && data.status === "PENDING" && data.station) {
+          let viewer = null;
+          try { viewer = typeof Auth !== 'undefined' ? Auth.getUser() : null; } catch (e) {}
+          if (viewer && String(viewer.role || "").toLowerCase() === "kitchen" && typeof Utils !== 'undefined' && Utils.showToast) {
+            Utils.showToast(`New order ${data.order_id || ''} for the ${data.station === "drinks" ? "Drinks" : "Kitchen"} station`, "info");
+          }
+        }
         // Always refresh pending customer online orders and badges immediately
         if (typeof fetchPendingOnlineOrders === 'function') {
           fetchPendingOnlineOrders().then(() => {

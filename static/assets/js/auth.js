@@ -1,12 +1,12 @@
+try { localStorage.removeItem("access_token"); sessionStorage.removeItem("access_token"); } catch (e) {} // legacy JWT copies are purged: the session lives only in the HttpOnly cookie
 /**
  * Centralized Authentication & API Fetch Wrapper
  * Blessie FoodHub / RestoTrack Multi-Role Dashboard
  */
 
 const Auth = {
-  getToken() {
-    return localStorage.getItem("access_token") || sessionStorage.getItem("access_token");
-  },
+  // The JWT is never readable from JavaScript: it only exists in the HttpOnly `session_token` cookie.
+  // localStorage/sessionStorage hold non-secret display state (role, name) only; the server enforces everything.
 
   getUser() {
     const raw = localStorage.getItem("RESTOTRACK_USER") || sessionStorage.getItem("RESTOTRACK_USER");
@@ -32,25 +32,8 @@ const Auth = {
   },
 
   isAuthenticated() {
-    const token = this.getToken();
-    if (!token) {
-      // Check if user session credentials exist in storage or cookie
-      const role = this.getRole();
-      if (role) return true;
-      return false;
-    }
-    try {
-      const parts = token.split(".");
-      if (parts.length === 3) {
-        const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
-        if (payload.exp && Date.now() >= payload.exp * 1000) {
-          console.warn("Session expired after 1 day. Logging out.");
-          this.logout();
-          return false;
-        }
-      }
-    } catch (e) {}
-    return true;
+    // Expiry/revocation is decided by the server (401 -> logout in Auth.fetch).
+    return !!this.getRole();
   },
 
   getDashboardUrl(role) {
@@ -106,7 +89,6 @@ const Auth = {
       const fullName = nameParts.length > 0 ? nameParts.join(" ") : data.username;
 
       const storage = rememberMe ? localStorage : sessionStorage;
-      storage.setItem("access_token", data.access_token);
       storage.setItem("username", data.username);
       storage.setItem("role", data.role);
       storage.setItem("first_name", data.first_name || "");
@@ -129,7 +111,6 @@ const Auth = {
 
       return {
         success: true,
-        token: data.access_token,
         role: (data.role || "").toLowerCase(),
         redirect_url: data.redirect_url || this.getDashboardUrl(data.role),
         user: userProfile
@@ -151,7 +132,6 @@ const Auth = {
       if (!response.ok) {
         return { success: false, message: data.detail || "Registration failed" };
       }
-      localStorage.setItem("access_token", data.access_token);
       localStorage.setItem("username", data.username);
       localStorage.setItem("role", "customer");
       localStorage.setItem("tenant_id", data.tenant_id || 1);
@@ -170,8 +150,6 @@ const Auth = {
   },
 
   async logout() {
-    const token = this.getToken();
-
     // 1. Immediately wipe all client credentials to instantly terminate session
     localStorage.removeItem("access_token");
     localStorage.removeItem("username");
@@ -191,10 +169,7 @@ const Auth = {
     try {
       fetch("/api/v1/auth/logout", {
         method: "POST",
-        headers: {
-          "Authorization": `Bearer ${token || ""}`,
-          "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
         credentials: "include",
         keepalive: true
       }).catch(() => {});
@@ -209,12 +184,7 @@ const Auth = {
    * Automatically attaches Bearer token, passes session cookies, and intercepts 401s
    */
   async fetch(url, options = {}) {
-    const token = this.getToken();
     const headers = Object.assign({}, options.headers || {});
-
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
 
     if (!headers["Content-Type"] && !(options.body instanceof FormData)) {
       headers["Content-Type"] = "application/json";
@@ -258,7 +228,7 @@ const Auth = {
  */
 async function requireRoleAsync(allowedRoles = []) {
   // If local credentials missing, fast-restore from server session cookie
-  if (!Auth.getToken() || !Auth.getRole()) {
+  if (!Auth.getRole()) {
     try {
       const res = await fetch("/api/v1/auth/session", { credentials: "include" });
       if (res.ok) {

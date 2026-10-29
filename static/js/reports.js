@@ -96,7 +96,7 @@ function initReportsApp() {
             CRITICAL: ['priority-critical', 'fa-bolt',        'Critical'],
         };
         const [cls, icon, label] = map[p] || ['priority-low', 'fa-minus', priority];
-        return `<span class="priority-badge ${cls}"><i class="fas ${icon}"></i>${label}</span>`;
+        return `<span class="priority-badge ${Utils.escapeHtml(cls)}"><i class="fas ${icon}"></i>${Utils.escapeHtml(label)}</span>`;
     }
 
     function statusBadge(status) {
@@ -108,7 +108,7 @@ function initReportsApp() {
             REJECTED:    ['status-rejected',    'fa-times-circle',  'Rejected'],
         };
         const [cls, icon, label] = map[s] || ['status-open', 'fa-circle', status];
-        return `<span class="status-badge ${cls}"><i class="fas ${icon}"></i>${label}</span>`;
+        return `<span class="status-badge ${Utils.escapeHtml(cls)}"><i class="fas ${icon}"></i>${Utils.escapeHtml(label)}</span>`;
     }
 
     function categoryLabel(cat) {
@@ -178,7 +178,7 @@ function initReportsApp() {
 
             return `
                 <tr>
-                    <td style="color:var(--text-muted); font-weight:500;">#${r.id}</td>
+                    <td style="color:var(--text-muted); font-weight:500;">#${Utils.escapeHtml(r.id)}</td>
                     <td style="font-weight:600;">${escapeHtml(tenantName)}</td>
                     <td>
                         <span style="display:inline-flex; align-items:center; gap:6px;">
@@ -194,7 +194,7 @@ function initReportsApp() {
                     <td>${statusBadge(r.status)}</td>
                     <td style="color:var(--text-muted); font-size:13px;">${formatDate(r.created_at)}</td>
                     <td>
-                        <button class="btn-review" data-id="${r.id}" id="reviewBtn_${r.id}">
+                        <button class="btn-review" data-id="${Utils.escapeHtml(r.id)}" id="reviewBtn_${Utils.escapeHtml(r.id)}">
                             <i class="fas fa-eye" style="margin-right:4px;"></i>Review
                         </button>
                     </td>
@@ -284,7 +284,7 @@ function initReportsApp() {
         activeReportId = report.id;
 
         document.getElementById('modalReportId').textContent   = report.id;
-        document.getElementById('modalTitle').innerHTML        = `Review Report <span style="color:var(--text-muted);font-size:14px;font-weight:500;">#${report.id}</span>`;
+        document.getElementById('modalTitle').innerHTML        = `Review Report <span style="color:var(--text-muted);font-size:14px;font-weight:500;">#${Utils.escapeHtml(report.id)}</span>`;
         document.getElementById('mdTenant').textContent        = report.tenant_name   || `Tenant #${report.tenant_id}`;
         document.getElementById('mdReporter').textContent      = report.username      || `User #${report.user_id}`;
         document.getElementById('mdCategory').textContent      = categoryLabel(report.category);

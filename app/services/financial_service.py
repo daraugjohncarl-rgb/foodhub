@@ -419,7 +419,7 @@ def get_consolidated_financial_report(
         method = (p.payment_method or "Cash").strip()
         method_lower = method.lower()
 
-        if "cash" in method_lower:
+        if method_lower.startswith("cash"):
             cash_collections += amt
         else:
             digital_collections += amt
@@ -436,8 +436,8 @@ def get_consolidated_financial_report(
         models.Payment.status == "completed",
         models.Transaction.status == "completed"
     ).all()
-    all_cash_collections = quantize(sum((to_decimal(p.amount) for p in all_payments if "cash" in (p.payment_method or "").lower()), Decimal("0.00")))
-    all_digital_collections = quantize(sum((to_decimal(p.amount) for p in all_payments if "cash" not in (p.payment_method or "").lower()), Decimal("0.00")))
+    all_cash_collections = quantize(sum((to_decimal(p.amount) for p in all_payments if (p.payment_method or "").strip().lower().startswith("cash")), Decimal("0.00")))
+    all_digital_collections = quantize(sum((to_decimal(p.amount) for p in all_payments if not (p.payment_method or "").strip().lower().startswith("cash")), Decimal("0.00")))
 
     # 7. Inventory Valuation
     all_inv_items = db.query(models.InventoryItem).filter(
@@ -460,7 +460,7 @@ def get_consolidated_financial_report(
             models.Transaction.shift_id == s.id,
             models.Payment.status == "completed",
             models.Transaction.status == "completed",
-            func.lower(models.Payment.payment_method).like("%cash%")
+            func.lower(models.Payment.payment_method).like("cash%")
         ).scalar() or Decimal("0.00")
 
         p_in = db.query(

@@ -15,7 +15,7 @@ from decimal import Decimal
 from app.db import get_db
 import app.models as models
 import app.schemas as schemas
-from app.core.dependencies import get_current_user
+from app.core.dependencies import require_manager_or_admin, resolve_tenant_id
 
 router = APIRouter(prefix="/expenses", tags=["Operating Expenses"])
 
@@ -30,10 +30,7 @@ def _require_admin_or_manager(current_user: models.User) -> None:
 
 
 def _get_tenant_id(db: Session, current_user: models.User) -> int:
-    if current_user.tenant_id:
-        return current_user.tenant_id
-    first_tenant = db.query(models.Tenant).first()
-    return first_tenant.id if first_tenant else 1
+    return resolve_tenant_id(current_user, db)
 
 
 @router.get("", response_model=List[schemas.ExpenseResponse], summary="List operational business expenses")
@@ -46,7 +43,7 @@ def list_expenses(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_manager_or_admin),
 ):
     _require_admin_or_manager(current_user)
     tenant_id = _get_tenant_id(db, current_user)
@@ -127,7 +124,7 @@ def list_expenses(
 def create_expense(
     body: schemas.ExpenseCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_manager_or_admin),
 ):
     _require_admin_or_manager(current_user)
     tenant_id = _get_tenant_id(db, current_user)
@@ -185,7 +182,7 @@ def update_expense(
     expense_id: int,
     body: schemas.ExpenseUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_manager_or_admin),
 ):
     _require_admin_or_manager(current_user)
     tenant_id = _get_tenant_id(db, current_user)
@@ -236,7 +233,7 @@ def update_expense(
 def delete_expense(
     expense_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_manager_or_admin),
 ):
     _require_admin_or_manager(current_user)
     tenant_id = _get_tenant_id(db, current_user)

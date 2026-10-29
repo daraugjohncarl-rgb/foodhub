@@ -4,17 +4,13 @@ from typing import List
 
 from app.db import get_db
 import app.models as models
-from app.core.dependencies import get_current_user
+from app.core.dependencies import require_pos_access, require_manager_or_admin, resolve_tenant_id
 
 router = APIRouter(prefix="/tables", tags=["Restaurant Tables"])
 
 @router.get("", summary="Get all tables for the current tenant")
-def get_tables(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    tenant_id = current_user.tenant_id
-    if not tenant_id:
-        # Fallback to first available tenant or 1
-        first_tenant = db.query(models.Tenant).first()
-        tenant_id = first_tenant.id if first_tenant else 1
+def get_tables(db: Session = Depends(get_db), current_user: models.User = Depends(require_pos_access)):
+    tenant_id = resolve_tenant_id(current_user, db)
         
     tables = db.query(models.RestaurantTable).filter(models.RestaurantTable.tenant_id == tenant_id).order_by(models.RestaurantTable.id.asc()).all()
     
@@ -28,20 +24,21 @@ def get_tables(db: Session = Depends(get_db), current_user: models.User = Depend
     ]
 
 @router.post("", status_code=status.HTTP_201_CREATED, summary="Create a new table")
-def create_table(body: dict, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+def create_table(body: dict, db: Session = Depends(get_db), current_user: models.User = Depends(require_manager_or_admin)):
     # Role check (Admin, Super Admin, Manager)
     allowed = {models.UserRole.ADMIN, models.UserRole.SUPER_ADMIN, models.UserRole.MANAGER, "ADMIN", "SUPER_ADMIN", "MANAGER", "admin", "manager"}
     if getattr(current_user, "role", None) not in allowed:
         raise HTTPException(status_code=403, detail="Not authorized to manage tables")
         
-    tenant_id = current_user.tenant_id
-    if not tenant_id:
-        first_tenant = db.query(models.Tenant).first()
-        tenant_id = first_tenant.id if first_tenant else 1
+    tenant_id = resolve_tenant_id(current_user, db)
         
     table_number = body.get("table_number")
     if not table_number:
         raise HTTPException(status_code=400, detail="Table number is required")
+    from app.routers.customer_orders import TABLE_LABEL_RE
+    if not TABLE_LABEL_RE.match(str(table_number).strip()):
+        raise HTTPException(status_code=400, detail="Table number may only contain letters, numbers, spaces, '.', '#', '-' and '_'.")
+    table_number = str(table_number).strip()
         
     # Check if exists
     existing = db.query(models.RestaurantTable).filter(
@@ -68,15 +65,12 @@ def create_table(body: dict, db: Session = Depends(get_db), current_user: models
     }
 
 @router.delete("/{table_id}", summary="Delete a table")
-def delete_table(table_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+def delete_table(table_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(require_manager_or_admin)):
     allowed = {models.UserRole.ADMIN, models.UserRole.SUPER_ADMIN, models.UserRole.MANAGER, "ADMIN", "SUPER_ADMIN", "MANAGER", "admin", "manager"}
     if getattr(current_user, "role", None) not in allowed:
         raise HTTPException(status_code=403, detail="Not authorized to manage tables")
         
-    tenant_id = current_user.tenant_id
-    if not tenant_id:
-        first_tenant = db.query(models.Tenant).first()
-        tenant_id = first_tenant.id if first_tenant else 1
+    tenant_id = resolve_tenant_id(current_user, db)
         
     table = db.query(models.RestaurantTable).filter(
         models.RestaurantTable.tenant_id == tenant_id,

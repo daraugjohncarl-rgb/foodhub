@@ -1,17 +1,42 @@
 .git
 .gitignore
-__pycache__
-*.pyc
-*.pyo
-*.pyd
-.Python
-fastapi/venv
-venv
-ENV
-env
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+
+# Secrets and local configuration
 .env
-.env.local
-.DS_Store
-.idea
-.vscode
-*.log
+.env.*
+!.env.example
+**/.env
+**/.env.*
+
+# Data, dumps and backups must never ship in an image
+backups
+*.sql
+*.dump
+*.sqlite
+*.sqlite3
+*.db
+
+# Everything outside the deployed tree (fastapi/)
+/app
+/static
+/tests
+/scripts
+/supabase
+/docs
+/users dashboard-*
+/*.py
+/*.bat
+/*.ps1
+/*.md
+
+# Dev-only material inside fastapi/
+fastapi/tests
+fastapi/venv
+fastapi/users dashboard-*
+fastapi/test_*.py
+fastapi/audit_system.py
+fastapi/requirements-dev.txt

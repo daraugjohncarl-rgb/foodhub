@@ -58,15 +58,10 @@ def main():
     print("========================================================")
     print(f"  • Local Server URL : http://{args.host}:{args.port}")
     print(f"  • API Documentation: http://{args.host}:{args.port}/docs")
-    print(f"  • Database Health  : http://{args.host}:{args.port}/test-db")
+    print(f"  • Health check     : http://{args.host}:{args.port}/healthz")
     print("--------------------------------------------------------")
-    print("  Default Roles & Demo Credentials:")
-    print("  - Super Admin : superadmin / superadmin123  -> /dashboard")
-    print("  - Branch Admin: admin      / admin123       -> /admin")
-    print("  - Manager     : manager    / manager123     -> /manager")
-    print("  - Cashier POS : cashier    / cashier123     -> /cashier")
-    print("  - Inventory   : inventory  / inventory123   -> /inventory")
-    print("  - Kitchen KDS : kitchen    / kitchen123     -> /kitchen")
+    print("  Demo accounts exist only if SEED_DEMO_DATA=true (development only).")
+    print("  Create the first administrator with: python fastapi/scripts/bootstrap_admin.py")
     print("========================================================\n")
 
     uvicorn.run(

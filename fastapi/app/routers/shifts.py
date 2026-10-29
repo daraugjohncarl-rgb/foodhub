@@ -285,6 +285,37 @@ def get_drawer_summary(
     # Cash in drawer is a physical cash asset; separating them prevents double-counting.
     overall_income_val = Decimal(str(all_time_income))
 
+    # Authoritative manager safe balance from cashier cashouts minus admin remittances
+    all_cashouts = db.query(models.ShiftCashMovement).filter(
+        models.ShiftCashMovement.tenant_id == tenant_id,
+        models.ShiftCashMovement.type == "PAID_OUT"
+    ).all()
+
+    admin_transfers_sum = sum((
+        Decimal(str(m.amount)) for m in all_cashouts 
+        if 'admin' in (m.reason or '').lower() and not any(k in (m.reason or '').lower() for k in ['cancel', 'revers', 'void', 'reject'])
+    ), Decimal("0.00"))
+
+    admin_reversals_in = db.query(models.ShiftCashMovement).filter(
+        models.ShiftCashMovement.tenant_id == tenant_id,
+        models.ShiftCashMovement.type == "PAID_IN"
+    ).all()
+    admin_reversals_sum = sum((
+        Decimal(str(m.amount)) for m in admin_reversals_in
+        if 'admin' in (m.reason or '').lower() and any(k in (m.reason or '').lower() for k in ['revers', 'return', 'refund', 'cancel'])
+    ), Decimal("0.00"))
+
+    total_transferred_to_admin = max(Decimal("0.00"), admin_transfers_sum - admin_reversals_sum)
+
+    cashier_cashouts_sum = sum((
+        Decimal(str(m.amount)) for m in all_cashouts
+        if 'admin' not in (m.reason or '').lower()
+        and not any(term in (m.reason or '').lower() for term in ['drawer edited', 'modal', 'adjustment', 'shortage', 'overage'])
+        and not any(term in (m.reason or '').lower() for term in ['cancel', 'revers', 'void', 'reject'])
+    ), Decimal("0.00"))
+
+    manager_safe_cash = max(Decimal("0.00"), cashier_cashouts_sum - total_transferred_to_admin)
+
     return {
         "total_cash_in_drawers": float(total_cash_in_active_drawers),
         "active_drawers_count": active_drawers_count,
@@ -292,6 +323,10 @@ def get_drawer_summary(
         "today_total_orders_amount": float(today_orders_val),
         "overall_income": float(overall_income_val),
         "orders_overall_income": float(all_time_income),
+        "manager_safe_cash": float(manager_safe_cash),
+        "manager_income": float(manager_safe_cash),
+        "total_cashout_income": float(cashier_cashouts_sum),
+        "admin_transfer_income": float(total_transferred_to_admin),
         "has_open_shift": has_open_shift,
         "scope": "tenant_cashiers" if is_manager else "own",
         "shifts": drawer_list
@@ -337,7 +372,7 @@ def add_cash_movement(
 @router.post("/cashout")
 @router.post("/withdraw")
 def cashout_shift(
-    body: dict,
+    body: schemas.ShiftCashoutRequest,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_pos_access)
 ):
@@ -350,7 +385,7 @@ def cashout_shift(
     role_val = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
     is_admin_or_mgr = role_val.upper() in ["ADMIN", "MANAGER", "SUPER_ADMIN"]
 
-    shift_id = body.get("shift_id")
+    shift_id = body.shift_id
     if shift_id in ("", None):
         shift_id = None
     else:
@@ -360,12 +395,10 @@ def cashout_shift(
             shift_id = int(shift_id)
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="Invalid shift_id.")
-    try:
-        amount = Decimal(str(body.get("amount", 0)))
-    except Exception:
-        amount = Decimal("0.0")
+    # Validated by the schema (finite, >= 0, 2 decimal places); omitted or null still means 0 = cash out everything.
+    amount = body.amount if body.amount is not None else Decimal("0.0")
 
-    reason = body.get("reason", "Manager Cashout")
+    reason = body.reason if "reason" in body.model_fields_set else "Manager Cashout"
 
     # Resolve the shift explicitly. Nothing is created here, and every refusal happens before any write.
     # A cashier may only cash out their OWN open drawer (previous rule for requests without shift_id);
@@ -449,7 +482,6 @@ def cashout_shift(
     shift.end_cash = max(Decimal("0.0"), current_expected - amount)
     shift.end_time = datetime.utcnow()
     shift.status = "closed"
-    db.commit()
 
     # 3. Create a brand new active drawer/shift for the cashier reset to 0.00
     new_shift = models.Shift(
@@ -459,7 +491,12 @@ def cashout_shift(
         status="open"
     )
     db.add(new_shift)
-    db.commit()
+    # Movement, closed shift and replacement shift are one commit: a failure leaves none of them behind.
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(new_shift)
 
     from app.core.websocket import notify_realtime_event
@@ -471,8 +508,10 @@ def cashout_shift(
     })
     notify_realtime_event(tenant_id, "FINANCIAL_UPDATED", {})
 
+    is_to_admin = "admin" in (reason or "").lower()
+    dest_name = "Admin Safe" if is_to_admin else "Manager Income Safe"
     return {
-        "message": f"Successfully cashed out ₱{float(amount):.2f}. Cashier drawer reset to ₱0.00 with new active Shift #{new_shift.id}.",
+        "message": f"Successfully transferred ₱{float(amount):.2f} to {dest_name}. Cashier drawer reset to ₱0.00 with new active Shift #{new_shift.id}.",
         "cashed_out_shift_id": shift.id,
         "amount_cashed_out": float(amount),
         "new_shift_id": new_shift.id,
@@ -483,7 +522,7 @@ def cashout_shift(
 @router.post("/{shift_id}/drawer-cash")
 def edit_shift_drawer_cash(
     shift_id: int,
-    body: dict,
+    body: schemas.ShiftDrawerCashRequest,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_pos_access)
 ):
@@ -496,11 +535,13 @@ def edit_shift_drawer_cash(
         raise HTTPException(status_code=403, detail="Only a manager or admin can edit a cashier drawer.")
     tenant_id = _get_user_tenant_id(db, current_user)
     
+    # Locked like cashout_shift, so an edit and a cash-out of the same shift run one after the other and
+    # the open-status check below sees the result of a cash-out that committed first.
     shift = db.query(models.Shift).filter(
         models.Shift.id == shift_id,
         models.Shift.tenant_id == tenant_id
-    ).first()
-    
+    ).with_for_update().first()
+
     if not shift:
         raise HTTPException(status_code=404, detail="Shift record not found.")
 
@@ -510,12 +551,9 @@ def edit_shift_drawer_cash(
             detail="Only active open cashier shifts can have their drawer cash edited. Closed shifts are locked."
         )
 
-    try:
-        new_amount = Decimal(str(body.get("amount", 0)))
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid amount provided.")
+    new_amount = body.amount  # validated by the schema: finite, >= 0, 2 decimal places
 
-    reason = body.get("reason") or "Cashier drawer edited by manager"
+    reason = body.reason or "Cashier drawer edited by manager"
 
     from sqlalchemy import func
     cash_sales = db.query(
@@ -543,6 +581,9 @@ def edit_shift_drawer_cash(
 
     current_expected = Decimal(str(shift.start_cash or 0)) + Decimal(str(cash_sales)) + Decimal(str(paid_in)) - Decimal(str(paid_out))
     delta = new_amount - current_expected
+    # ShiftCashMovement.reason is String(255): shorten the manager's text, never the adjustment note.
+    note = f" (Adjusted from ₱{float(current_expected):.2f} to ₱{float(new_amount):.2f})"
+    adjustment_reason = reason[:255 - len(note)] + note
 
     if delta > Decimal("0.0"):
         movement = models.ShiftCashMovement(
@@ -551,7 +592,7 @@ def edit_shift_drawer_cash(
             user_id=current_user.id,
             type="PAID_IN",
             amount=delta,
-            reason=f"{reason} (Adjusted from ₱{float(current_expected):.2f} to ₱{float(new_amount):.2f})"
+            reason=adjustment_reason
         )
         db.add(movement)
     elif delta < Decimal("0.0"):
@@ -561,7 +602,7 @@ def edit_shift_drawer_cash(
             user_id=current_user.id,
             type="PAID_OUT",
             amount=abs(delta),
-            reason=f"{reason} (Adjusted from ₱{float(current_expected):.2f} to ₱{float(new_amount):.2f})"
+            reason=adjustment_reason
         )
         db.add(movement)
 

@@ -78,7 +78,7 @@ function buildSidebarMenu(role, onNavigate) {
     a.className = "nav-link" + (isActive ? " active" : "");
     a.setAttribute("data-title", item.label);
     a.setAttribute("title", item.label);
-    a.innerHTML = `<i class="${item.icon}"></i><span>${item.label}</span>${item.badgeId ? `<span id="${item.badgeId}" style="margin-left:auto; background:#ef4444; color:#fff; font-size:10px; font-weight:700; padding:2px 7px; border-radius:10px; display:none;">0</span>` : ''}`;
+    a.innerHTML = `<i class="${item.icon}"></i><span>${Utils.escapeHtml(item.label)}</span>${item.badgeId ? `<span id="${item.badgeId}" style="margin-left:auto; background:#ef4444; color:#fff; font-size:10px; font-weight:700; padding:2px 7px; border-radius:10px; display:none;">0</span>` : ''}`;
 
     if (isActive) {
       const pageTitle = document.getElementById("current-page-title");
@@ -138,9 +138,9 @@ function buildMobileBottomNav(role, onNavigate) {
     const isActive = item.id === activeId;
     const shortLabel = item.label.split(" ")[0].substring(0, 9);
     html += `
-      <a href="#${item.id}" class="mobile-bottom-nav-item ${isActive ? 'active' : ''}" data-nav-id="${item.id}" data-title="${item.label}">
+      <a href="#${Utils.escapeHtml(item.id)}" class="mobile-bottom-nav-item ${isActive ? 'active' : ''}" data-nav-id="${Utils.escapeHtml(item.id)}" data-title="${Utils.escapeHtml(item.label)}">
         <i class="${item.icon}"></i>
-        <span>${shortLabel}</span>
+        <span>${Utils.escapeHtml(shortLabel)}</span>
       </a>
     `;
   });

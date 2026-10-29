@@ -117,12 +117,12 @@ function initLogsApp() {
 
                     return `
                         <tr>
-                            <td style="font-weight:500;">${formattedDate}</td>
-                            <td style="color:var(--text-muted); font-variant-numeric:tabular-nums;">${formattedTime}</td>
-                            <td><span class="action-badge ${badgeClass}">${log.action}</span></td>
-                            <td style="font-weight:600;">${log.performed_by || 'System'}</td>
-                            <td>${log.target_user || '—'}</td>
-                            <td><span class="badge badge-${(log.role || 'admin').toLowerCase()}">${log.role || '—'}</span></td>
+                            <td style="font-weight:500;">${Utils.escapeHtml(formattedDate)}</td>
+                            <td style="color:var(--text-muted); font-variant-numeric:tabular-nums;">${Utils.escapeHtml(formattedTime)}</td>
+                            <td><span class="action-badge ${badgeClass}">${Utils.escapeHtml(log.action)}</span></td>
+                            <td style="font-weight:600;">${Utils.escapeHtml(log.performed_by || 'System')}</td>
+                            <td>${Utils.escapeHtml(log.target_user || '—')}</td>
+                            <td><span class="badge badge-${(log.role || 'admin').toLowerCase()}">${Utils.escapeHtml(log.role || '—')}</span></td>
                         </tr>
                     `;
                 }).join('');

@@ -7,20 +7,17 @@ from datetime import datetime
 from app.db import get_db
 import app.models as models
 import app.schemas as schemas
-from app.core.dependencies import get_current_user
+from app.core.dependencies import require_pos_access, resolve_tenant_id
 
 router = APIRouter(prefix="/shifts", tags=["Shifts"])
 
 def _get_user_tenant_id(db: Session, current_user: models.User) -> int:
-    if current_user.tenant_id:
-        return current_user.tenant_id
-    first_tenant = db.query(models.Tenant).first()
-    return first_tenant.id if first_tenant else 1
+    return resolve_tenant_id(current_user, db)
 
 @router.get("/active", response_model=Optional[schemas.ShiftResponse])
 def get_active_shift(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_pos_access)
 ):
     """Retrieve the currently active shift for the user."""
     tenant_id = _get_user_tenant_id(db, current_user)
@@ -35,7 +32,7 @@ def get_active_shift(
 def start_shift(
     body: schemas.ShiftCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_pos_access)
 ):
     """Start a new shift for the user."""
     tenant_id = _get_user_tenant_id(db, current_user)
@@ -64,7 +61,7 @@ def start_shift(
 def end_shift(
     body: schemas.ShiftEnd,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_pos_access)
 ):
     """End the currently active shift."""
     tenant_id = _get_user_tenant_id(db, current_user)
@@ -87,7 +84,7 @@ def end_shift(
 @router.get("/drawer-summary")
 def get_drawer_summary(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_pos_access)
 ):
     """
     Real-time cashier cash-in-drawer tracker and shift breakdown for Manager and Admin.
@@ -144,8 +141,8 @@ def get_drawer_summary(
         # 1. Batch cash vs non-cash sales
         pmt_rows = db.query(
             models.Transaction.shift_id,
-            func.coalesce(func.sum(case((func.lower(models.Payment.payment_method).like("%cash%"), models.Payment.amount), else_=0)), 0).label("cash_sales"),
-            func.coalesce(func.sum(case((~func.lower(models.Payment.payment_method).like("%cash%"), models.Payment.amount), else_=0)), 0).label("non_cash_sales")
+            func.coalesce(func.sum(case((func.lower(models.Payment.payment_method).like("cash%"), models.Payment.amount), else_=0)), 0).label("cash_sales"),
+            func.coalesce(func.sum(case((~func.lower(models.Payment.payment_method).like("cash%"), models.Payment.amount), else_=0)), 0).label("non_cash_sales")
         ).join(models.Payment, models.Payment.transaction_id == models.Transaction.id).filter(
             models.Transaction.shift_id.in_(shift_ids),
             models.Payment.status == "completed",
@@ -209,6 +206,7 @@ def get_drawer_summary(
             "start_time": s.start_time.isoformat() if s.start_time else None,
             "end_time": s.end_time.isoformat() if s.end_time else None,
             "start_cash": float(s.start_cash or 0),
+            "expected_cash": float(expected_cash),   # read by the POS / drawer screens; was never returned
             "cash_sales": float(cash_sales_val),
             "non_cash_sales": float(non_cash_val),
             "total_sales": float(shift_total_sales),
@@ -245,7 +243,7 @@ def get_drawer_summary(
         models.Transaction.tenant_id == tenant_id,
         models.Payment.status == "completed",
         ~models.Transaction.status.in_(["cancelled", "rejected"]),
-        func.lower(models.Payment.payment_method).like("%cash%"),
+        func.lower(models.Payment.payment_method).like("cash%"),
         models.Transaction.created_at >= start_of_day,
         models.Transaction.created_at <= end_of_day
     ).scalar() or Decimal("0.0")
@@ -265,6 +263,37 @@ def get_drawer_summary(
     # Cash in drawer is a physical cash asset; separating them prevents double-counting.
     overall_income_val = Decimal(str(all_time_income))
 
+    # Authoritative manager safe balance from cashier cashouts minus admin remittances
+    all_cashouts = db.query(models.ShiftCashMovement).filter(
+        models.ShiftCashMovement.tenant_id == tenant_id,
+        models.ShiftCashMovement.type == "PAID_OUT"
+    ).all()
+
+    admin_transfers_sum = sum((
+        Decimal(str(m.amount)) for m in all_cashouts 
+        if 'admin' in (m.reason or '').lower() and not any(k in (m.reason or '').lower() for k in ['cancel', 'revers', 'void', 'reject'])
+    ), Decimal("0.00"))
+
+    admin_reversals_in = db.query(models.ShiftCashMovement).filter(
+        models.ShiftCashMovement.tenant_id == tenant_id,
+        models.ShiftCashMovement.type == "PAID_IN"
+    ).all()
+    admin_reversals_sum = sum((
+        Decimal(str(m.amount)) for m in admin_reversals_in
+        if 'admin' in (m.reason or '').lower() and any(k in (m.reason or '').lower() for k in ['revers', 'return', 'refund', 'cancel'])
+    ), Decimal("0.00"))
+
+    total_transferred_to_admin = max(Decimal("0.00"), admin_transfers_sum - admin_reversals_sum)
+
+    cashier_cashouts_sum = sum((
+        Decimal(str(m.amount)) for m in all_cashouts
+        if 'admin' not in (m.reason or '').lower()
+        and not any(term in (m.reason or '').lower() for term in ['drawer edited', 'modal', 'adjustment', 'shortage', 'overage'])
+        and not any(term in (m.reason or '').lower() for term in ['cancel', 'revers', 'void', 'reject'])
+    ), Decimal("0.00"))
+
+    manager_safe_cash = max(Decimal("0.00"), cashier_cashouts_sum - total_transferred_to_admin)
+
     return {
         "total_cash_in_drawers": float(total_cash_in_active_drawers),
         "active_drawers_count": active_drawers_count,
@@ -272,6 +301,10 @@ def get_drawer_summary(
         "today_total_orders_amount": float(today_orders_val),
         "overall_income": float(overall_income_val),
         "orders_overall_income": float(all_time_income),
+        "manager_safe_cash": float(manager_safe_cash),
+        "manager_income": float(manager_safe_cash),
+        "total_cashout_income": float(cashier_cashouts_sum),
+        "admin_transfer_income": float(total_transferred_to_admin),
         "shifts": drawer_list
     }
 
@@ -279,7 +312,7 @@ def get_drawer_summary(
 def add_cash_movement(
     body: schemas.ShiftCashMovementCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_pos_access)
 ):
     """Log a cash movement (PAID_IN/PAID_OUT / Cash Drop) during a shift."""
     tenant_id = _get_user_tenant_id(db, current_user)
@@ -317,7 +350,7 @@ def add_cash_movement(
 def cashout_shift(
     body: dict,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_pos_access)
 ):
     """
     Manager/Admin cashout of overall cashier money income:
@@ -377,7 +410,7 @@ def cashout_shift(
         models.Transaction.shift_id == shift.id,
         models.Payment.status == "completed",
         ~models.Transaction.status.in_(["cancelled", "rejected"]),
-        func.lower(models.Payment.payment_method).like("%cash%")
+        func.lower(models.Payment.payment_method).like("cash%")
     ).scalar() or Decimal("0.0")
 
     paid_in = db.query(
@@ -402,7 +435,7 @@ def cashout_shift(
         models.Transaction.shift_id == shift.id,
         models.Payment.status == "completed",
         ~models.Transaction.status.in_(["cancelled", "rejected"]),
-        ~func.lower(models.Payment.payment_method).like("%cash%")
+        ~func.lower(models.Payment.payment_method).like("cash%")
     ).scalar() or Decimal("0.0")
 
     shift_total_sales = cash_sales + non_cash_sales
@@ -447,8 +480,10 @@ def cashout_shift(
     })
     notify_realtime_event(tenant_id, "FINANCIAL_UPDATED", {})
 
+    is_to_admin = "admin" in (reason or "").lower()
+    dest_name = "Admin Safe" if is_to_admin else "Manager Income Safe"
     return {
-        "message": f"Successfully cashed out ₱{float(amount):.2f}. Cashier drawer reset to ₱0.00 with new active Shift #{new_shift.id}.",
+        "message": f"Successfully transferred ₱{float(amount):.2f} to {dest_name}. Cashier drawer reset to ₱0.00 with new active Shift #{new_shift.id}.",
         "cashed_out_shift_id": shift.id,
         "amount_cashed_out": float(amount),
         "new_shift_id": new_shift.id,
@@ -461,7 +496,7 @@ def edit_shift_drawer_cash(
     shift_id: int,
     body: dict,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_pos_access)
 ):
     """
     Directly edit/adjust cashier drawer balance for a shift.
@@ -497,7 +532,7 @@ def edit_shift_drawer_cash(
         models.Transaction.shift_id == shift.id,
         models.Payment.status == "completed",
         ~models.Transaction.status.in_(["cancelled", "rejected"]),
-        func.lower(models.Payment.payment_method).like("%cash%")
+        func.lower(models.Payment.payment_method).like("cash%")
     ).scalar() or Decimal("0.0")
 
     paid_in = db.query(

@@ -136,13 +136,30 @@ class ProductResponse(BaseModel):
 
 
 # Shift Cash Movement Schemas
+# Drawer amounts are stored in Numeric(10, 2) columns: finite, at most 10 digits, 2 decimal places.
 class ShiftCashMovementCreate(BaseModel):
     shift_id: int
-    type: str = Field(..., description="Must be 'PAID_IN' or 'PAID_OUT'")
-    amount: Decimal = Field(..., gt=0.0)
+    type: Literal["PAID_IN", "PAID_OUT"] = Field(..., description="Must be 'PAID_IN' or 'PAID_OUT'")
+    amount: Decimal = Field(..., gt=0.0, max_digits=10, decimal_places=2, allow_inf_nan=False)
     reason: Optional[str] = Field(None, max_length=255)
     tenant_id: Optional[int] = None
     user_id: Optional[int] = None
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _upper(cls, v):
+        return v.strip().upper() if isinstance(v, str) else v
+
+class ShiftCashoutRequest(BaseModel):
+    """POST /shifts/cashout and /shifts/withdraw. shift_id is checked by the route (400 on a bad value)."""
+    shift_id: Any = None
+    amount: Optional[Decimal] = Field(None, ge=0, max_digits=10, decimal_places=2, allow_inf_nan=False)
+    reason: Optional[str] = Field(None, max_length=255)
+
+class ShiftDrawerCashRequest(BaseModel):
+    """PUT/POST /shifts/{shift_id}/drawer-cash: the counted drawer amount the expected cash is set to."""
+    amount: Decimal = Field(Decimal("0"), ge=0, max_digits=10, decimal_places=2, allow_inf_nan=False)
+    reason: Optional[str] = Field(None, max_length=255)
 
 class ShiftCashMovementResponse(BaseModel):
     id: int

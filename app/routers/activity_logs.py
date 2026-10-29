@@ -5,7 +5,7 @@ from typing import List, Optional
 from app.db import get_db
 import app.models as models
 from app.schemas import ActivityLogResponse, ActivityLogCreate
-from app.core.dependencies import get_current_user
+from app.core.dependencies import require_manager_or_admin, require_staff
 
 router = APIRouter(
     prefix="/activity-logs",
@@ -19,7 +19,7 @@ def get_activity_logs(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_manager_or_admin)
 ):
     """
     Retrieve activity logs / audit trail.
@@ -57,18 +57,20 @@ def get_activity_logs(
 def create_activity_log(
     log_in: ActivityLogCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_manager_or_admin)
 ):
     """
     Manually record an activity log entry.
     """
+    # Actor identity always comes from the authenticated session; client-supplied
+    # performed_by / role values are ignored so entries cannot be forged.
     log = models.ActivityLog(
         tenant_id=current_user.tenant_id,
         user_id=current_user.id,
         action=log_in.action,
-        performed_by=log_in.performed_by or current_user.username,
+        performed_by=current_user.username,
         target_user=log_in.target_user,
-        role=log_in.role or str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role),
+        role=str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role),
         details=log_in.details
     )
     db.add(log)
@@ -79,7 +81,7 @@ def create_activity_log(
 @router.delete("")
 def clear_activity_logs(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(require_manager_or_admin)
 ):
     """
     Clear all activity logs (Super Admin only).
@@ -90,5 +92,12 @@ def clear_activity_logs(
             detail="Only Super Admins are permitted to clear audit trail logs."
         )
     db.query(models.ActivityLog).delete()
+    db.add(models.ActivityLog(
+        user_id=current_user.id,
+        action="Logs Cleared",
+        performed_by=current_user.username,
+        role=str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role),
+        details="All activity logs were cleared."
+    ))
     db.commit()
     return {"message": "All activity logs have been cleared."}

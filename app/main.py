@@ -1,6 +1,8 @@
 import os
 import sys
 import logging
+import uuid
+from urllib.parse import urlparse
 
 # Ensure UTF-8 output on Windows consoles
 if hasattr(sys.stdout, "reconfigure"):
@@ -14,13 +16,17 @@ if parent_dir not in sys.path:
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.db import engine, Base, get_db
 import app.models as models
-from app.core.security import get_password_hash
+from app.core.security import get_password_hash, IS_PRODUCTION
 from app.core.dependencies import get_current_user_optional
 from app.routers.auth import router as auth_router
 from app.routers.users import router as users_router
@@ -42,18 +48,43 @@ logger = logging.getLogger("pos_app")
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
-def seed_default_data():
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_list(name: str) -> list:
+    return [item.strip() for item in os.getenv(name, "").split(",") if item.strip()]
+
+
+# Origins allowed to call the API cross-origin (the bundled UI is same-origin and needs none).
+ALLOWED_ORIGINS = _env_list("ALLOWED_ORIGINS")
+ALLOWED_HOSTS = _env_list("ALLOWED_HOSTS")
+
+# Development conveniences. Both are forced off in production.
+SEED_DEMO_DATA = (not IS_PRODUCTION) and _env_flag("SEED_DEMO_DATA", False)
+AUTO_CREATE_TABLES = (not IS_PRODUCTION) and _env_flag("DB_AUTO_CREATE_TABLES", True)
+ENABLE_API_DOCS = _env_flag("ENABLE_API_DOCS", not IS_PRODUCTION)
+
+if "*" in ALLOWED_ORIGINS:
+    raise RuntimeError("ALLOWED_ORIGINS must list explicit origins; a wildcard cannot be combined with credentials.")
+
+
+def seed_demo_data():
     """
-    Seeds default Tenant, Super Admin, and initial Branch Admin accounts on startup.
-    Only creates accounts if they do not already exist, preserving all custom user passwords.
+    DEVELOPMENT ONLY (SEED_DEMO_DATA=true, never in production).
+    Creates a demo tenant and one account per role with well-known passwords so a local
+    database is immediately usable. Real deployments create their first administrator with
+    scripts/bootstrap_admin.py instead.
     """
     from app.db import SessionLocal
     db = SessionLocal()
     try:
-        # 1. Ensure default Tenant exists
         tenant = db.query(models.Tenant).first()
         if not tenant:
-            logger.info("Seeding default Tenant 'Main Branch - Blessie FoodHub'...")
             tenant = models.Tenant(
                 name="Main Branch - Blessie FoodHub",
                 subdomain_or_code="main-branch",
@@ -63,99 +94,52 @@ def seed_default_data():
             db.commit()
             db.refresh(tenant)
 
-        # 2. Ensure default SUPER_ADMIN exists
-        super_admin = db.query(models.User).filter(models.User.role == models.UserRole.SUPER_ADMIN).first()
-        if not super_admin:
-            logger.info("Seeding default SUPER_ADMIN 'superadmin'...")
-            default_super = models.User(
-                username="superadmin",
-                email="superadmin@inboxpos.com",
-                password_hash=get_password_hash("superadmin123"),
-                role=models.UserRole.SUPER_ADMIN,
-                tenant_id=None,
-                is_active=True
-            )
-            db.add(default_super)
-            db.commit()
-            logger.info("Default SUPER_ADMIN 'superadmin' seeded successfully.")
-
-        # 3. Ensure default ADMIN exists ('admin' / 'admin123') ONLY if no admin exists
-        admin_user = db.query(models.User).filter(models.User.username == "admin").first()
-        if not admin_user:
-            logger.info("Seeding default ADMIN 'admin'...")
-            admin_user = models.User(
-                username="admin",
-                email="admin@inboxpos.com",
-                password_hash=get_password_hash("admin123"),
-                role=models.UserRole.ADMIN,
-                tenant_id=tenant.id,
-                is_active=True
-            )
-            db.add(admin_user)
-            db.commit()
-            logger.info("Default ADMIN 'admin' seeded successfully.")
-
-        # 3.5 Ensure default staff users exist for testing/demo
-        roles_to_seed = [
-            ("manager", models.UserRole.MANAGER, "manager123"),
-            ("cashier", models.UserRole.CASHIER, "cashier123"),
-            ("inventory", models.UserRole.INVENTORY, "inventory123"),
-            ("kitchen", models.UserRole.KITCHEN, "kitchen123"),
+        accounts = [
+            ("superadmin", models.UserRole.SUPER_ADMIN, "superadmin123", None),
+            ("admin", models.UserRole.ADMIN, "admin123", tenant.id),
+            ("manager", models.UserRole.MANAGER, "manager123", tenant.id),
+            ("cashier", models.UserRole.CASHIER, "cashier123", tenant.id),
+            ("inventory", models.UserRole.INVENTORY, "inventory123", tenant.id),
+            ("kitchen", models.UserRole.KITCHEN, "kitchen123", tenant.id),
         ]
-        
-        for username, role, pwd in roles_to_seed:
-            user = db.query(models.User).filter(models.User.username == username).first()
-            if not user:
-                logger.info(f"Seeding default {role.name} '{username}'...")
-                user = models.User(
+        for username, role, pwd, tenant_id in accounts:
+            if not db.query(models.User).filter(models.User.username == username).first():
+                db.add(models.User(
                     username=username,
                     email=f"{username}@inboxpos.com",
                     password_hash=get_password_hash(pwd),
                     role=role,
-                    tenant_id=tenant.id,
+                    tenant_id=tenant_id,
                     is_active=True
-                )
-                db.add(user)
+                ))
                 db.commit()
-                logger.info(f"Default {role.name} '{username}' seeded successfully.")
-
-        # 4. Ensure existing users without tenant_id are associated with the default tenant
-        orphan_users = db.query(models.User).filter(
-            models.User.role != models.UserRole.SUPER_ADMIN,
-            models.User.tenant_id.is_(None)
-        ).all()
-        for u in orphan_users:
-            u.tenant_id = tenant.id
-        if orphan_users:
-            db.commit()
-
-        # 5. Note: Masterlist auto-seeding removed to allow custom inventory and product menu management.
-
-        # 6. Automatic sample supplier seeding disabled for production readiness.
-        # Legitimate suppliers are registered and managed directly by authorized branch administrators.
-
-    except Exception as e:
+                logger.warning("DEV ONLY: seeded demo %s account '%s'.", role.name, username)
+    except Exception:
         db.rollback()
-        logger.error(f"Error during auto-seeding: {e}")
+        logger.exception("Error during demo seeding")
     finally:
         db.close()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Lifespan event handler for FastAPI to manage application startup and shutdown.
-    Automatically creates all tables inside the MySQL database if they do not exist,
-    and then seeds the default system accounts.
+    Application startup/shutdown.
+    - The database must be reachable; otherwise startup fails loudly instead of serving a broken app.
+    - Schema changes are NOT applied automatically in production. Apply the reviewed SQL in
+      supabase/migrations/ as a separate release step (see docs/DEPLOYMENT.md).
     """
     try:
-        # Create all tables defined in models.py
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception:
+        logger.critical("Database is not reachable; refusing to start.", exc_info=True)
+        raise RuntimeError("Database connection failed. Check DATABASE_URL / DB_* settings.")
+
+    if AUTO_CREATE_TABLES:
         Base.metadata.create_all(bind=engine)
-        logger.info("Database tables initialized successfully.")
-        
-        # Seed default data
-        seed_default_data()
-    except Exception as e:
-        logger.critical(f"Failed to initialize database on startup: {e}")
+        logger.info("Development: database tables ensured via create_all.")
+    if SEED_DEMO_DATA:
+        seed_demo_data()
     yield
     logger.info("Shutting down Inbox POS API...")
 
@@ -164,19 +148,102 @@ from fastapi.middleware.cors import CORSMiddleware
 # Initialize FastAPI application
 app = FastAPI(
     title="Inbox POS Backend",
-    description="Multi-Tenant FastAPI Backend for Inbox POS System with JWT Auth and MySQL",
+    description="Multi-Tenant FastAPI Backend for Inbox POS System with JWT Auth",
     version="1.2.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/docs" if ENABLE_API_DOCS else None,
+    redoc_url="/redoc" if ENABLE_API_DOCS else None,
+    openapi_url="/openapi.json" if ENABLE_API_DOCS else None,
 )
 
-# CORS middleware for frontend flexibility
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS: explicit origins only. With no ALLOWED_ORIGINS the API is same-origin only.
+if ALLOWED_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Tenant-ID", "X-Tracking-Token", "Idempotency-Key"],
+    )
+if ALLOWED_HOSTS:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
+
+CONTENT_SECURITY_POLICY = "; ".join([
+    "default-src 'self'",
+    # The current UI relies on inline scripts/handlers; tighten once those are moved out.
+    "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com",
+    "font-src 'self' data: https://fonts.gstatic.com https://cdnjs.cloudflare.com",
+    "img-src 'self' data: blob: https:",
+    "connect-src 'self' ws: wss:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+])
+
+UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+class RequestContextMiddleware(BaseHTTPMiddleware):
+    """Adds a request id, blocks cross-site cookie-authenticated writes, and sets security headers."""
+
+    async def dispatch(self, request: Request, call_next):
+        request_id = uuid.uuid4().hex
+        request.state.request_id = request_id
+
+        # CSRF defence in depth (cookies are also SameSite=Lax): a browser-originated write that
+        # relies on the session cookie must come from this site or an allowed origin.
+        if (
+            request.method in UNSAFE_METHODS
+            and request.cookies.get("session_token")
+            and not request.headers.get("authorization")
+        ):
+            origin = request.headers.get("origin") or request.headers.get("referer")
+            if not origin:
+                # Browsers always send Origin on cross-site writes; anything cookie-authenticated
+                # without it or a Referer is not a normal browser request.
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Cross-site request blocked.", "request_id": request_id},
+                    headers={"X-Request-ID": request_id},
+                )
+            parsed = urlparse(origin)
+            origin_host = parsed.netloc.lower()
+            origin_base = f"{parsed.scheme}://{parsed.netloc}".lower()
+            same_site = origin_host == (request.headers.get("host") or "").lower()
+            if not same_site and origin_base not in [o.lower() for o in ALLOWED_ORIGINS]:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Cross-site request blocked.", "request_id": request_id},
+                    headers={"X-Request-ID": request_id},
+                )
+
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(self), geolocation=()")
+        response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+        if IS_PRODUCTION:
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        return response
+
+
+app.add_middleware(RequestContextMiddleware)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Log the traceback server-side; clients only receive a generic message and a request id."""
+    request_id = getattr(request.state, "request_id", uuid.uuid4().hex)
+    logger.error("Unhandled error [request_id=%s] %s %s", request_id, request.method, request.url.path, exc_info=exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error.", "request_id": request_id},
+        headers={"X-Request-ID": request_id},
+    )
 
 from app.routers.transactions import router as transactions_router
 from app.routers.kitchen import router as kitchen_router
@@ -203,12 +270,27 @@ app.include_router(shifts_router, prefix="/api/v1")
 from app.routers.tables import router as tables_router
 app.include_router(tables_router, prefix="/api/v1")
 
+# WebSocket route is registered exactly once (/api/v1/ws and /api/v1/ws/{tenant_id}).
 from app.routers.realtime import router as realtime_router
 app.include_router(realtime_router, prefix="/api/v1")
-app.include_router(realtime_router)
+
+
+# Role-gated HTML shells are served by the guarded routes below; only these pages are public.
+PUBLIC_STATIC_HTML = {"index.html", "customer.html", "auth/login.html"}
+
+
+class PublicStaticFiles(StaticFiles):
+    """StaticFiles that never serves protected dashboard HTML directly (bypassing the role guard)."""
+
+    async def get_response(self, path: str, scope):
+        normalized = path.replace("\\", "/").lstrip("/")
+        if normalized.lower().endswith((".html", ".htm")) and normalized not in PUBLIC_STATIC_HTML:
+            raise HTTPException(status_code=404)
+        return await super().get_response(path, scope)
+
 
 # Mount static files directories to serve frontend assets using absolute paths
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/static", PublicStaticFiles(directory=STATIC_DIR), name="static")
 if os.path.exists(os.path.join(STATIC_DIR, "assets")):
     app.mount("/assets", StaticFiles(directory=os.path.join(STATIC_DIR, "assets")), name="assets")
 
@@ -424,91 +506,22 @@ def get_settings_page(request: Request, db: Session = Depends(get_db)):
     return serve_protected_page(request, db, page, allowed_roles={"super_admin"})
 
 
-@app.get("/test-db")
-def test_db(db: Session = Depends(get_db)):
-    """
-    Endpoint to verify database connectivity.
-    Executes a test query and prints active tenant and total user counts.
-    """
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    """Liveness probe: the process is up. Deliberately touches no dependency."""
+    return {"status": "ok"}
+
+
+@app.get("/readyz", include_in_schema=False)
+def readyz(db: Session = Depends(get_db)):
+    """Readiness probe: the database answers. Discloses nothing beyond ok / unavailable."""
     try:
-        # Verify connection viability
-        result = db.execute(text("SELECT 1")).fetchone()
-        if not result or result[0] != 1:
-            raise Exception("Test query failed.")
+        db.execute(text("SELECT 1"))
+    except Exception:
+        logger.error("Readiness check failed", exc_info=True)
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
+    return {"status": "ok"}
 
-        # Query active tenant count
-        active_tenant_count = db.query(models.Tenant).filter(models.Tenant.is_active == True).count()
-
-        # Query total user count
-        total_user_count = db.query(models.User).count()
-
-        return {
-            "status": "online",
-            "message": "Successfully connected to the database server.",
-            "database_name": engine.url.database,
-            "host": engine.url.host,
-            "port": engine.url.port,
-            "stats": {
-                "active_tenants": active_tenant_count,
-                "total_users": total_user_count
-            }
-        }
-    except Exception as e:
-        logger.error(f"Database connectivity test failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "status": "offline",
-                "message": "Database server is offline or database does not exist.",
-                "error": str(e)
-            }
-        )
-
-@app.post("/seed-super-admin", status_code=status.HTTP_200_OK)
-def seed_super_admin_route(db: Session = Depends(get_db)):
-    """
-    Endpoint to manually trigger database seeding for the default SUPER_ADMIN user.
-    """
-    try:
-        super_admin = db.query(models.User).filter(models.User.role == models.UserRole.SUPER_ADMIN).first()
-        if not super_admin:
-            default_super = models.User(
-                username="superadmin",
-                email="superadmin@inboxpos.com",
-                password_hash=get_password_hash("superadmin123"),
-                role=models.UserRole.SUPER_ADMIN,
-                tenant_id=None,
-                is_active=True
-            )
-            db.add(default_super)
-            db.commit()
-            db.refresh(default_super)
-            return {
-                "status": "seeded",
-                "message": "Default SUPER_ADMIN seeded successfully.",
-                "user": {
-                    "id": default_super.id,
-                    "username": default_super.username,
-                    "role": default_super.role
-                }
-            }
-        else:
-            return {
-                "status": "existing",
-                "message": "SUPER_ADMIN already exists.",
-                "user": {
-                    "id": super_admin.id,
-                    "username": super_admin.username,
-                    "role": super_admin.role
-                }
-            }
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Manual seed routing failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to seed super admin: {str(e)}"
-        )
 
 if __name__ == "__main__":
     import uvicorn

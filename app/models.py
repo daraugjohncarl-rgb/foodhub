@@ -1,5 +1,5 @@
 import enum
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Numeric, UniqueConstraint, CheckConstraint, func, BigInteger, Enum, Text
+from sqlalchemy import Index, Column, Integer, String, Boolean, DateTime, ForeignKey, Numeric, UniqueConstraint, CheckConstraint, func, BigInteger, Enum, Text
 from sqlalchemy.orm import relationship, synonym
 from app.db import Base
 
@@ -158,7 +158,7 @@ class InventoryItem(Base):
     __tablename__ = "inventory_items"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(100), nullable=False)
     category = Column(String(100), nullable=True, default="Kitchen")
     sku = Column(String(50), nullable=True)
@@ -224,13 +224,17 @@ class Transaction(Base):
     tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     shift_id = Column(Integer, ForeignKey("shifts.id", ondelete="RESTRICT"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
-    client_tx_id = Column(String(36), unique=True, index=True, nullable=True)  # UUID for offline sync
+    client_tx_id = Column(String(36), index=True, nullable=True)  # client-generated UUID; unique per tenant (see __table_args__)
     total_amount = Column(Numeric(10, 2), default=0.0, nullable=False)
     tax_amount = Column(Numeric(10, 2), default=0.0, nullable=False)
     discount_amount = Column(Numeric(10, 2), default=0.0, nullable=False)
     net_amount = Column(Numeric(10, 2), default=0.0, nullable=False)
     status = Column(String(20), default="completed", nullable=False, index=True)
     fulfillment_status = Column(String(20), default="pending", nullable=False, index=True)
+    # Customer (QR) order this sale settles; at most one sale per customer order (see __table_args__).
+    customer_order_id = Column(Integer, ForeignKey("customer_orders.id", ondelete="SET NULL"), nullable=True, index=True)
+    # SHA-256 of the normalised checkout payload; lets a retry with the same client_tx_id prove it is the same checkout.
+    request_fingerprint = Column(String(64), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False, index=True)
 
     # Relationships
@@ -239,6 +243,11 @@ class Transaction(Base):
     user = relationship("User", back_populates="transactions")
     items = relationship("TransactionItem", back_populates="transaction", cascade="all, delete-orphan")
     payments = relationship("Payment", back_populates="transaction", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "client_tx_id", name="uix_transactions_tenant_client_tx"),
+        UniqueConstraint("tenant_id", "customer_order_id", name="uix_transactions_tenant_customer_order"),
+    )
 
 
 class TransactionItem(Base):
@@ -264,6 +273,12 @@ class Payment(Base):
     payment_method = Column(String(50), nullable=False, index=True)
     amount = Column(Numeric(10, 2), nullable=False)
     status = Column(String(20), default="completed", nullable=False, index=True)
+    # Manual GCash verification data. amount_received is what the CASHIER reported after reading the GCash
+    # transaction history; it is not independently confirmed by GCash. NULL for every other payment.
+    reference_no = Column(String(50), nullable=True)
+    amount_received = Column(Numeric(10, 2), nullable=True)
+    verified_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    verified_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False, index=True)
 
     # Relationships
@@ -393,7 +408,7 @@ class CustomerOrder(Base):
     __tablename__ = "customer_orders"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, default=1)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)  # always set explicitly; no default tenant
     order_number = Column(String(50), unique=True, index=True, nullable=False)
     customer_name = Column(String(100), nullable=False)
     order_type = Column(String(50), nullable=False) # Dine In, Take Out
@@ -402,16 +417,56 @@ class CustomerOrder(Base):
     total_amount = Column(Numeric(10, 2), default=0.0, nullable=False)
     status = Column(String(20), default="pending", nullable=False) # pending, accepted, rejected
     tracking_token = Column(String(64), nullable=True, index=True)
+    # What the customer chose: GCASH or PAY_AT_COUNTER. NULL = legacy order placed before the choice existed;
+    # it is never assumed to be GCash.
+    payment_method = Column(String(20), nullable=True)
+    # Payment state, independent of the fulfilment `status` above:
+    # unpaid | verified | discrepancy | invalid | counter_paid   (see app/services/payments.py)
+    payment_status = Column(String(20), default="unpaid", server_default="unpaid", nullable=False)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
     items = relationship("CustomerOrderItem", back_populates="customer_order", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("ix_customer_orders_tenant_status", "tenant_id", "status"),
+    )
+
+
+class PaymentVerification(Base):
+    """
+    Append-only audit trail of manual GCash verification attempts for a customer order.
+    reported_amount is what the cashier typed after reading the GCash history; it is not proof of payment.
+    Attempt data is never edited; only the write-once resolution_* columns are filled in later.
+    """
+    __tablename__ = "payment_verifications"
+
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    customer_order_id = Column(Integer, ForeignKey("customer_orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    attempted_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    attempted_at = Column(DateTime, server_default=func.now(), nullable=False)
+    expected_amount = Column(Numeric(10, 2), nullable=False)
+    reported_amount = Column(Numeric(10, 2), nullable=False)
+    discrepancy_amount = Column(Numeric(10, 2), nullable=False, default=0)  # reported - expected (signed)
+    reference_no = Column(String(50), nullable=True)       # normalised reference as entered
+    claimed_reference = Column(String(50), nullable=True)  # set ONLY on a matched attempt; unique per tenant
+    transaction_time = Column(DateTime, nullable=True)     # time shown in the GCash history, as typed
+    outcome = Column(String(20), nullable=False)           # matched | mismatch | duplicate_reference
+    resolution = Column(String(20), nullable=True)         # superseded | invalidated
+    resolved_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
+    resolution_note = Column(String(255), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "claimed_reference", name="uix_payment_verifications_tenant_reference"),
+    )
 
 
 class CustomerOrderItem(Base):
     __tablename__ = "customer_order_items"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    customer_order_id = Column(Integer, ForeignKey("customer_orders.id", ondelete="CASCADE"), nullable=False)
+    customer_order_id = Column(Integer, ForeignKey("customer_orders.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(100), nullable=False)
     variant = Column(String(100), nullable=True)
     price = Column(Numeric(10, 2), nullable=False)

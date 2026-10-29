@@ -484,15 +484,15 @@ function renderMenu() {
         const priceText = peso(priceVal);
 
         return `
-            <article class="menu-item" data-product-id="${product.id}">
+            <article class="menu-item" data-product-id="${Utils.escapeHtml(product.id)}">
                 <div class="menu-image">${productImage(product)}</div>
                 <div class="menu-info">
                     <div class="menu-category">${escapeHTML(product.category)}</div>
                     <div class="menu-name">${escapeHTML(product.name)}</div>
                     ${product.description ? `<div class="menu-description">${escapeHTML(product.description)}</div>` : ''}
                     <div class="menu-bottom">
-                        <div class="menu-price">${priceText}</div>
-                        <button class="select-button select-product" type="button" data-product-id="${product.id}">Select</button>
+                        <div class="menu-price">${Utils.escapeHtml(priceText)}</div>
+                        <button class="select-button select-product" type="button" data-product-id="${Utils.escapeHtml(product.id)}">Select</button>
                     </div>
                 </div>
             </article>
@@ -561,7 +561,7 @@ function renderVariants() {
     variantSection.style.display = "block";
     variantList.innerHTML = selectedProduct.options.map((option, index) => `
         <label class="variant-option">
-            <input type="radio" name="variant" value="${index}" ${index === selectedVariant ? "checked" : ""}>
+            <input type="radio" name="variant" value="${Utils.escapeHtml(index)}" ${index === selectedVariant ? "checked" : ""}>
             <span>${escapeHTML(option.label)}</span>
             <strong>${peso(option.price)}</strong>
         </label>
@@ -648,9 +648,9 @@ function renderCart() {
                 <small>${peso(item.price)} each</small>
             </div>
             <div class="cart-item-actions">
-                <button type="button" data-action="decrease" data-index="${index}">−</button>
-                <span>${item.quantity}</span>
-                <button type="button" data-action="increase" data-index="${index}">+</button>
+                <button type="button" data-action="decrease" data-index="${Utils.escapeHtml(index)}">−</button>
+                <span>${Utils.escapeHtml(item.quantity)}</span>
+                <button type="button" data-action="increase" data-index="${Utils.escapeHtml(index)}">+</button>
             </div>
             <strong class="cart-item-total">${peso(item.price * item.quantity)}</strong>
         </div>
@@ -731,6 +731,21 @@ function closeCheckout() {
     document.body.classList.remove("modal-open");
 }
 
+const PAYMENT_HINTS = {
+    PAY_AT_COUNTER: "You will pay the cashier at the counter.",
+    GCASH: "Scan the store's GCash QR code at the counter and pay the exact total. The cashier checks the payment on their side before your order is processed."
+};
+
+function updatePaymentHint() {
+    const select = document.getElementById("paymentMethod");
+    const hint = document.getElementById("paymentHint");
+    if (select && hint) hint.textContent = PAYMENT_HINTS[select.value] || PAYMENT_HINTS.PAY_AT_COUNTER;
+}
+
+document.addEventListener("change", (event) => {
+    if (event.target && event.target.id === "paymentMethod") updatePaymentHint();
+});
+
 async function submitOrder(event) {
     if (event) event.preventDefault();
 
@@ -745,6 +760,8 @@ async function submitOrder(event) {
     const tableNumberInput = document.getElementById("tableNumber");
     const tableNumber = (tableNumberInput ? tableNumberInput.value.trim() : "") || tableParam || "";
     const notes = document.getElementById("orderNotes") ? document.getElementById("orderNotes").value : "";
+    const paymentMethodEl = document.getElementById("paymentMethod");
+    const paymentMethod = paymentMethodEl && paymentMethodEl.value === "GCASH" ? "GCASH" : "PAY_AT_COUNTER";
     const customerName = rawName || (tableNumber ? `Table ${tableNumber} Guest` : "Guest Customer");
     
     const submitBtn = event.currentTarget || document.getElementById("placeOrder");
@@ -761,15 +778,21 @@ async function submitOrder(event) {
             order_type: orderType,
             table_number: tableNumber,
             notes: notes,
+            // The customer's choice only. Whether it was actually paid is decided by the cashier.
+            payment_method: paymentMethod,
             items: cart.map(item => ({
                 product_id: item.product_id,
                 quantity: item.quantity
             }))
         };
 
+        // One key per checkout attempt: a retry after a network failure returns the same order.
+        if (!checkoutIdempotencyKey) {
+            checkoutIdempotencyKey = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+        }
         const response = await fetch("/api/v1/customer-orders", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", "Idempotency-Key": checkoutIdempotencyKey },
             body: JSON.stringify(payload)
         });
 
@@ -778,7 +801,8 @@ async function submitOrder(event) {
         }
 
         const data = await response.json();
-        
+        checkoutIdempotencyKey = null;
+
         if (checkoutContent) checkoutContent.style.display = "none";
         if (success) success.classList.add("active");
         
@@ -799,11 +823,13 @@ async function submitOrder(event) {
         const savedOrder = {
             id: data.order_id,
             order_number: data.order_number,
+            tracking_token: data.tracking_token,
             customer_name: customerName,
             table_number: tableNumber,
             order_type: orderType,
             total_amount: total,
             status: "pending",
+            payment_method: paymentMethod,
             items: cart.map(i => ({ name: i.name, variant: i.variant, price: i.price, quantity: i.quantity })),
             created_at: new Date().toISOString()
         };
@@ -850,7 +876,7 @@ function updateCustomerAuthUI() {
     const customerNameInput = document.getElementById("customerName");
 
     // Check if customer is authenticated
-    const token = localStorage.getItem("access_token");
+    const token = true; // the session itself is an HttpOnly cookie; display state comes from role/name below
     const customerName = localStorage.getItem("customer_name") || localStorage.getItem("username");
     const role = (localStorage.getItem("role") || "").toLowerCase();
 
@@ -858,7 +884,7 @@ function updateCustomerAuthUI() {
         if (loginBtn) loginBtn.style.display = "none";
         if (profileBadge) {
             profileBadge.style.display = "inline-flex";
-            if (greeting) greeting.innerHTML = `<i class="fas fa-user-circle" style="margin-right:5px; color:var(--accent, #c9a227);"></i> ${customerName}`;
+            if (greeting) greeting.innerHTML = `<i class="fas fa-user-circle" style="margin-right:5px; color:var(--accent, #c9a227);"></i> ${escapeHTML(customerName)}`;
         }
         if (customerNameInput && !customerNameInput.value) {
             customerNameInput.value = customerName;
@@ -959,7 +985,6 @@ async function handleCustomerLogin(e) {
                 });
                 const d = await r.json();
                 if (!r.ok) return { success: false, message: d.detail || "Login failed" };
-                localStorage.setItem("access_token", d.access_token);
                 localStorage.setItem("username", d.username);
                 localStorage.setItem("customer_name", d.username);
                 localStorage.setItem("role", (d.role || "customer").toLowerCase());
@@ -1034,7 +1059,6 @@ async function handleCustomerRegister(e) {
                 });
                 const d = await r.json();
                 if (!r.ok) return { success: false, message: d.detail || "Registration failed" };
-                localStorage.setItem("access_token", d.access_token);
                 localStorage.setItem("username", d.username);
                 localStorage.setItem("customer_name", d.customer_name || d.username);
                 localStorage.setItem("role", "customer");
@@ -1066,6 +1090,8 @@ async function handleCustomerRegister(e) {
 }
 
 function customerLogout() {
+    // Revoke the server session and clear the HttpOnly cookie.
+    fetch("/api/v1/auth/logout", { method: "POST", credentials: "include", keepalive: true }).catch(() => {});
     if (typeof Auth !== "undefined" && Auth.logout) {
         localStorage.removeItem("access_token");
         localStorage.removeItem("username");
@@ -1082,8 +1108,8 @@ function customerLogout() {
 /* =========================================================
    REAL-TIME CUSTOMER ORDER TRACKING & WEBSOCKET ENGINE
 ========================================================= */
-let customerWs = null;
 let orderTrackingTimer = null;
+let checkoutIdempotencyKey = null;
 
 function saveCustomerOrder(order) {
     try {
@@ -1138,7 +1164,7 @@ function getStatusBadgeHtml(status) {
         case "cancelled":
             return '<span style="background:#fee2e2; color:#991b1b; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;"><i class="fas fa-times-circle" style="margin-right:4px;"></i> Cancelled</span>';
         default:
-            return `<span style="background:#f4f4f5; color:#71717a; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;">${status || 'Pending'}</span>`;
+            return `<span style="background:#f4f4f5; color:#71717a; font-size:11px; font-weight:700; padding:3px 8px; border-radius:12px;">${Utils.escapeHtml(status || 'Pending')}</span>`;
     }
 }
 
@@ -1181,7 +1207,9 @@ async function renderCustomerOrdersModalList() {
     for (const o of orders.slice(0, 5)) {
         if (o.status !== "completed" && o.status !== "rejected" && o.status !== "cancelled") {
             try {
-                const res = await fetch(`/api/v1/customer-orders/track/${o.order_number}`);
+                const res = await fetch(`/api/v1/customer-orders/track/${encodeURIComponent(o.order_number)}`, {
+                    headers: { "X-Tracking-Token": o.tracking_token || "" }
+                });
                 if (res.ok) {
                     const trackData = await res.json();
                     if (trackData && trackData.status) {
@@ -1199,13 +1227,13 @@ async function renderCustomerOrdersModalList() {
             <div style="padding: 14px; border: 1px solid #e4e4e7; border-radius: 14px; margin-bottom: 12px; background: #fafafa;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                     <div>
-                        <strong style="font-size: 14px; color: #18181b;">${o.order_number}</strong>
-                        <span style="font-size: 11px; color: #71717a; margin-left: 6px;">${o.table_number ? 'Table ' + o.table_number : o.order_type || 'Takeout'}</span>
+                        <strong style="font-size: 14px; color: #18181b;">${Utils.escapeHtml(o.order_number)}</strong>
+                        <span style="font-size: 11px; color: #71717a; margin-left: 6px;">${escapeHTML(o.table_number ? 'Table ' + o.table_number : o.order_type || 'Takeout')}</span>
                     </div>
                     ${getStatusBadgeHtml(o.status)}
                 </div>
                 <div style="font-size: 12px; color: #52525b; margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                    ${itemsStr}
+                    ${Utils.escapeHtml(itemsStr)}
                 </div>
                 <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
                     <span style="font-weight: 800; color: #c9a227; font-size: 14px;">${peso(o.total_amount)}</span>
@@ -1262,9 +1290,13 @@ function handleCustomerOrderUpdate(data) {
 
 function startOrderLiveTracking(orderNumber) {
     if (orderTrackingTimer) clearInterval(orderTrackingTimer);
+    const tracked = getCustomerOrders().find(o => o.order_number === orderNumber);
+    const trackingToken = tracked ? (tracked.tracking_token || "") : "";
     orderTrackingTimer = setInterval(async () => {
         try {
-            const res = await fetch(`/api/v1/customer-orders/track/${orderNumber}`);
+            const res = await fetch(`/api/v1/customer-orders/track/${encodeURIComponent(orderNumber)}`, {
+                headers: { "X-Tracking-Token": trackingToken }
+            });
             if (res.ok) {
                 const data = await res.json();
                 if (data && data.status) {
@@ -1280,32 +1312,11 @@ function startOrderLiveTracking(orderNumber) {
 }
 
 function connectCustomerWebSocket() {
-    try {
-        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const host = window.location.host;
-        if (!host) return;
-
-        const wsUrl = `${protocol}//${host}/api/v1/ws/${tenantId}`;
-        customerWs = new WebSocket(wsUrl);
-
-        customerWs.onmessage = (event) => {
-            if (event.data === "pong") return;
-            try {
-                const payload = JSON.parse(event.data);
-                if (!payload || !payload.event) return;
-
-                if (payload.event === "ORDER_UPDATED" || payload.event === "CUSTOMER_ORDER_UPDATED") {
-                    handleCustomerOrderUpdate(payload.data);
-                } else if (payload.event === "INVENTORY_UPDATED" || payload.event === "MENU_UPDATED") {
-                    if (typeof fetchMenu === "function") fetchMenu();
-                }
-            } catch (e) {}
-        };
-
-        customerWs.onclose = () => {
-            setTimeout(connectCustomerWebSocket, 6000);
-        };
-    } catch (e) {}
+    // The realtime socket is authenticated and staff-only. Customers follow their order by polling
+    // /customer-orders/track (see startOrderLiveTracking) and the menu is refreshed periodically.
+    if (typeof fetchMenu === "function") {
+        setInterval(() => { if (!document.hidden) fetchMenu(); }, 60000);
+    }
 }
 
 // Make accessible to window

@@ -3,6 +3,18 @@
  */
 
 const Utils = {
+  /** Escape text before interpolating it into an HTML string (customer-controlled data!). */
+  escapeHtml(value) {
+    return String(value === null || value === undefined ? "" : value).replace(/[&<>"']/g, (ch) => (
+      { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]
+    ));
+  },
+
+  /** Value for an inline event-handler argument: a JSON string literal, then HTML-escaped (HTML escaping alone is not enough inside JS). */
+  jsArg(value) {
+    return this.escapeHtml(JSON.stringify(String(value === null || value === undefined ? "" : value)));
+  },
+
   showToast(msg, type = "info") {
     let container = document.getElementById("toast-container");
     if (!container) {
@@ -18,7 +30,8 @@ const Utils = {
       : type === 'danger' 
         ? '<i class="fas fa-exclamation-triangle" style="color:var(--danger, #ef4444);"></i>' 
         : '<i class="fas fa-info-circle" style="color:var(--info, #0284c7);"></i>';
-    toast.innerHTML = `<span style="display:inline-flex; align-items:center;">${iconHtml}</span> <span>${msg}</span>`;
+    toast.innerHTML = `<span style="display:inline-flex; align-items:center;">${iconHtml}</span> <span class="toast-msg"></span>`;
+    toast.querySelector(".toast-msg").textContent = msg;
     container.appendChild(toast);
 
     setTimeout(() => {

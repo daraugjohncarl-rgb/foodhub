@@ -176,10 +176,10 @@ async function initDashboardApp() {
                         <tr>
                             <td>
                                 <div class="user-cell" style="display:flex; align-items:center; gap:12px;">
-                                    <div class="user-avatar" style="width:36px; height:36px; border-radius:50%; background:linear-gradient(135deg, #c9a227, #eab308); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px;">${initials}</div>
+                                    <div class="user-avatar" style="width:36px; height:36px; border-radius:50%; background:linear-gradient(135deg, #c9a227, #eab308); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px;">${Utils.escapeHtml(initials)}</div>
                                     <div>
-                                        <div style="font-weight:600; color:var(--text-main); font-size:13px;">${user.username}</div>
-                                        <div style="font-size:12px; color:var(--text-muted);">${user.email || 'No email specified'}</div>
+                                        <div style="font-weight:600; color:var(--text-main); font-size:13px;">${Utils.escapeHtml(user.username)}</div>
+                                        <div style="font-size:12px; color:var(--text-muted);">${Utils.escapeHtml(user.email || 'No email specified')}</div>
                                     </div>
                                 </div>
                             </td>
@@ -193,12 +193,11 @@ async function initDashboardApp() {
                                 </span>
                             </td>
                             <td style="color:var(--text-muted); font-size:13px;">
-                                ${createdDate}
+                                ${Utils.escapeHtml(createdDate)}
                             </td>
                         </tr>
                     `;
                 }).join('');
-            }
         } catch (err) {
             console.error('Failed to load recent admins:', err);
             recentUsersBody.innerHTML = `
@@ -241,17 +240,16 @@ async function initDashboardApp() {
                     return `
                         <tr>
                             <td>
-                                <strong style="color:var(--text-main); font-size:13px;">${r.title}</strong>
-                                <div style="font-size:11px; color:var(--text-muted);">${r.tenant ? r.tenant.name : 'System Core'}</div>
+                                <strong style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(r.title)}</strong>
+                                <div style="font-size:11px; color:var(--text-muted);">${Utils.escapeHtml(r.tenant ? r.tenant.name : 'System Core')}</div>
                             </td>
-                            <td><span style="font-size:12px; color:var(--text-muted);">${r.category}</span></td>
-                            <td><span style="font-size:11px; font-weight:700; color:${priorityColor};">${r.priority}</span></td>
-                            <td><span style="font-size:11px; font-weight:700; color:${statusColor};">${r.status}</span></td>
-                            <td style="font-size:12px; color:var(--text-muted);">${dateStr}</td>
+                            <td><span style="font-size:12px; color:var(--text-muted);">${Utils.escapeHtml(r.category)}</span></td>
+                            <td><span style="font-size:11px; font-weight:700; color:${Utils.escapeHtml(priorityColor)};">${Utils.escapeHtml(r.priority)}</span></td>
+                            <td><span style="font-size:11px; font-weight:700; color:${Utils.escapeHtml(statusColor)};">${Utils.escapeHtml(r.status)}</span></td>
+                            <td style="font-size:12px; color:var(--text-muted);">${Utils.escapeHtml(dateStr)}</td>
                         </tr>
                     `;
                 }).join('');
-            }
         } catch (err) {
             console.error('Failed to load reports:', err);
             recentReportsBody.innerHTML = `

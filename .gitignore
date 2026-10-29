@@ -31,3 +31,16 @@ Thumbs.db
 *.temp
 *.dump
 *.sql
+# Local environment files and secrets
+.env
+.env.*
+!.env.example
+**/.env
+backups/
+.pytest_cache/
+
+# Reviewed SQL migrations are tracked (other *.sql dumps stay ignored)
+!supabase/**/*.sql
+
+# Frontend test dependencies
+fastapi/tests/js/node_modules/

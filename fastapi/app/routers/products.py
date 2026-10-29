@@ -349,6 +349,22 @@ def delete_product(
     return {"status": "deleted", "message": f"Product '{prod_name}' has been deleted permanently."}
 
 
+# Accepted product image types: file extension -> format detected from the file's first bytes.
+_IMAGE_EXT_KIND = {".jpg": "jpeg", ".jpeg": "jpeg", ".png": "png", ".gif": "gif", ".webp": "webp"}
+
+
+def _image_kind(head: bytes) -> Optional[str]:
+    if head.startswith(b"\xff\xd8\xff"):
+        return "jpeg"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if head[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
 @router.post(
     "/products/upload-image",
     summary="Upload a menu product image"
@@ -362,43 +378,35 @@ def upload_product_image(
     Saves to /static/images/products and returns the static image URL.
     """
     ext = os.path.splitext(file.filename)[1].lower() if file.filename else ".jpg"
-    if ext not in [".jpg", ".jpeg", ".png", ".webp", ".gif"]:
+    if ext not in _IMAGE_EXT_KIND:
         raise HTTPException(status_code=400, detail="Only image files (.jpg, .jpeg, .png, .webp, .gif) are allowed.")
 
-    # Reject oversized uploads (5 MB) before anything is written to disk.
+    # Reject oversized uploads (5 MB) before anything is written to disk: read at most one byte past the limit.
     max_bytes = 5 * 1024 * 1024
-    file.file.seek(0, os.SEEK_END)
-    size = file.file.tell()
-    file.file.seek(0)
-    if size > max_bytes:
+    data = file.file.read(max_bytes + 1)
+    if len(data) > max_bytes:
         raise HTTPException(status_code=413, detail="Image is too large (max 5 MB).")
+    # The bytes must really be an image of the type the extension claims.
+    if _image_kind(data[:12]) != _IMAGE_EXT_KIND[ext]:
+        raise HTTPException(status_code=400, detail="The file is not a valid image of the type its name says.")
 
     unique_name = f"prod_{uuid.uuid4().hex[:12]}{ext}"
 
-    # Target static directories to persist uploaded menu pictures
-    # Resolves to c:\pos\fastapi\static\images\products and c:\pos\static\images\products
+    # Saved only under the deployed fastapi/static/images/products (not the stale root-level static/ copy).
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    fastapi_static = os.path.join(os.path.dirname(os.path.dirname(current_dir)), "static", "images", "products")
-    root_static = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(current_dir))), "static", "images", "products")
-
-    dirs_to_save = [fastapi_static, root_static]
-    primary_file = None
-
-    for target_dir in dirs_to_save:
+    target_dir = os.path.join(os.path.dirname(os.path.dirname(current_dir)), "static", "images", "products")
+    dest_path = os.path.join(target_dir, unique_name)
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+        with open(dest_path, "wb") as buffer:
+            buffer.write(data)
+    except OSError:
+        # Never report success for an image that was not saved, and leave no partial file behind.
         try:
-            os.makedirs(target_dir, exist_ok=True)
-            dest_path = os.path.join(target_dir, unique_name)
-            if primary_file is None:
-                with open(dest_path, "wb") as buffer:
-                    shutil.copyfileobj(file.file, buffer)
-                primary_file = dest_path
-            else:
-                try:
-                    shutil.copyfile(primary_file, dest_path)
-                except Exception:
-                    pass
-        except Exception:
+            os.remove(dest_path)
+        except OSError:
             pass
+        raise HTTPException(status_code=500, detail="The image could not be saved. Please try again.")
 
     return {"image_url": f"/static/images/products/{unique_name}"}
 
