@@ -555,6 +555,21 @@ def get_consolidated_financial_report(
         Decimal("0.00")
     ))
 
+    # Profit & Loss Statement (P&L) tracked solely by Inventory Total Valuation vs Total Orders Revenue
+    gross_profit = quantize(transferred_orders_revenue - total_inventory_valuation)
+    net_operating_profit = gross_profit
+    is_profitable = bool(net_operating_profit >= Decimal("0.00"))
+    if transferred_orders_revenue > Decimal("0.00"):
+        margin_pct = quantize((net_operating_profit / transferred_orders_revenue) * Decimal("100.00"))
+        profit_margin_val = float(margin_pct)
+        sign = "+" if margin_pct > Decimal("0.00") else ""
+        profit_margin_str = f"{sign}{margin_pct:.2f}%"
+    else:
+        profit_margin_val = -100.0 if total_inventory_valuation > Decimal("0.00") else 0.0
+        profit_margin_str = "-100.00%" if total_inventory_valuation > Decimal("0.00") else "0.00%"
+    gp_status = "complete"
+    net_profit_status = "complete"
+
     # Manager safe cash reduces when transferred to Admin
     manager_safe_cash = quantize(max(Decimal("0.00"), total_cashout_income - total_transferred_to_admin))
     admin_transfer_income = total_transferred_to_admin

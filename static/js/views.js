@@ -1393,7 +1393,12 @@ async function submitAddInventory() {
     }
     Utils.showToast("Stock item created successfully", "success");
     Utils.closeModal();
-    renderInventory();
+    cachedProfitLossData = null;
+    if (getActiveViewName() === "profit_loss" && typeof renderProfitLoss === "function") {
+      renderProfitLoss();
+    } else {
+      renderInventory();
+    }
   } catch (err) {
     Utils.showToast(err.message, "danger");
   }
@@ -1548,7 +1553,12 @@ async function submitEditInventory(itemId) {
 
     Utils.showToast(`Item "${name}" updated successfully`, "success");
     Utils.closeModal();
-    await renderInventory();
+    cachedProfitLossData = null;
+    if (getActiveViewName() === "profit_loss" && typeof renderProfitLoss === "function") {
+      await renderProfitLoss();
+    } else {
+      await renderInventory();
+    }
   } catch (err) {
     if (saveBtn) {
       saveBtn.disabled = false;
@@ -1590,6 +1600,10 @@ async function inlineUpdateStock(itemId, oldQty, newQtyVal) {
       const valEl = document.getElementById(`inv-val-${itemId}`);
       if (valEl) valEl.textContent = Utils.formatCurrency(newQty * unitP);
     }
+    cachedProfitLossData = null;
+    if (getActiveViewName() === "profit_loss" && typeof renderProfitLoss === "function") {
+      renderProfitLoss();
+    }
     const input = document.getElementById(`inv-stock-${itemId}`);
     if (input) {
       input.setAttribute("onchange", `inlineUpdateStock(${itemId}, ${newQty}, this.value)`);
@@ -1628,6 +1642,10 @@ async function inlineUpdatePrice(itemId, newPriceVal) {
       const qty = Number(item.quantity) || 0;
       const valEl = document.getElementById(`inv-val-${itemId}`);
       if (valEl) valEl.textContent = Utils.formatCurrency(qty * newPrice);
+    }
+    cachedProfitLossData = null;
+    if (getActiveViewName() === "profit_loss" && typeof renderProfitLoss === "function") {
+      renderProfitLoss();
     }
     Utils.showToast("Price unit adjusted", "success");
   } catch (e) {
@@ -6003,8 +6021,10 @@ window.toggleStaffStatus = async function(id, currentStatus) {
 };
 
 function openAddStaffModal() {
-  const curRole = (typeof Auth !== 'undefined' && Auth.getRole ? Auth.getRole() : "").toLowerCase();
-  const isAdminViewer = curRole === "admin" || curRole === "super_admin";
+  const pathLower = (window.location.pathname || "").toLowerCase();
+  const isManagerPage = pathLower.includes("/manager");
+  const curRole = isManagerPage ? "manager" : (typeof Auth !== 'undefined' && Auth.getRole ? Auth.getRole() : "").toLowerCase();
+  const isAdminViewer = !isManagerPage && (curRole === "admin" || curRole === "super_admin");
   Utils.openModal("Create New Branch Staff", `
     <form id="form-add-staff" onsubmit="event.preventDefault(); submitAddStaff();">
       <div class="input-group" style="margin-bottom:14px;">
@@ -6038,7 +6058,7 @@ function openAddStaffModal() {
             <option value="CASHIER" selected>Cashier</option>
             <option value="KITCHEN">Kitchen Staff</option>
             <option value="INVENTORY">Inventory Staff</option>
-            <option value="MANAGER">Manager</option>
+            ${isAdminViewer ? '<option value="MANAGER">Manager</option>' : ''}
             ${isAdminViewer ? '<option value="ADMIN">Branch Admin</option>' : ''}
             <option value="CUSTOMER">Customer</option>
           </select>
@@ -6826,14 +6846,16 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
   const discountsVal = metrics['5_discounts'] || 0;
   const cogsVal = metrics['6_cost_of_goods_sold'] !== undefined ? metrics['6_cost_of_goods_sold'] : (inv.cost_of_goods_sold || 0);
   const isCogsComplete = inv.is_cogs_complete !== undefined ? inv.is_cogs_complete : true;
-  const grossProfitVal = pl.gross_profit || 0;
+  const inventoryValuationVal = inv.total_inventory_valuation || 0;
+  const totalOrdersRevenueVal = rev.total_orders_revenue || 0;
+  const grossProfitVal = totalOrdersRevenueVal - inventoryValuationVal;
   const operatingExpensesVal = pl.operating_expenses || 0;
-  const netProfitVal = pl.net_profit || 0;
-  const isProfitable = pl.is_profitable !== undefined ? pl.is_profitable : (netProfitVal >= 0);
-  const profitMarginDisplay = pl.profit_margin_display || ((pl.profit_margin_percent || 0).toFixed(2) + '%');
+  const netProfitVal = totalOrdersRevenueVal - inventoryValuationVal;
+  const isProfitable = netProfitVal >= 0;
+  const profitMarginPct = totalOrdersRevenueVal > 0 ? ((netProfitVal / totalOrdersRevenueVal) * 100) : (inventoryValuationVal > 0 ? -100 : 0);
+  const profitMarginDisplay = (profitMarginPct > 0 ? '+' : '') + profitMarginPct.toFixed(2) + '%';
   const cashCollectionsVal = metrics['3_cash_collections'] !== undefined ? metrics['3_cash_collections'] : (rev.cash_sales || 0);
   const digitalCollectionsVal = metrics['4_digital_collections'] !== undefined ? metrics['4_digital_collections'] : (rev.non_cash_sales || 0);
-  const inventoryValuationVal = inv.total_inventory_valuation || 0;
   const activeDrawerCashVal = csh.active_drawer_cash || 0;
   const adminIncomingTransfersVal = csh.admin_transfer_income !== undefined ? csh.admin_transfer_income : (csh.total_transferred_to_admin ?? 0);
   const managerSafeBalanceVal = csh.manager_safe_cash !== undefined ? csh.manager_safe_cash : Math.max(0, (csh.total_cashout_income || 0) - (csh.total_transferred_to_admin || 0));
@@ -7522,13 +7544,13 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
           </div>
         </div>
 
-        <!-- 6. Inventory Stock Valuation -->
-        <div class="pl-stat-card">
+        <!-- 6. Inventory Stock Valuation (Total Valuation) -->
+        <div class="pl-stat-card" style="cursor:pointer;" onclick="switchPlTab('inventory')" title="Click to view full inventory stock valuation breakdown">
           <div class="pl-stat-icon cyan"><i class="fas fa-boxes-stacked"></i></div>
           <div class="pl-stat-info">
-            <h3>Current Inventory Value</h3>
+            <h3>Total Inventory Valuation</h3>
             <div class="pl-stat-count" style="color:#06b6d4;">${Utils.formatCurrency(inventoryValuationVal)}</div>
-            <div class="pl-stat-trend" style="color:#06b6d4;"><i class="fas fa-tags"></i> ${Utils.escapeHtml(inv.total_items_count || 0)} items at cost</div>
+            <div class="pl-stat-trend" style="color:#06b6d4;"><i class="fas fa-tags"></i> ${Utils.escapeHtml(inv.total_items_count || 0)} items at cost (View Details <i class="fas fa-arrow-right" style="font-size:10px;"></i>)</div>
           </div>
         </div>
       </div>
@@ -7567,12 +7589,12 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
           </div>
         </div>
 
-        <div class="pl-stat-card">
+        <div class="pl-stat-card" style="cursor:pointer;" onclick="switchPlTab('inventory')" title="Click to view full inventory stock valuation breakdown">
           <div class="pl-stat-icon purple"><i class="fas fa-boxes-stacked"></i></div>
           <div class="pl-stat-info">
-            <h3>Inventory Stock Price Value</h3>
+            <h3>Total Inventory Valuation</h3>
             <div class="pl-stat-count" style="color:#6366f1;">${Utils.formatCurrency(inventoryValuationVal)}</div>
-            <div class="pl-stat-trend" style="color:#6366f1;"><i class="fas fa-tags"></i> Across ${Utils.escapeHtml(inv.total_items_count || 0)} items</div>
+            <div class="pl-stat-trend" style="color:#6366f1;"><i class="fas fa-tags"></i> Total Valuation across ${Utils.escapeHtml(inv.total_items_count || 0)} items (View Details <i class="fas fa-arrow-right" style="font-size:10px;"></i>)</div>
           </div>
         </div>
       </div>
@@ -7585,7 +7607,7 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
           <div class="pl-card-header">
             <div class="pl-card-header-left">
               <h2><i class="fas fa-file-invoice-dollar" style="color:#10b981;"></i> Profit & Loss Statement (P&L)</h2>
-              <span>Authoritative period statement: Revenue − COGS − Operating Expenses</span>
+              <span>Real-time revenue versus total valuation of inventory</span>
             </div>
             <span class="pl-badge ${isProfitable ? 'pl-badge-success' : 'pl-badge-danger'}">
               <i class="fas ${isProfitable ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down'}"></i>
@@ -7594,55 +7616,38 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
           </div>
 
           <div class="pl-card-body">
-            <!-- Gross Orders Revenue -->
+            <!-- Total Orders Revenue -->
             <div class="pl-row">
               <span class="pl-row-label">
-                <i class="fas fa-plus" style="color:#10b981; font-size:11px;"></i> Gross Sales Revenue:
+                <i class="fas fa-plus" style="color:#10b981; font-size:11px;"></i> Total Orders Revenue:
               </span>
-              <strong class="pl-row-value" style="color:#10b981;">+${Utils.formatCurrency(grossSalesVal)}</strong>
+              <strong class="pl-row-value" style="color:#10b981;">+${Utils.formatCurrency(rev.total_orders_revenue || 0)}</strong>
             </div>
 
+            <!-- Subrow: Cash Sales -->
             <div class="pl-sub-row">
-              <span>↳ Sales Discounts & Promos:</span>
-              <span class="pl-row-value" style="color:#ef4444;">-${Utils.formatCurrency(discountsVal)}</span>
+              <span>↳ Cash Sales (Drawer):</span>
+              <span class="pl-row-value" style="color:var(--text-main);">${Utils.formatCurrency(rev.cash_sales || 0)}</span>
             </div>
 
-            <div class="pl-row" style="background:rgba(0,0,0,0.015); padding:8px 0;">
-              <span class="pl-row-label">
-                <strong>= Net Sales Revenue:</strong>
-              </span>
-              <strong class="pl-row-value" style="color:var(--text-main); font-size:15px;">${Utils.formatCurrency(netSalesVal)}</strong>
+            <!-- Subrow: Non-Cash Sales -->
+            <div class="pl-sub-row">
+              <span>↳ Non-Cash Sales (GCash / Card):</span>
+              <span class="pl-row-value" style="color:var(--text-main);">${Utils.formatCurrency(rev.non_cash_sales || 0)}</span>
             </div>
 
-            <!-- Cost of Goods Sold -->
-            <div class="pl-row">
+            <!-- Inventory Total Valuation -->
+            <div class="pl-row" style="cursor:pointer;" onclick="switchPlTab('inventory')" title="Click to view itemized inventory stock valuation ledger">
               <span class="pl-row-label">
-                <i class="fas fa-minus" style="color:#ef4444; font-size:11px;"></i> Cost of Goods Sold (COGS):
+                <i class="fas fa-minus" style="color:#ef4444; font-size:11px;"></i> Inventory Total Valuation:
               </span>
-              <strong class="pl-row-value" style="color:#ef4444;">-${Utils.formatCurrency(cogsVal)}</strong>
+              <strong class="pl-row-value" style="color:#ef4444;">-${Utils.formatCurrency(inventoryValuationVal)}</strong>
             </div>
 
-            ${!isCogsComplete ? `
-              <div class="pl-sub-row" style="color:#d97706; font-size:11.5px;">
-                <span><i class="fas fa-exclamation-triangle"></i> Notice: Incomplete item recipe costs recorded</span>
-                <span>Partial COGS</span>
-              </div>
-            ` : ''}
-
-            <!-- Gross Profit -->
-            <div class="pl-row" style="background:rgba(0,0,0,0.015); padding:8px 0;">
-              <span class="pl-row-label">
-                <strong>= Gross Profit:</strong>
-              </span>
-              <strong class="pl-row-value" style="color:${grossProfitVal >= 0 ? '#10b981' : '#ef4444'}; font-size:15px;">${Utils.formatCurrency(grossProfitVal)}</strong>
-            </div>
-
-            <!-- Operating Expenses -->
-            <div class="pl-row">
-              <span class="pl-row-label">
-                <i class="fas fa-minus" style="color:#ef4444; font-size:11px;"></i> Operating Business Expenses:
-              </span>
-              <strong class="pl-row-value" style="color:#ef4444;">-${Utils.formatCurrency(operatingExpensesVal)}</strong>
+            <!-- Subrow: Inventory Items Count -->
+            <div class="pl-sub-row" style="cursor:pointer;" onclick="switchPlTab('inventory')">
+              <span>↳ Across ${Utils.escapeHtml(inv.total_items_count || 0)} inventory item(s) at unit price:</span>
+              <span class="pl-row-value" style="color:#06b6d4; font-weight:600;">View Stock Valuation →</span>
             </div>
 
             <!-- Net Operating Profit / Loss Highlight Box -->
@@ -7658,8 +7663,8 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
           </div>
 
           <div class="pl-card-footer">
-            <span>Operating Margin: <strong>${Utils.escapeHtml(profitMarginDisplay)}</strong></span>
-            <span>Period Sales Count: <strong>${Utils.escapeHtml(rev.today_orders_count || 0)} order(s)</strong></span>
+            <span>Profit Margin: <strong>${Utils.escapeHtml(profitMarginDisplay)}</strong></span>
+            <span>Today's Sales Revenue: <strong>${Utils.formatCurrency(rev.today_orders_revenue || 0)}</strong></span>
           </div>
         </div>
 
@@ -9110,13 +9115,15 @@ function printAllQRs() {
 let cachedDrawerData = null;
 let drawerRefreshDebounceTimer = null;
 
+let _drawerSummaryInFlight = null;
+
 function debouncedDrawerRefresh(silent = true) {
   if (drawerRefreshDebounceTimer) clearTimeout(drawerRefreshDebounceTimer);
   drawerRefreshDebounceTimer = setTimeout(() => {
     if (typeof renderCashDrawerTracker === "function") {
       renderCashDrawerTracker(null, silent);
     }
-  }, 100);
+  }, 40);
 }
 
 async function renderCashDrawerTracker(c, silent = false) {
@@ -9127,30 +9134,37 @@ async function renderCashDrawerTracker(c, silent = false) {
 
   // Only show full loading spinner if container is empty and not a silent refresh
   if (!hasContent && !silent) {
-    container.innerHTML = `
-      <div style="display:flex; justify-content:center; align-items:center; min-height:260px; color:var(--text-muted, #71717a);">
-        <div style="text-align:center;">
-          <i class="fas fa-spinner fa-spin" style="font-size:2rem; margin-bottom:0.75rem; color:#c9a227;"></i>
-          <p style="font-size:14px; font-weight:500;">Loading cashier drawer records...</p>
+    if (cachedDrawerData) {
+      renderCashDrawerTrackerUI(container, cachedDrawerData);
+    } else {
+      container.innerHTML = `
+        <div style="display:flex; justify-content:center; align-items:center; min-height:260px; color:var(--text-muted, #71717a);">
+          <div style="text-align:center;">
+            <i class="fas fa-spinner fa-spin" style="font-size:2rem; margin-bottom:0.75rem; color:#c9a227;"></i>
+            <p style="font-size:14px; font-weight:500;">Loading cashier drawer records...</p>
+          </div>
         </div>
-      </div>
-    `;
+      `;
+    }
   }
 
+  const refreshIcon = document.getElementById("cash-drawer-refresh-icon");
+  if (refreshIcon) refreshIcon.classList.add("fa-spin");
+
   try {
-    const [res, plRes] = await Promise.all([
-      Auth.fetch("/api/v1/shifts/drawer-summary"),
-      !cachedProfitLossData ? Auth.fetch("/api/v1/analytics/profit-loss").catch(() => null) : Promise.resolve(null)
-    ]);
-    if (!res.ok) throw new Error("Failed to fetch cash drawer summary.");
-    cachedDrawerData = await res.json();
-    if (plRes && plRes.ok) {
-      cachedProfitLossData = await plRes.json();
+    if (!_drawerSummaryInFlight) {
+      _drawerSummaryInFlight = Auth.fetch("/api/v1/shifts/drawer-summary").then(async (r) => {
+        if (!r.ok) throw new Error("Failed to fetch cash drawer summary.");
+        return r.json();
+      }).finally(() => {
+        _drawerSummaryInFlight = null;
+      });
     }
+    cachedDrawerData = await _drawerSummaryInFlight;
     renderCashDrawerTrackerUI(container, cachedDrawerData);
   } catch (err) {
     console.error("Cash Drawer Error:", err);
-    if (!hasContent) {
+    if (!hasContent && !cachedDrawerData) {
       container.innerHTML = `
         <div class="section-card" style="padding:24px; border:1px solid rgba(239,68,68,0.35);">
           <h3 style="color:var(--danger, #ef4444); font-size:16px; font-weight:700;"><i class="fas fa-exclamation-triangle"></i> Error Loading Cash Drawer Data</h3>
@@ -9159,10 +9173,18 @@ async function renderCashDrawerTracker(c, silent = false) {
         </div>
       `;
     }
+  } finally {
+    const iconNow = document.getElementById("cash-drawer-refresh-icon");
+    if (iconNow) iconNow.classList.remove("fa-spin");
   }
 }
 
 function renderCashDrawerTrackerUI(container, data) {
+  const isInitialRender = !container.querySelector(".section-card");
+  const toolbarClass = isInitialRender ? "toolbar fade-up" : "toolbar";
+  const statsGridClass = isInitialRender ? "stats-grid fade-up delay-1" : "stats-grid";
+  const sectionCardClass = isInitialRender ? "section-card fade-up delay-2" : "section-card";
+
   const allShifts = (data && data.shifts) || [];
   const shifts = allShifts.filter(s => {
     const role = (s.role || '').toLowerCase();
@@ -9187,7 +9209,7 @@ function renderCashDrawerTrackerUI(container, data) {
 
   container.innerHTML = `
     <!-- Top Toolbar -->
-    <div class="toolbar fade-up" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+    <div class="${toolbarClass}" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
       <div>
         <h2 style="font-size:20px; font-weight:800; color:var(--text-main); margin:0; display:flex; align-items:center; gap:8px;">
           <i class="fas fa-vault" style="color:#c9a227;"></i> Cash Drawer
@@ -9204,13 +9226,13 @@ function renderCashDrawerTrackerUI(container, data) {
           <i class="fas fa-pen-to-square"></i> Edit Drawer
         </button>
         <button class="btn btn-outline btn-sm" onclick="renderCashDrawerTracker(null, true)" title="Refresh Drawer Balances" style="border-radius:10px; padding:6px 12px;">
-          <i class="fas fa-sync-alt"></i> Live Refresh
+          <i class="fas fa-sync-alt" id="cash-drawer-refresh-icon"></i> Live Refresh
         </button>
       </div>
     </div>
 
     <!-- Metrics Cards Grid: Cashier Drawer, Overall Income & Manager Income -->
-    <div class="stats-grid fade-up delay-1" style="grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); margin-bottom:16px;">
+    <div class="${statsGridClass}" style="grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); margin-bottom:16px;">
       <div class="stat-card">
         <div class="stat-icon gold"><i class="fas fa-vault"></i></div>
         <div class="stat-info">
@@ -9238,7 +9260,7 @@ function renderCashDrawerTrackerUI(container, data) {
     </div>
 
     <!-- Active & Recent Cashier Drawers Table -->
-    <div class="section-card fade-up delay-2" style="margin-bottom:24px;">
+    <div class="${sectionCardClass}" style="margin-bottom:24px;">
       <div class="section-head">
         <div>
           <h2><i class="fas fa-cash-register" style="color:#c9a227; margin-right:8px;"></i> Cashier Drawer to Track Cashier Overall Income</h2>
@@ -9384,9 +9406,12 @@ function renderMovementsTableRows(movements) {
   }).join('');
 }
 
+let _isReloadingTransferDialog = false;
+
 async function reloadTransferDialogData(showToast = true) {
   const form = document.getElementById("form-cash-movement");
-  if (!form) return;
+  if (!form || _isReloadingTransferDialog) return;
+  _isReloadingTransferDialog = true;
 
   const spin = document.getElementById("transfer-reload-spin");
   if (spin) spin.classList.add("fa-spin");
@@ -9398,16 +9423,20 @@ async function reloadTransferDialogData(showToast = true) {
   }
 
   try {
-    const [drawerRes, plRes] = await Promise.all([
-      Auth.fetch("/api/v1/shifts/drawer-summary").catch(() => null),
-      Auth.fetch("/api/v1/analytics/profit-loss").catch(() => null)
-    ]);
-
-    if (drawerRes && drawerRes.ok) cachedDrawerData = await drawerRes.json();
-    if (plRes && plRes.ok) cachedProfitLossData = await plRes.json();
-
     const transferReason = document.getElementById("cm-transfer-reason")?.value || "";
     const isManagerProfitIncome = transferReason.includes("Manager");
+
+    if (isManagerProfitIncome) {
+      const drawerRes = await Auth.fetch("/api/v1/shifts/drawer-summary").catch(() => null);
+      if (drawerRes && drawerRes.ok) cachedDrawerData = await drawerRes.json();
+    } else {
+      const [drawerRes, plRes] = await Promise.all([
+        Auth.fetch("/api/v1/shifts/drawer-summary").catch(() => null),
+        Auth.fetch("/api/v1/analytics/profit-loss").catch(() => null)
+      ]);
+      if (drawerRes && drawerRes.ok) cachedDrawerData = await drawerRes.json();
+      if (plRes && plRes.ok) cachedProfitLossData = await plRes.json();
+    }
 
     let shifts = (cachedDrawerData && cachedDrawerData.shifts) || [];
     let cashierShifts = shifts.filter(s => {
@@ -9423,21 +9452,28 @@ async function reloadTransferDialogData(showToast = true) {
     let currentShiftId = shiftSelect ? parseInt(shiftSelect.value, 10) : null;
     const targetShift = (currentShiftId ? openShifts.find(s => s.id === currentShiftId) : null) || openShifts[0] || cashierShifts[0] || null;
 
-    const expectedCash = targetShift ? (targetShift.expected_cash || 0) : (cachedProfitLossData?.cashout?.active_drawer_cash || 0);
+    const expectedCash = targetShift ? (targetShift.expected_cash || 0) : (cachedDrawerData?.total_cash_in_drawers ?? cachedProfitLossData?.cashout?.active_drawer_cash ?? 0);
     const cashierOverallIncome = targetShift 
       ? (targetShift.cashier_overall_income !== undefined ? targetShift.cashier_overall_income : (targetShift.total_sales || 0))
       : (cachedDrawerData?.overall_income || (targetShift ? targetShift.total_sales : 0) || 0);
-    const availableSafeCash = cachedProfitLossData?.cashout?.manager_safe_cash !== undefined
-      ? cachedProfitLossData.cashout.manager_safe_cash
-      : Math.max(0, (cachedProfitLossData?.cashout?.total_cashout_income || 0) - (cachedProfitLossData?.cashout?.total_transferred_to_admin || 0));
+    const availableSafeCash = cachedDrawerData?.manager_safe_cash !== undefined
+      ? cachedDrawerData.manager_safe_cash
+      : (cachedProfitLossData?.cashout?.manager_safe_cash !== undefined
+          ? cachedProfitLossData.cashout.manager_safe_cash
+          : Math.max(0, (cachedProfitLossData?.cashout?.total_cashout_income || 0) - (cachedProfitLossData?.cashout?.total_transferred_to_admin || 0)));
 
     const freshAmount = isManagerProfitIncome
       ? (expectedCash > 0 ? expectedCash : (cashierOverallIncome > 0 ? cashierOverallIncome : 0))
       : (availableSafeCash > 0 ? availableSafeCash : 0);
 
     const amountInput = document.getElementById("cm-amount");
-    if (amountInput) {
+    if (amountInput && (showToast || amountInput.dataset.userEdited !== "true")) {
       amountInput.value = freshAmount > 0 ? freshAmount.toFixed(2) : "";
+      if (showToast) delete amountInput.dataset.userEdited;
+    }
+
+    if (shiftSelect && shiftSelect.tagName === "INPUT" && targetShift) {
+      shiftSelect.value = targetShift.id;
     }
 
     const infoEl = document.getElementById("cm-expected-info-container");
@@ -9477,6 +9513,7 @@ async function reloadTransferDialogData(showToast = true) {
       badge.style.color = "#ef4444";
     }
   } finally {
+    _isReloadingTransferDialog = false;
     if (spin) spin.classList.remove("fa-spin");
   }
 }
@@ -9487,16 +9524,24 @@ async function openAddCashMovementModal(defaultShiftId = null, targetType = null
   const activeView = currentLink ? (currentLink.getAttribute("href") || "").replace(/^#\/?/, "").trim() : ((window.location.hash || "").replace(/^#\/?/, "").trim() || "dashboard");
   const isManagerProfitIncome = targetType === 'manager_income' || (!targetType && activeView !== 'profit_loss' && activeView !== 'purchases');
 
-  // Immediately fetch fresh, accurate, real-time data from network in parallel
-  try {
-    const [drawerRes, plRes] = await Promise.all([
-      Auth.fetch("/api/v1/shifts/drawer-summary").catch(() => null),
-      Auth.fetch("/api/v1/analytics/profit-loss").catch(() => null)
-    ]);
-    if (drawerRes && drawerRes.ok) cachedDrawerData = await drawerRes.json();
-    if (plRes && plRes.ok) cachedProfitLossData = await plRes.json();
-  } catch (e) {
-    console.warn("Network reload on transfer modal error:", e);
+  // Only await network if we have no cached data at all; otherwise open modal IMMEDIATELY (0ms) and sync in background
+  const needsBlockingFetch = isManagerProfitIncome ? !cachedDrawerData : (!cachedDrawerData && !cachedProfitLossData);
+  if (needsBlockingFetch) {
+    try {
+      if (isManagerProfitIncome) {
+        const drawerRes = await Auth.fetch("/api/v1/shifts/drawer-summary").catch(() => null);
+        if (drawerRes && drawerRes.ok) cachedDrawerData = await drawerRes.json();
+      } else {
+        const [drawerRes, plRes] = await Promise.all([
+          Auth.fetch("/api/v1/shifts/drawer-summary").catch(() => null),
+          Auth.fetch("/api/v1/analytics/profit-loss").catch(() => null)
+        ]);
+        if (drawerRes && drawerRes.ok) cachedDrawerData = await drawerRes.json();
+        if (plRes && plRes.ok) cachedProfitLossData = await plRes.json();
+      }
+    } catch (e) {
+      console.warn("Network reload on transfer modal error:", e);
+    }
   }
 
   let shifts = (cachedDrawerData && cachedDrawerData.shifts) || [];
@@ -9516,13 +9561,15 @@ async function openAddCashMovementModal(defaultShiftId = null, targetType = null
 
   const targetShift = (defaultShiftId ? openShifts.find(s => s.id === defaultShiftId) : null) || openShifts[0] || cashierShifts[0] || null;
   const targetShiftId = targetShift ? targetShift.id : "";
-  const expectedCash = targetShift ? (targetShift.expected_cash || 0) : (cachedProfitLossData?.cashout?.active_drawer_cash || 0);
+  const expectedCash = targetShift ? (targetShift.expected_cash || 0) : (cachedDrawerData?.total_cash_in_drawers ?? cachedProfitLossData?.cashout?.active_drawer_cash ?? 0);
   const cashierOverallIncome = targetShift 
     ? (targetShift.cashier_overall_income !== undefined ? targetShift.cashier_overall_income : (targetShift.total_sales || 0))
     : (cachedDrawerData?.overall_income || (targetShift ? targetShift.total_sales : 0) || 0);
-  const availableSafeCash = cachedProfitLossData?.cashout?.manager_safe_cash !== undefined
-    ? cachedProfitLossData.cashout.manager_safe_cash
-    : Math.max(0, (cachedProfitLossData?.cashout?.total_cashout_income || 0) - (cachedProfitLossData?.cashout?.total_transferred_to_admin || 0));
+  const availableSafeCash = cachedDrawerData?.manager_safe_cash !== undefined
+    ? cachedDrawerData.manager_safe_cash
+    : (cachedProfitLossData?.cashout?.manager_safe_cash !== undefined
+        ? cachedProfitLossData.cashout.manager_safe_cash
+        : Math.max(0, (cachedProfitLossData?.cashout?.total_cashout_income || 0) - (cachedProfitLossData?.cashout?.total_transferred_to_admin || 0)));
 
   const defaultCashoutAmount = isManagerProfitIncome
     ? (expectedCash > 0 ? expectedCash : (cashierOverallIncome > 0 ? cashierOverallIncome : 0))
@@ -9591,7 +9638,7 @@ async function openAddCashMovementModal(defaultShiftId = null, targetType = null
         <label style="font-size:13px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:8px; text-align:center;">
           ${Utils.escapeHtml(labelText)} <span style="color:var(--danger);">*</span>
         </label>
-        <input type="number" step="0.01" min="0.01" id="cm-amount" class="input-field" required value="${defaultCashoutAmount > 0 ? defaultCashoutAmount.toFixed(2) : ''}" placeholder="0.00" style="width:100%; font-size:26px; font-weight:800; padding:12px; text-align:center; color:#10b981; border:2px solid #10b981; border-radius:10px;">
+        <input type="number" step="0.01" min="0.01" id="cm-amount" class="input-field" required value="${defaultCashoutAmount > 0 ? defaultCashoutAmount.toFixed(2) : ''}" oninput="this.dataset.userEdited='true'" placeholder="0.00" style="width:100%; font-size:26px; font-weight:800; padding:12px; text-align:center; color:#10b981; border:2px solid #10b981; border-radius:10px;">
         <div id="cm-expected-info-container" style="text-align:center; font-size:12px; color:var(--text-muted); margin-top:8px;">
           ${isManagerProfitIncome ? `
             Cashier Drawer (All Cash to Manager Income): <strong id="cm-expected-info" style="color:#10b981;">${Utils.formatCurrency(expectedCash)}</strong>
@@ -9604,6 +9651,11 @@ async function openAddCashMovementModal(defaultShiftId = null, targetType = null
       </div>
     </form>
   `, `<button id="btn-submit-cash-movement" class="btn btn-primary" onclick="submitAddCashMovement()" style="width:100%; justify-content:center; padding:12px; font-size:14px; font-weight:700; border-radius:10px;"><i class="fas ${btnIcon}"></i> ${Utils.escapeHtml(btnText)}</button>`);
+
+  // If opened instantly from cache, trigger a silent background sync to ensure live figures are 100% up to date
+  if (!needsBlockingFetch) {
+    reloadTransferDialogData(false);
+  }
 }
 
 async function submitAddCashMovement() {
@@ -9642,31 +9694,58 @@ async function submitAddCashMovement() {
 
     const data = await res.json();
     const destName = isManagerIncome ? "Manager Income Safe" : "Admin";
-    Utils.showToast(data.message || `Successfully transferred ₱${amount.toFixed(2)} to ${destName}! ${isManagerIncome ? 'Cashier drawer reset to ₱0.00.' : 'Manager realized cash decreased.'}`, "success");
     Utils.closeModal();
+    Utils.showToast(data.message || `Successfully transferred ₱${amount.toFixed(2)} to ${destName}! ${isManagerIncome ? 'Cashier drawer reset to ₱0.00.' : 'Manager realized cash decreased.'}`, "success");
 
-    // Reset drawer and profit-loss caches so views re-fetch live updated balances
+    const currentLink = document.querySelector("aside.sidebar .nav-link.active, .sidebar a.active");
+    const activeView = currentLink ? (currentLink.getAttribute("href") || "").replace(/^#\/?/, "").trim() : ((window.location.hash || "").replace(/^#\/?/, "").trim() || "dashboard");
+
+    // Optimistic 0ms UI update on Cash Drawer before background sync finishes
+    if (activeView === "cash_drawer" && cachedDrawerData && typeof renderCashDrawerTrackerUI === "function") {
+      const container = document.getElementById("view-container");
+      if (container) {
+        if (isManagerIncome) {
+          cachedDrawerData.total_cash_in_drawers = Math.max(0, (cachedDrawerData.total_cash_in_drawers || 0) - amount);
+          cachedDrawerData.manager_safe_cash = (cachedDrawerData.manager_safe_cash || 0) + amount;
+          cachedDrawerData.manager_income = cachedDrawerData.manager_safe_cash;
+          if (Array.isArray(cachedDrawerData.shifts)) {
+            const sMatch = cachedDrawerData.shifts.find(s => (shiftId && s.id === shiftId) || s.status === "open");
+            if (sMatch) {
+              sMatch.expected_cash = 0;
+              sMatch.paid_out = (sMatch.paid_out || 0) + amount;
+              sMatch.cashed_out = (sMatch.cashed_out || 0) + amount;
+              if (data && data.new_shift_id) sMatch.id = data.new_shift_id;
+            }
+          }
+        } else {
+          cachedDrawerData.manager_safe_cash = Math.max(0, (cachedDrawerData.manager_safe_cash || 0) - amount);
+          cachedDrawerData.manager_income = cachedDrawerData.manager_safe_cash;
+        }
+        renderCashDrawerTrackerUI(container, cachedDrawerData);
+      }
+    }
+
+    // Reset drawer and profit-loss caches so views re-fetch authoritative updated balances
     cachedDrawerData = null;
     cachedProfitLossData = null;
 
     // Broadcast signal so Cashier POS in other tabs/windows immediately resets drawer to ₱0.00
     try {
       localStorage.setItem("RESTOTRACK_DRAWER_RESET", Date.now().toString());
-      if (window.BlessieRealtime && typeof window.BlessieRealtime.sendEvent === 'function') {
-        window.BlessieRealtime.sendEvent(isManagerIncome ? "CASHOUT_COMPLETED" : "TRANSFER_TO_ADMIN", { amount, reason });
-      }
+      localStorage.setItem("RESTOTRACK_EVENT", JSON.stringify({
+        event: isManagerIncome ? "CASHOUT_COMPLETED" : "TRANSFER_TO_ADMIN",
+        data: { amount, reason },
+        timestamp: Date.now()
+      }));
     } catch (e) {}
 
-    // Fast-reload all relevant views across the application in real-time
-    const currentLink = document.querySelector("aside.sidebar .nav-link.active, .sidebar a.active");
-    const activeView = currentLink ? (currentLink.getAttribute("href") || "").replace(/^#\/?/, "").trim() : ((window.location.hash || "").replace(/^#\/?/, "").trim() || "dashboard");
-    
+    // Fast-reload active view in real-time (deduplicated)
     if (activeView === "dashboard" && typeof renderDashboard === "function") {
       renderDashboard();
     } else if ((activeView === "profit_loss" || activeView === "purchases") && typeof renderProfitLoss === "function") {
       renderProfitLoss();
-    } else if (activeView === "cash_drawer" && typeof renderCashDrawerTracker === "function") {
-      renderCashDrawerTracker(null, true);
+    } else if (activeView === "cash_drawer") {
+      debouncedDrawerRefresh(true);
     } else if (activeView === "transactions" && typeof renderTransactions === "function") {
       renderTransactions();
     }
@@ -10080,8 +10159,11 @@ window.reloadTransferDialogData = reloadTransferDialogData;
 
       case "INVENTORY_UPDATED":
         cachedInventory = [];
+        cachedProfitLossData = null;
         if (activeView === "inventory" && typeof renderInventory === "function") {
           renderInventory();
+        } else if (activeView === "profit_loss" && typeof renderProfitLoss === "function") {
+          renderProfitLoss();
         } else if (activeView === "dashboard" && typeof renderDashboard === "function") {
           renderDashboard();
         }
@@ -10232,7 +10314,9 @@ window.reloadTransferDialogData = reloadTransferDialogData;
               break;
             case "INVENTORY_UPDATED":
               cachedInventory = [];
+              cachedProfitLossData = null;
               if (activeView === "inventory") renderInventory();
+              else if (activeView === "profit_loss" && typeof renderProfitLoss === "function") renderProfitLoss();
               break;
             case "FINANCIAL_UPDATED":
               cachedProfitLossData = null;

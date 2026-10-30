@@ -263,35 +263,36 @@ def get_drawer_summary(
     # Cash in drawer is a physical cash asset; separating them prevents double-counting.
     overall_income_val = Decimal(str(all_time_income))
 
-    # Authoritative manager safe balance from cashier cashouts minus admin remittances
-    all_cashouts = db.query(models.ShiftCashMovement).filter(
-        models.ShiftCashMovement.tenant_id == tenant_id,
-        models.ShiftCashMovement.type == "PAID_OUT"
+    # Authoritative manager safe balance from cashier cashouts minus admin remittances (single lightweight column query)
+    mov_records = db.query(
+        models.ShiftCashMovement.type,
+        models.ShiftCashMovement.amount,
+        models.ShiftCashMovement.reason
+    ).filter(
+        models.ShiftCashMovement.tenant_id == tenant_id
     ).all()
 
-    admin_transfers_sum = sum((
-        Decimal(str(m.amount)) for m in all_cashouts 
-        if 'admin' in (m.reason or '').lower() and not any(k in (m.reason or '').lower() for k in ['cancel', 'revers', 'void', 'reject'])
-    ), Decimal("0.00"))
+    admin_transfers_sum = Decimal("0.00")
+    admin_reversals_sum = Decimal("0.00")
+    cashier_cashouts_sum = Decimal("0.00")
 
-    admin_reversals_in = db.query(models.ShiftCashMovement).filter(
-        models.ShiftCashMovement.tenant_id == tenant_id,
-        models.ShiftCashMovement.type == "PAID_IN"
-    ).all()
-    admin_reversals_sum = sum((
-        Decimal(str(m.amount)) for m in admin_reversals_in
-        if 'admin' in (m.reason or '').lower() and any(k in (m.reason or '').lower() for k in ['revers', 'return', 'refund', 'cancel'])
-    ), Decimal("0.00"))
+    for m_type, m_amt, m_reason in mov_records:
+        r_low = (m_reason or '').lower()
+        amt_dec = Decimal(str(m_amt or 0))
+        if m_type == "PAID_OUT":
+            if 'admin' in r_low and not any(k in r_low for k in ['cancel', 'revers', 'void', 'reject']):
+                admin_transfers_sum += amt_dec
+            elif (
+                'admin' not in r_low
+                and not any(term in r_low for term in ['drawer edited', 'modal', 'adjustment', 'shortage', 'overage'])
+                and not any(term in r_low for term in ['cancel', 'revers', 'void', 'reject'])
+            ):
+                cashier_cashouts_sum += amt_dec
+        elif m_type == "PAID_IN":
+            if 'admin' in r_low and any(k in r_low for k in ['revers', 'return', 'refund', 'cancel']):
+                admin_reversals_sum += amt_dec
 
     total_transferred_to_admin = max(Decimal("0.00"), admin_transfers_sum - admin_reversals_sum)
-
-    cashier_cashouts_sum = sum((
-        Decimal(str(m.amount)) for m in all_cashouts
-        if 'admin' not in (m.reason or '').lower()
-        and not any(term in (m.reason or '').lower() for term in ['drawer edited', 'modal', 'adjustment', 'shortage', 'overage'])
-        and not any(term in (m.reason or '').lower() for term in ['cancel', 'revers', 'void', 'reject'])
-    ), Decimal("0.00"))
-
     manager_safe_cash = max(Decimal("0.00"), cashier_cashouts_sum - total_transferred_to_admin)
 
     return {
@@ -413,32 +414,20 @@ def cashout_shift(
         func.lower(models.Payment.payment_method).like("cash%")
     ).scalar() or Decimal("0.0")
 
-    paid_in = db.query(
+    paid_in = Decimal("0.0")
+    paid_out = Decimal("0.0")
+    for mtype, msum in db.query(
+        models.ShiftCashMovement.type,
         func.coalesce(func.sum(models.ShiftCashMovement.amount), 0)
     ).filter(
-        models.ShiftCashMovement.shift_id == shift.id,
-        models.ShiftCashMovement.type == "PAID_IN"
-    ).scalar() or Decimal("0.0")
+        models.ShiftCashMovement.shift_id == shift.id
+    ).group_by(models.ShiftCashMovement.type).all():
+        if mtype == "PAID_IN":
+            paid_in = Decimal(str(msum or 0))
+        elif mtype == "PAID_OUT":
+            paid_out = Decimal(str(msum or 0))
 
-    paid_out = db.query(
-        func.coalesce(func.sum(models.ShiftCashMovement.amount), 0)
-    ).filter(
-        models.ShiftCashMovement.shift_id == shift.id,
-        models.ShiftCashMovement.type == "PAID_OUT"
-    ).scalar() or Decimal("0.0")
-
-    current_expected = Decimal(str(shift.start_cash or 0)) + Decimal(str(cash_sales)) + Decimal(str(paid_in)) - Decimal(str(paid_out))
-
-    non_cash_sales = db.query(
-        func.coalesce(func.sum(models.Payment.amount), 0)
-    ).join(models.Transaction).filter(
-        models.Transaction.shift_id == shift.id,
-        models.Payment.status == "completed",
-        ~models.Transaction.status.in_(["cancelled", "rejected"]),
-        ~func.lower(models.Payment.payment_method).like("cash%")
-    ).scalar() or Decimal("0.0")
-
-    shift_total_sales = cash_sales + non_cash_sales
+    current_expected = Decimal(str(shift.start_cash or 0)) + Decimal(str(cash_sales)) + paid_in - paid_out
 
     if amount <= Decimal("0.0"):
         amount = current_expected if current_expected > Decimal("0.0") else Decimal("0.0")

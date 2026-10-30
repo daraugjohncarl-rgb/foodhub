@@ -157,6 +157,11 @@ def create_user(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Branch Admins cannot create ADMIN or SUPER_ADMIN accounts. Only Manager, Cashier, Inventory, or Kitchen accounts are allowed."
             )
+        if current_user.role == models.UserRole.MANAGER and user_in.role == models.UserRole.MANAGER:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Managers cannot create other Manager accounts."
+            )
         if not current_user.tenant_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is not assigned to a tenant.")
         assigned_tenant_id = current_user.tenant_id  # never taken from the request body
