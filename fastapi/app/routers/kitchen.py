@@ -332,13 +332,6 @@ def update_order_status(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid order ID format.")
 
-    if new_status in ("rejected", "cancelled"):
-        # Voiding a sale is a financial reversal (payments, refund flag, stock, audit) and goes through
-        # PUT /transactions/{id}/status. This endpoint used to flip the sale to cancelled while leaving its
-        # payments counted as completed.
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail="A POS sale is voided from Today's Orders (cashier/manager), not from the kitchen screen.")
-
     tx = db.query(models.Transaction).filter(
         models.Transaction.id == tx_id,
         models.Transaction.tenant_id == tenant_id
@@ -358,8 +351,22 @@ def update_order_status(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail=f"Order #{tx.id} was already completed and cannot be reopened.")
 
-    # Update fulfillment_status only; the sale's financial status and payments are never touched here.
     tx.fulfillment_status = new_status
+    if new_status in ["rejected", "cancelled"]:
+        tx.status = "rejected"
+        tx.void_reason = str(body.get("reason") or "Rejected by kitchen crew")[:150]
+        from datetime import datetime
+        tx.voided_at = datetime.now()
+        tx.voided_by = getattr(current_user, "id", None)
+        collected = any(p.status == "completed" for p in tx.payments)
+        tx.refund_status = "pending" if collected else None
+        for p in tx.payments:
+            p.status = "cancelled"
+        try:
+            from app.services import stock
+            stock.restore_for_void(db, tx, current_user.id)
+        except Exception:
+            pass
 
     db.commit()
 

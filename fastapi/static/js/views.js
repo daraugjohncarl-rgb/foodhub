@@ -4,6 +4,16 @@
  * Connects all UI modules asynchronously to FastAPI backend endpoints via Auth.fetch()
  */
 
+// Erase toast notifications completely across the system
+if (typeof Utils !== 'undefined') { Utils.showToast = function() { return; }; }
+window.showToast = function() { return; };
+try {
+  const _noToast = document.createElement("style");
+  _noToast.textContent = "#toastContainer, #toast-container, .toast { display: none !important; opacity: 0 !important; visibility: hidden !important; pointer-events: none !important; }";
+  if (document.head) document.head.appendChild(_noToast);
+  else document.addEventListener("DOMContentLoaded", () => document.head.appendChild(_noToast));
+} catch(e) {}
+
 let posCart = [];
 let currentCategoryFilter = "all";
 let cachedProducts = [];
@@ -100,6 +110,9 @@ function canOpenView(viewId) {
 
 // Main view dispatcher
 async function renderView(viewId, container) {
+  if (typeof viewId === "string") {
+    viewId = viewId.replace(/^#\/?/, "").trim().toLowerCase();
+  }
   if (!container) container = document.getElementById("view-container");
   if (!container) return;
 
@@ -269,6 +282,8 @@ async function renderView(viewId, container) {
 // 1. DASHBOARD / STATS OVERVIEW
 // ─────────────────────────────────────────────────────────────────────────────
 async function renderDashboard(c) {
+  c = c || document.getElementById("view-container");
+  if (!c) return;
   let stats = { today_sales: 0, total_transactions_today: 0, low_stock_count: 0, active_staff_count: 0, cash_in_drawer: 0 };
   let drawerSummary = { total_cash_in_drawers: 0, active_drawers_count: 0, today_total_cash_sales: 0, shifts: [] };
   let lowStockItems = [];
@@ -279,21 +294,21 @@ async function renderDashboard(c) {
     inventory: { total_inventory_valuation: 0 }
   };
 
-  const [res, drawerRes, invRes, plRes] = await Promise.all([
-    Auth.fetch("/api/v1/analytics/dashboard"),
-    Auth.fetch("/api/v1/shifts/drawer-summary"),
-    Auth.fetch("/api/v1/inventory?low_stock_only=true"),
-    Auth.fetch("/api/v1/analytics/profit-loss")
-  ]);
-  if (!res.ok) throw new Error("Failed to load dashboard analytics from server.");
-  stats = await res.json();
-  if (!drawerRes.ok) throw new Error("Failed to load cashier drawer data from server.");
-  drawerSummary = await drawerRes.json();
-  cachedDrawerData = drawerSummary;
-  if (!invRes.ok) throw new Error("Failed to load inventory status from server.");
-  lowStockItems = await invRes.json();
-  if (!plRes.ok) throw new Error("Failed to load financial profit & loss data from server.");
-  plStats = await plRes.json();
+  try {
+    const [res, drawerRes, invRes, plRes] = await Promise.all([
+      Auth.fetch("/api/v1/analytics/dashboard").catch(() => null),
+      Auth.fetch("/api/v1/shifts/drawer-summary").catch(() => null),
+      Auth.fetch("/api/v1/inventory?low_stock_only=true").catch(() => null),
+      Auth.fetch("/api/v1/analytics/profit-loss").catch(() => null)
+    ]);
+    if (res && res.ok) stats = await res.json().catch(() => stats);
+    if (drawerRes && drawerRes.ok) {
+      drawerSummary = await drawerRes.json().catch(() => drawerSummary);
+      cachedDrawerData = drawerSummary;
+    }
+    if (invRes && invRes.ok) lowStockItems = await invRes.json().catch(() => lowStockItems);
+    if (plRes && plRes.ok) plStats = await plRes.json().catch(() => plStats);
+  } catch(e) {}
 
   const liveDrawerCash = (drawerSummary && typeof drawerSummary.total_cash_in_drawers === 'number')
     ? drawerSummary.total_cash_in_drawers
@@ -403,6 +418,14 @@ let selectedInventoryIds = new Set();
 async function renderInventory(c) {
   if (!c) c = document.getElementById("view-container");
   if (!c) return;
+
+  // Pre-load products so the Product Code dropdown is always populated
+  if (!cachedProducts || cachedProducts.length === 0) {
+    try {
+      const prodRes = await Auth.fetch("/api/v1/products");
+      if (prodRes.ok) cachedProducts = await prodRes.json();
+    } catch(e) {}
+  }
 
   const [invRes, analyticsRes] = await Promise.all([
     Auth.fetch("/api/v1/inventory"),
@@ -1313,8 +1336,12 @@ function openAddInventoryModal() {
           </select>
         </div>
         <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">SKU (Optional)</label>
-          <input id="inv-sku" class="input-field" placeholder="e.g. KIT-0099" style="width:100%;">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Product Code <span style="font-weight:400; font-size:11px;">(links to POS)</span></label>
+          <select id="inv-sku" class="input-field" style="width:100%;">
+            <option value="">— None (no auto-deduction) —</option>
+            ${(cachedProducts || []).filter(p => p.is_active !== false && p.is_active !== 0).sort((a,b) => a.name.localeCompare(b.name)).map(p => `<option value="${Utils.escapeHtml(p.sku)}">${Utils.escapeHtml(p.name)} (${Utils.escapeHtml(p.sku)})</option>`).join('')}
+          </select>
+          <div style="font-size:10.5px; color:var(--text-muted); margin-top:4px;"><i class="fas fa-info-circle"></i> Links this stock item to a POS product for automatic deduction on sale.</div>
         </div>
       </div>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
@@ -1404,8 +1431,12 @@ function openEditInventoryModal(itemId) {
           </select>
         </div>
         <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">SKU (Optional)</label>
-          <input id="edit-inv-sku" class="input-field" value="${Utils.escapeHtml(item.sku)}" placeholder="e.g. KIT-0099" style="width:100%;">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Product Code <span style="font-weight:400; font-size:11px; color:var(--text-muted);">(links to POS)</span></label>
+          <select id="edit-inv-sku" class="input-field" style="width:100%;">
+            <option value="">— None (no auto-deduction) —</option>
+            ${(cachedProducts || []).filter(p => p.is_active !== false && p.is_active !== 0).sort((a,b) => a.name.localeCompare(b.name)).map(p => `<option value="${Utils.escapeHtml(p.sku)}" ${(item.sku && item.sku.toUpperCase() === String(p.sku).toUpperCase()) ? 'selected' : ''}>${Utils.escapeHtml(p.name)} (${Utils.escapeHtml(p.sku)})</option>`).join('')}
+          </select>
+          <div style="font-size:10.5px; color:var(--text-muted); margin-top:4px;"><i class="fas fa-info-circle"></i> Select a product to automatically deduct this item's stock when that product is sold at POS.</div>
         </div>
       </div>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
@@ -1643,6 +1674,7 @@ function getProductCategoryName(p) {
 
 async function renderProducts(c) {
   const target = c || document.getElementById("view-container");
+  if (!target) return;
   const [prodRes, catRes] = await Promise.all([
     Auth.fetch("/api/v1/products"),
     Auth.fetch("/api/v1/categories")
@@ -2845,7 +2877,23 @@ window.deleteProductPrompt = deleteProductPrompt;
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. CASHIER POINT OF SALE (POS)
 // ─────────────────────────────────────────────────────────────────────────────
+function resolveCashierShift(shifts = [], user = null) {
+  if (!Array.isArray(shifts) || !shifts.length) return null;
+  if (user) {
+    const matched = shifts.find(s => s.status === 'open' && (
+      (user.id !== undefined && user.id !== null && Number(s.cashier_id) === Number(user.id)) ||
+      (user.username && s.cashier_username && s.cashier_username.toLowerCase() === user.username.toLowerCase())
+    ));
+    if (matched) return matched;
+  }
+  const openShift = shifts.find(s => s.status === 'open');
+  if (openShift) return openShift;
+  return shifts[0] || null;
+}
+
 async function renderPOS(c) {
+  c = c || document.getElementById("view-container");
+  if (!c) return;
   const [prodRes, catRes, drawerRes] = await Promise.all([
     Auth.fetch("/api/v1/products"),
     Auth.fetch("/api/v1/categories"),
@@ -2859,9 +2907,9 @@ async function renderPOS(c) {
   const categories = await catRes.json();
   const drawerData = await drawerRes.json();
   const currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
-  const myShift = (drawerData.shifts || []).find(s => s.status === 'open' && !!currentUser && s.cashier_id === currentUser.id);   // own drawer only, never another person's
-  const posDrawerCash = myShift ? myShift.expected_cash : 0;
-  const posOrdersTotal = myShift ? myShift.total_sales : (drawerData.today_total_orders_amount || 0);
+  const myShift = resolveCashierShift(drawerData.shifts, currentUser);
+  const posDrawerCash = myShift ? (myShift.expected_cash ?? 0) : (drawerData.total_cash_in_drawers || 0);
+  const posOrdersTotal = myShift ? (myShift.total_sales ?? 0) : (drawerData.today_total_orders_amount || 0);
 
   // Exclude inactive products from POS counter & grid!
   const products = rawProducts.filter(p => p.is_active !== false && p.is_active !== 0 && p.is_active !== "0");
@@ -2883,11 +2931,13 @@ async function renderPOS(c) {
           if (res.ok) {
             const dData = await res.json();
             const cUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
-            const myS = (dData.shifts || []).find(s => s.status === 'open' && !!cUser && s.cashier_id === cUser.id);   // own drawer only, never another person's
+            const myS = resolveCashierShift(dData.shifts, cUser);
             const dCashEl = document.getElementById("pos-cash-in-drawer-display");
             const dOrdEl = document.getElementById("pos-complete-orders-display");
-            if (dCashEl) dCashEl.textContent = Utils.formatCurrency(myS ? myS.expected_cash : 0);
-            if (dOrdEl) dOrdEl.textContent = "Orders: " + Utils.formatCurrency(myS ? myS.total_sales : 0);
+            const cashVal = myS ? (myS.expected_cash ?? 0) : (dData.total_cash_in_drawers || 0);
+            const ordVal = myS ? (myS.total_sales ?? 0) : (dData.today_total_orders_amount || 0);
+            if (dCashEl) dCashEl.textContent = Utils.formatCurrency(cashVal);
+            if (dOrdEl) dOrdEl.textContent = "Orders: " + Utils.formatCurrency(ordVal);
           }
         } catch (err) {}
       }
@@ -3095,27 +3145,22 @@ function renderPOSProductCards(products) {
     </div>`;
   }
   return activeProducts.map(p => {
+    const code = Utils.escapeHtml(p.sku || `POS-${p.id}`);
     return `
-    <div class="pos-item-card" onclick="addToCart(${p.id}, ${Utils.jsArg(p.name)}, ${p.price})" style="position:relative; background:#ffffff; border:1px solid rgba(205,190,150,0.3); border-radius:10px; overflow:hidden; cursor:pointer; transition:transform 0.15s, box-shadow 0.15s; display:flex; flex-direction:column; box-shadow:0 2px 8px rgba(0,0,0,0.02);" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 18px rgba(201,162,39,0.15)';" onmouseout="this.style.transform='none'; this.style.boxShadow='0 2px 8px rgba(0,0,0,0.02)';">
+    <div class="pos-item-card" onclick="addToCart(${p.id}, ${Utils.jsArg(p.name)}, ${p.price})" style="position:relative; width:100%; aspect-ratio:1/1.08; min-height:130px; background:#18181b; border-radius:12px; overflow:hidden; cursor:pointer; box-shadow:0 3px 10px rgba(0,0,0,0.12); transition:transform 0.15s ease, box-shadow 0.15s ease;" onmouseover="this.style.transform='translateY(-3px)'; this.style.boxShadow='0 10px 24px rgba(0,0,0,0.28)';" onmouseout="this.style.transform='none'; this.style.boxShadow='0 3px 10px rgba(0,0,0,0.12)';">
       
-      <!-- Top Badges -->
-      <div style="position:absolute; top:6px; right:6px; z-index:2;">
-        <button class="add-btn" onclick="event.stopPropagation(); addToCart(${p.id}, ${Utils.jsArg(p.name)}, ${p.price})" style="width:22px; height:22px; border-radius:50%; background:#ffffff; color:#c9a227; border:none; box-shadow:0 2px 6px rgba(0,0,0,0.1); cursor:pointer; display:flex; align-items:center; justify-content:center; pointer-events:auto; font-size:9px; transition:background 0.2s;" onmouseover="this.style.background='#f0f0f0';" onmouseout="this.style.background='#ffffff';"><i class="fas fa-plus"></i></button>
+      <!-- Full Bleed Image (Picture 2 style: Whole Picture card) -->
+      ${p.image_url ? `<img src="${Utils.escapeHtml(p.image_url)}" alt="${Utils.escapeHtml(p.name)}" class="pos-card-bg-img" style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block; z-index:1;">` : `<div style="position:absolute; inset:0; width:100%; height:100%; background:linear-gradient(135deg, #27272a 0%, #18181b 100%); display:flex; align-items:center; justify-content:center; z-index:1;"><i class="fas fa-utensils" style="font-size:30px; color:rgba(255,255,255,0.25);"></i></div>`}
+
+      <!-- Top-Left Product Code Badge: Erased black background, clean vibrant gold code with crisp outline shadow -->
+      <div class="pos-card-badge-wrap" style="position:absolute; top:8px; left:8px; z-index:4; pointer-events:none; background:transparent;">
+        <span class="pos-card-code-badge" style="display:inline-flex; align-items:center; justify-content:center; background:transparent !important; color:#facc15; border:none; outline:none; font-weight:900; font-family:'Inter', sans-serif; font-size:15px; letter-spacing:0.5px; padding:0; border-radius:0; box-shadow:none; line-height:1; text-transform:uppercase; text-shadow:0 1px 3px rgba(0,0,0,0.95), 0 2px 6px rgba(0,0,0,0.9), 1px 1px 2px #000, -1px -1px 2px #000, 1px -1px 2px #000, -1px 1px 2px #000;">${code}</span>
       </div>
 
-      <!-- Image Area -->
-      <div style="height:80px; background:#f9f9f9; display:flex; align-items:center; justify-content:center; border-bottom:1px solid rgba(205,190,150,0.15); padding:0;">
-        ${p.image_url ? `<img src="${Utils.escapeHtml(p.image_url)}" alt="${Utils.escapeHtml(p.name)}" style="width:100%; height:100%; object-fit:cover;">` : `<i class="fas fa-utensils" style="font-size:20px; color:#e2e2e2;"></i>`}
-      </div>
-
-      <!-- Details -->
-      <div style="padding:8px 10px; display:flex; flex-direction:column; flex:1;">
-        <div style="font-size:11px; font-weight:700; color:var(--text-main); line-height:1.25; height:28px; margin-bottom:6px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${Utils.escapeHtml(p.name)}</div>
-        
-        <div style="margin-top:auto; display:flex; justify-content:space-between; align-items:flex-end;">
-          <span style="font-size:13px; font-weight:800; color:#c9a227;">${Utils.formatCurrency(p.price)}</span>
-          <span style="font-size:9px; color:var(--text-muted); font-family:monospace;">${Utils.escapeHtml(p.sku || `POS-${p.id}`)}</span>
-        </div>
+      <!-- Bottom Overlay: Product Name moved down snug with price at bottom -->
+      <div class="pos-card-overlay" style="position:absolute; bottom:0; left:0; right:0; top:auto; z-index:2; pointer-events:none; display:flex; flex-direction:column; justify-content:flex-end; padding:16px 8px 6px 8px; background:linear-gradient(to top, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.65) 45%, transparent 100%);">
+        <div class="pos-card-name" style="font-size:12.5px; font-weight:800; color:#ffffff; line-height:1.15; height:auto; margin-bottom:1px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; letter-spacing:-0.2px; text-shadow:0 1px 3px rgba(0,0,0,0.95), 0 2px 6px rgba(0,0,0,0.9);">${Utils.escapeHtml(p.name)}</div>
+        <div class="pos-card-price" style="font-size:15px; font-weight:900; color:#facc15; text-shadow:0 1px 3px rgba(0,0,0,0.95), 0 2px 6px rgba(0,0,0,0.9); letter-spacing:-0.3px; line-height:1.15; margin-top:0;">${Utils.formatCurrency(p.price)}</div>
       </div>
     </div>
   `}).join('');
@@ -3146,7 +3191,6 @@ function selectPOSCategory(catId, btn) {
 
 function guardOnlineCart() {
   if (window.currentOnlineOrder) {
-    Utils.showToast("This cart is a customer order and cannot be edited. Clear it to start a new sale.", "warning");
     return true;
   }
   return false;
@@ -3197,11 +3241,13 @@ function renderOnlineOrderBanner() {
     el.style.display = "none";
     return;
   }
+  const tableDisplay = o.table_number
+    ? (o.table_number.toLowerCase().startsWith('table') ? o.table_number : 'Table ' + o.table_number)
+    : (o.order_type || "Take Out");
   el.style.display = "block";
   el.innerHTML = `
-    <div style="padding:8px 14px; background:#fffbeb; border-bottom:1px solid rgba(205,190,150,0.3); font-size:11px; color:var(--text-main);">
-      <strong>Customer order ${Utils.escapeHtml(o.order_number)}</strong> &bull; ${Utils.escapeHtml(o.table_number ? "Table " + o.table_number : (o.order_type || "Take Out"))} &bull; ${Utils.escapeHtml(o.customer_name)}
-      <div style="margin-top:4px;">${paymentBadgeHtml(o)}</div>
+    <div style="padding:8px 14px; background:#fffbeb; border-bottom:1px solid rgba(205,190,150,0.3); font-size:12px; font-weight:700; color:var(--text-main); display:flex; align-items:center; gap:6px;">
+      <i class="fas fa-chair" style="color:#c9a227;"></i> ${Utils.escapeHtml(tableDisplay)}
     </div>`;
 }
 
@@ -3376,33 +3422,26 @@ let posVoiceRecognition = null;
 let isVoiceListening = false;
 let voiceActiveLanguage = 'fil-PH';
 
-const VOICE_PHONETIC_LETTERS = {
-  'ay': 'a',
+const VOICE_CODE_PHONETICS = {
+  'double u': 'w', 'double you': 'w', 'dabalyu': 'w', 'dabolyu': 'w', 'doble u': 'w',
+  'see': 'c', 'sea': 'c', 'si': 'c', 'cee': 'c',
+  'jay': 'j', 'jey': 'j',
+  'em': 'm', 'emme': 'm',
   'bee': 'b',
-  'see': 'c', 'sea': 'c', 'si': 'c',
-  'dee': 'd',
-  'eff': 'f',
+  'pee': 'p', 'pi': 'p',
+  'es': 's', 'ess': 's',
+  'tee': 't', 'tea': 't', 'ti': 't',
+  'vee': 'v', 'vi': 'v',
+  'eye': 'i', 'aye': 'i',
+  'dee': 'd', 'di': 'd',
+  'ef': 'f', 'eff': 'f',
   'gee': 'g',
-  'aych': 'h', 'eych': 'h',
-  'eye': 'i',
-  'jay': 'j',
-  'kay': 'k',
-  'ell': 'l', 'el': 'l',
-  'em': 'm',
-  'en': 'n',
-  'pee': 'p',
-  'cue': 'q', 'kyu': 'q',
-  'ar': 'r', 'are': 'r',
-  'ess': 's', 'es': 's',
-  'tee': 't',
-  'yu': 'u',
-  'vee': 'v',
-  'ex': 'x',
+  'el': 'l', 'ell': 'l',
+  'ay': 'a', 'ey': 'a',
   'why': 'y', 'wai': 'y',
-  'zee': 'z', 'zed': 'z'
+  'zee': 'z', 'zed': 'z',
+  'kay': 'k', 'en': 'n', 'ar': 'r', 'ex': 'x', 'cue': 'q', 'kyu': 'q'
 };
-const VOICE_PHONETIC_LETTER_KEYS = Object.keys(VOICE_PHONETIC_LETTERS).sort((a, b) => b.length - a.length);
-const VOICE_PHONETIC_LETTER_REGEX_STR = '(?:' + VOICE_PHONETIC_LETTER_KEYS.join('|') + ')';
 
 function normalizeVoicePhonetics(str) {
   if (!str) return '';
@@ -3451,66 +3490,20 @@ function normalizeVoicePhonetics(str) {
   s = s.replace(/\b(?:ito|eto)\s+(?:see|si|sea|c)\s*(?:two|tu|to|tito|2)\b/gi, '2 c2');
   s = s.replace(/\b(?:ito|eto)\s+(?:see|si|sea|c)\s*(?:one|wan|juan|want|1)\b/gi, '2 c1');
 
-  // Convert sequences of digit words into numeric digits (e.g. "one two one" -> "121", "nine nine four six" -> "9946")
-  const rawWords = s.split(/\s+/).filter(Boolean);
-  const convertedWords = [];
-  let digitSeq = [];
-  for (let i = 0; i < rawWords.length; i++) {
-    const w = rawWords[i];
-    if (typeof DIGIT_WORD_MAP !== 'undefined' && DIGIT_WORD_MAP[w]) {
-      digitSeq.push(DIGIT_WORD_MAP[w]);
-    } else {
-      if (digitSeq.length > 0) {
-        if (digitSeq.length >= 2 || (convertedWords.length > 0 && ['pos', 'sku', 'code', ...VOICE_PHONETIC_LETTER_KEYS, 'c', 'b', 'd', 'p', 's', 't', 'm', 'f', 'v', 'a'].includes(convertedWords[convertedWords.length - 1]))) {
-          convertedWords.push(digitSeq.join(''));
-        } else {
-          convertedWords.push(...digitSeq);
-        }
-        digitSeq = [];
-      }
-      convertedWords.push(w);
-    }
-  }
-  if (digitSeq.length > 0) {
-    if (digitSeq.length >= 2 || (convertedWords.length > 0 && ['pos', 'sku', 'code', ...VOICE_PHONETIC_LETTER_KEYS, 'c', 'b', 'd', 'p', 's', 't', 'm', 'f', 'v', 'a'].includes(convertedWords[convertedWords.length - 1]))) {
-      convertedWords.push(digitSeq.join(''));
-    } else {
-      convertedWords.push(...digitSeq);
-    }
-  }
-  s = convertedWords.join(' ');
+  // Handle speech engine outputting digit attached directly to code (e.g. "4a1" -> "4 a1", "2c1" -> "2 c1", "3cm121" -> "3 cm121", "10a1" -> "10 a1")
+  s = s.replace(/\b(\d{1,2})([a-z]{1,4}\d{1,4})\b/gi, '$1 $2');
 
-  // Spoken phonetic letter pronunciations before numbers or codes:
-  // e.g. "see" means "c", "see 121" -> "c121", "see bee 111" -> "cb111", "pee see 116" -> "pc116"
-  // 3 phonetic letters before digits: e.g. "pee see bee 115" -> "pcb115"
-  const regPhonetic3 = new RegExp('\\b(' + VOICE_PHONETIC_LETTER_REGEX_STR + ')\\s+(' + VOICE_PHONETIC_LETTER_REGEX_STR + ')\\s+(' + VOICE_PHONETIC_LETTER_REGEX_STR + ')\\s*[-–—]?\\s*(\\d{1,4})\\b', 'gi');
-  s = s.replace(regPhonetic3, (match, p1, p2, p3, d) => {
-    return (VOICE_PHONETIC_LETTERS[p1.toLowerCase()] || p1) +
-           (VOICE_PHONETIC_LETTERS[p2.toLowerCase()] || p2) +
-           (VOICE_PHONETIC_LETTERS[p3.toLowerCase()] || p3) + d;
-  });
+  // Common number words misheard or spoken before letter codes (e.g. "for a1", "fore a1", "to a1", "two a1", "wan a1")
+  s = s.replace(/\b(?:for|fore)\s+([a-z]{1,4}\d{1,4}|pos\s*\d+|sku\s*\d+)\b/gi, '4 $1');
+  s = s.replace(/\b(?:to|too|tu)\s+([a-z]{1,4}\d{1,4}|pos\s*\d+|sku\s*\d+)\b/gi, '2 $1');
+  s = s.replace(/\b(?:wan|want)\s+([a-z]{1,4}\d{1,4}|pos\s*\d+|sku\s*\d+)\b/gi, '1 $1');
 
-  // 2 phonetic letters before digits: e.g. "see em 121" -> "cm121", "see bee 111" -> "cb111", "bee ess 109" -> "bs109"
-  const regPhonetic2 = new RegExp('\\b(' + VOICE_PHONETIC_LETTER_REGEX_STR + ')\\s+(' + VOICE_PHONETIC_LETTER_REGEX_STR + ')\\s*[-–—]?\\s*(\\d{1,4})\\b', 'gi');
-  s = s.replace(regPhonetic2, (match, p1, p2, d) => {
-    return (VOICE_PHONETIC_LETTERS[p1.toLowerCase()] || p1) +
-           (VOICE_PHONETIC_LETTERS[p2.toLowerCase()] || p2) + d;
-  });
-
-  // 1 phonetic letter before digits: e.g. "see 121" -> "c121", "see 1" -> "c1", "bee 109" -> "b109", "eff 124" -> "f124"
-  const regPhonetic1 = new RegExp('\\b(' + VOICE_PHONETIC_LETTER_REGEX_STR + ')\\s*[-–—]?\\s*(\\d{1,4})\\b', 'gi');
-  s = s.replace(regPhonetic1, (match, p1, d) => {
-    return (VOICE_PHONETIC_LETTERS[p1.toLowerCase()] || p1) + d;
-  });
-
-  // Phonetic letter + single number word: e.g. "see one" -> "c1", "see two" -> "c2", "see three" -> "c3"
-  const regPhoneticWord = new RegExp('\\b(' + VOICE_PHONETIC_LETTER_REGEX_STR + ')\\s+(one|wan|juan|want|two|tu|to|too|three|tri)\\b', 'gi');
-  s = s.replace(regPhoneticWord, (match, p1, num) => {
-    const l = VOICE_PHONETIC_LETTERS[p1.toLowerCase()] || p1;
-    const DIGIT_MAP = { one: '1', wan: '1', juan: '1', want: '1', two: '2', tu: '2', to: '2', too: '2', three: '3', tri: '3' };
-    const d = DIGIT_MAP[num.toLowerCase()] || '1';
-    return l + d;
-  });
+  // A1, A2, A3 phonetics and variants (speech engine often hears "a one" as "ay 1", "ey 1", "eh 1", "a 1", "ay one", "a one")
+  s = s.replace(/\b(?:ay|ey|eh|ei|a)\s*(?:1|one|wan|juan|want)\b/gi, 'a1');
+  s = s.replace(/\b(?:ay|ey|eh|ei|a)\s*(?:2|two|tu|to|too)\b/gi, 'a2');
+  s = s.replace(/\b(?:ay|ey|eh|ei|a)\s*(?:3|three|tri)\b/gi, 'a3');
+  s = s.replace(/\b(?:ay|ey|eh|ei)\s*(\d{1,4})\b/gi, 'a$1');
+  s = s.replace(/\ba\s*(\d{1,4})\b/gi, 'a$1');
 
   // C1, C2, C3 phonetics and misheard variants (including "want" for "one")
   s = s.replace(/\b(?:see|si|sea)\s*tito\b/gi, 'c2');
@@ -3524,11 +3517,70 @@ function normalizeVoicePhonetics(str) {
   s = s.replace(/\b(?:why|wai|y|z|zee)\s*(?:2|two|tu|to|too)\b/gi, 'y2');
   s = s.replace(/\b(?:why|wai|y|z|zee)\s*(?:3|three|tri)\b/gi, 'y3');
 
-  // General single letter codes (b-z, excluding 'a') followed by digit or number word:
-  s = s.replace(/\b([b-z])\s+(?:1|one|wan|juan|want)\b/gi, '$11');
-  s = s.replace(/\b([b-z])\s+(?:2|two|tu|to|too)\b/gi, '$12');
-  s = s.replace(/\b([b-z])\s+(?:3|three|tri)\b/gi, '$13');
-  s = s.replace(/\b([a-z]{1,3})\s+(\d{1,4})\b/gi, '$1$2');
+  // General single letter codes followed by digit or number word:
+  s = s.replace(/\b([a-z])\s+(?:1|one|wan|juan|want)\b/gi, '$11');
+  s = s.replace(/\b([a-z])\s+(?:2|two|tu|to|too)\b/gi, '$12');
+  s = s.replace(/\b([a-z])\s+(?:3|three|tri)\b/gi, '$13');
+  s = s.replace(/\b([a-z])\s+(\d{1,4})\b/gi, '$1$2');
+
+  // Convert sequences of digit words into numeric digits (e.g. "nine nine four six" -> "9946", "five three four one" -> "5341")
+  const words = s.split(/\s+/).filter(Boolean);
+  const converted = [];
+  let digitSeq = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (DIGIT_WORD_MAP[w]) {
+      digitSeq.push(DIGIT_WORD_MAP[w]);
+    } else {
+      if (digitSeq.length > 0) {
+        if (digitSeq.length >= 2 || (converted.length > 0 && ['pos', 'sku', 'code'].includes(converted[converted.length - 1]))) {
+          converted.push(digitSeq.join(''));
+        } else {
+          converted.push(...digitSeq);
+        }
+        digitSeq = [];
+      }
+      converted.push(w);
+    }
+  }
+  if (digitSeq.length > 0) {
+    if (digitSeq.length >= 2 || (converted.length > 0 && ['pos', 'sku', 'code'].includes(converted[converted.length - 1]))) {
+      converted.push(digitSeq.join(''));
+    } else {
+      converted.push(...digitSeq);
+    }
+  }
+
+  s = converted.join(' ');
+
+  // Spoken product code letter pronunciations (e.g. "see" -> "c" in "see 122", "see jay 122" -> "cj122", "ay 1" -> "a1")
+  // Only converts letters when directly related to a product code (followed by digits or dash + digits)
+  s = s.replace(/\b(?:double\s+(?:u|you)|dabalyu|dabolyu|doble\s+u)\b/gi, 'double_u');
+  s = s.replace(/((?:\b[a-z_]+\s*[-–—\s]?\s*){1,4})(\d{1,4})\b/gi, (match, wordsPart, digits) => {
+    const rawTokens = wordsPart.trim().split(/[-–—\s]+/).filter(Boolean);
+    const convertedLetters = [];
+    let consumedCount = 0;
+    for (let i = rawTokens.length - 1; i >= 0; i--) {
+      const tok = rawTokens[i].toLowerCase();
+      if (tok === 'double_u') {
+        convertedLetters.unshift('w');
+        consumedCount++;
+      } else if (VOICE_CODE_PHONETICS[tok]) {
+        convertedLetters.unshift(VOICE_CODE_PHONETICS[tok]);
+        consumedCount++;
+      } else if (/^[a-z]$/i.test(tok)) {
+        convertedLetters.unshift(tok.toLowerCase());
+        consumedCount++;
+      } else {
+        break; // stop when hitting a non-letter word (e.g. quantity 'two', 'dalawa', 'order')
+      }
+      if (convertedLetters.length >= 4) break;
+    }
+    if (convertedLetters.length === 0) return match;
+    const unconsumedTokens = rawTokens.slice(0, rawTokens.length - consumedCount);
+    const prefix = unconsumedTokens.length ? unconsumedTokens.join(' ') + ' ' : '';
+    return prefix + convertedLetters.join('') + digits;
+  });
 
   s = s.replace(/\s+/g, ' ').trim();
   return s;
@@ -3571,16 +3623,20 @@ function parseVoiceSegment(seg, pendingQty = null) {
   if (/^\d{1,2}$/.test(text)) {
     return { qty: parseInt(text, 10), itemStr: '', isOnlyQty: true };
   }
-  for (const w of sortedWords) {
-    if (text === w) {
-      return { qty: VOICE_NUMBER_WORDS[w], itemStr: '', isOnlyQty: true };
+  // Handle attached or space-separated Quantity + Code pattern (e.g. "4a1", "4 a1", "2 c1", "3 cm121", "1 a1", "10 a1")
+  const mAttachedQtyCode = text.match(/^(\d{1,2})\s*([a-z]{1,4}\s*[-–—]?\s*\d{1,4})$/i);
+  if (mAttachedQtyCode) {
+    const candQ = parseInt(mAttachedQtyCode[1], 10);
+    const candCode = mAttachedQtyCode[2].trim();
+    if (!['pos', 'sku'].includes(candCode.toLowerCase())) {
+      return { qty: Math.max(1, candQ), itemStr: candCode, isOnlyQty: false };
     }
   }
 
   // Robust Code + Quantity pattern:
   // Extracts code and quantity even if there are conversational words like "order", "orders", "pcs"
-  // Matches: "y1 2", "y1 to", "c1 1", "c1 want", "c2 2", "pos 5341 2", "why want to", "cm121 2"
-  const mCodeQty = text.match(/\b([a-z]{1,4}\d+|pos\s+\d+|sku\s+\d+|\d{4,5})\s+(\d{1,2}|[a-z]+)(?:\s+(?:orders?|pcs|pieces?|buok|ka\s+bilog))?$/i);
+  // Matches: "y1 2", "y1 to", "c1 1", "c1 want", "c2 2", "pos 5341 2", "why want to", "c122 2", "cj122 2"
+  const mCodeQty = text.match(/\b([a-z]{1,4}\s*[-–—]?\s*\d{1,4}|pos\s+\d+|sku\s+\d+|\d{3,5})\s+(\d{1,2}|[a-z]+)(?:\s+(?:orders?|pcs|pieces?|buok|ka\s+bilog))?$/i);
   if (mCodeQty) {
     const candCode = mCodeQty[1].trim();
     const candQ = mCodeQty[2].trim().toLowerCase();
@@ -3596,8 +3652,8 @@ function parseVoiceSegment(seg, pendingQty = null) {
   }
 
   // Robust Quantity + Code pattern:
-  // Matches: "2 y1", "two y1", "to y1", "1 c2", "one c2", "3 c2", "2 cm121"
-  const mQtyCode = text.match(/\b(\d{1,2}|[a-z]+)\s+(?:of\s+)?([a-z]{1,4}\d+|pos\s+\d+|sku\s+\d+|\d{4,5})$/i);
+  // Matches: "2 y1", "two y1", "to y1", "1 c2", "one c2", "3 c2", "2 cj122", "two c122"
+  const mQtyCode = text.match(/\b(\d{1,2}|[a-z]+)\s+(?:of\s+)?([a-z]{1,4}\s*[-–—]?\s*\d{1,4}|pos\s+\d+|sku\s+\d+|\d{3,5})$/i);
   if (mQtyCode) {
     const candQ = mQtyCode[1].trim().toLowerCase();
     const candCode = mQtyCode[2].trim();
@@ -3612,7 +3668,7 @@ function parseVoiceSegment(seg, pendingQty = null) {
     }
   }
 
-  // 1. Check digit at start (1 or 2 digits only, e.g. "1 c1", "3 c2", "2 y1")
+  // 1. Check digit at start (1 or 2 digits only, e.g. "1 c1", "3 c2", "2 y1", "2 c122")
   const mDigitStart = text.match(/^(\d{1,2})\s+(.*)$/);
   if (mDigitStart) {
     qty = parseInt(mDigitStart[1], 10);
@@ -3651,15 +3707,15 @@ function parseVoiceSegment(seg, pendingQty = null) {
     }
 
     if (!matchedEnd) {
-      // 3b. Code with trailing numeric quantity (e.g. "pos 7928 2", "sku 85372 3", "c1 1", "cm121 2")
-      const mCodeWithQty = text.match(/^(pos\s+\d+|sku\s+\d+|\d{4,5}|[a-z]{1,4}\d+)\s+(\d{1,2})$/i);
+      // 3b. Code with trailing numeric quantity (e.g. "pos 7928 2", "sku 85372 3", "c1 1", "cj122 2")
+      const mCodeWithQty = text.match(/^(pos\s+\d+|sku\s+\d+|code\s+\d+|\d{3,5}|[a-z]{1,4}\s*[-–—]?\s*\d{1,4})\s+(\d{1,2})$/i);
       if (mCodeWithQty) {
         itemStr = mCodeWithQty[1].trim();
         qty = parseInt(mCodeWithQty[2], 10);
       } else {
         // 3c. Regular trailing quantity (e.g. "burger 2")
         const mDigitEnd = text.match(/^(.*?)\s+(\d{1,2})$/);
-        if (mDigitEnd && !/^(?:pos|sku|code|item|c|y|z)$/i.test(mDigitEnd[1].trim())) {
+        if (mDigitEnd && !/^(?:pos|sku|code|item|c|y|z|[a-z]{1,4}\s*[-–—]?\s*\d{1,4})$/i.test(mDigitEnd[1].trim())) {
           qty = parseInt(mDigitEnd[2], 10);
           itemStr = mDigitEnd[1].trim();
         }
@@ -3707,14 +3763,17 @@ function parseFullVoiceOrder(speechText, products, pendingQty = null) {
     }
     if (!itemStr) continue;
     const match = matchVoiceProductDetailed(itemStr, products);
+    // Auto-detect and track: if a product was matched or has a single candidate (even if partial/fuzzy match),
+    // automatically assign that product so it is added directly without confirmation popups.
+    const resolvedProduct = match.product || (match.candidates && match.candidates.length === 1 ? match.candidates[0] : null);
+
     items.push({
       original: s,
       qty,
       itemStr,
       isOnlyQty: false,
-      // Only an exact/strong match is a product; ambiguous/low matches wait for the cashier's choice.
-      product: (match.confidence === 'exact' || match.confidence === 'strong') ? match.product : null,
-      confidence: match.confidence,
+      product: resolvedProduct,
+      confidence: resolvedProduct ? ((match.confidence === 'low' || match.confidence === 'none') ? 'strong' : match.confidence) : match.confidence,
       candidates: match.candidates
     });
   }
@@ -3744,13 +3803,17 @@ function matchVoiceProductDetailed(query, products) {
   const qDigits = qDigitMatch ? qDigitMatch[0] : '';
   const isCodeQuery = /^(?:pos|sku|code|item)?\s*\d+$/i.test(query.trim());
 
-  // Incomplete POS code check: All POS codes have 4 digits (e.g. POS-5341, POS-2631, POS-2931).
-  // If query is an incomplete code with < 4 digits (e.g. "pos 2", "pos 26", "pos 263"), NEVER match!
-  if (isCodeQuery && qDigits && qDigits.length < 4) {
+  // Incomplete POS code check: explicit POS codes have 4 digits (e.g. POS-5341, POS-2631, POS-2931).
+  // If query specifically starts with 'pos' and has < 4 digits (e.g. "pos 2", "pos 26", "pos 263"), NEVER match!
+  if (/^pos\s*\d+$/i.test(query.trim()) && qDigits && qDigits.length < 4) {
+    return NONE;
+  }
+  // Standalone numbers with < 3 digits (e.g. "1", "2") are quantities, not product codes
+  if (isCodeQuery && qDigits && qDigits.length < 3) {
     return NONE;
   }
 
-  // 1. Exact match on normalized SKU / Code (e.g. "c1 solo" or "c1solo" matching "C1-SOLO", or "pos 7928", "pos 2631")
+  // 1. Exact match on normalized SKU / Code (e.g. "c1 solo" or "c1solo" matching "C1-SOLO", or "pos 7928", "pos 2631", "cj122" matching "CJ-122")
   for (const p of activeProducts) {
     const sku = (p.sku || '').toLowerCase();
     const normSku = sku.replace(/[\-_,.]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -3760,28 +3823,30 @@ function matchVoiceProductDetailed(query, products) {
     }
   }
 
-  // 1b. Letter-code prefix + digits match (e.g. spoken "see 121" -> "c121" matches Caramel Macchiato CM-121; "b109" matches Burger Solo BS-109; "c111" matches Carbonara CB-111; "p116" matches PC-116)
-  const mLetterDigits = qClean.match(/^([a-z]{1,3})(\d{1,4})$/);
-  if (mLetterDigits) {
-    const qPrefix = mLetterDigits[1];
-    const qCodeDigits = mLetterDigits[2];
-    const letterCodeMatches = activeProducts.filter(p => {
-      const cleanSku = (p.sku || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-      const skuDigits = (p.sku || '').toLowerCase().replace(/[^0-9]/g, '');
-      return cleanSku.startsWith(qPrefix) && (skuDigits === qCodeDigits || cleanSku.endsWith(qCodeDigits));
-    });
-    if (letterCodeMatches.length === 1) return hit(letterCodeMatches[0], 'exact');
-    if (letterCodeMatches.length > 1) return { product: null, confidence: 'ambiguous', candidates: letterCodeMatches };
-  }
-
-  // 2. Code digits match (4 digits for POS-XXXX, 5 digits for SKU-XXXXX)
-  if (isCodeQuery && qDigits && qDigits.length >= 4) {
+  // 2. Code digits match (3 digits for menu SKUs like 122, 4 digits for POS-XXXX, 5 digits for SKU-XXXXX)
+  if ((isCodeQuery || /^[a-z]{1,4}\s*[-–—]?\s*\d+$/i.test(query.trim())) && qDigits && qDigits.length >= 3) {
     const byDigits = activeProducts.filter(p => {
       const skuDigitMatch = (p.sku || '').toLowerCase().match(/\d+/);
-      return skuDigitMatch && skuDigitMatch[0].length >= 4 && skuDigitMatch[0] === qDigits;
+      return skuDigitMatch && skuDigitMatch[0] === qDigits;
     });
-    if (byDigits.length === 1) return hit(byDigits[0], 'exact');
-    if (byDigits.length > 1) return { product: null, confidence: 'ambiguous', candidates: byDigits };
+    if (byDigits.length === 1) {
+      const qLetters = qClean.replace(/\d+/g, '').replace(/^(pos|sku|code|item)/g, '');
+      const pLetters = (byDigits[0].sku || '').toLowerCase().replace(/[^a-z0-9]/g, '').replace(/\d+/g, '');
+      if (!qLetters || pLetters.startsWith(qLetters) || pLetters.includes(qLetters)) {
+        return hit(byDigits[0], 'exact');
+      }
+    } else if (byDigits.length > 1) {
+      const qLetters = qClean.replace(/\d+/g, '').replace(/^(pos|sku|code|item)/g, '');
+      if (qLetters) {
+        const matchingLetters = byDigits.filter(p => {
+          const pLetters = (p.sku || '').toLowerCase().replace(/[^a-z0-9]/g, '').replace(/\d+/g, '');
+          return pLetters.startsWith(qLetters) || pLetters.includes(qLetters);
+        });
+        if (matchingLetters.length === 1) return hit(matchingLetters[0], 'exact');
+        if (matchingLetters.length > 1) return { product: null, confidence: 'ambiguous', candidates: matchingLetters };
+      }
+      return { product: null, confidence: 'ambiguous', candidates: byDigits };
+    }
   }
 
   // 3. Embedded code in query (e.g. "bucket ice c2", "1 c1", query contains code word "c2" or "c1")
@@ -4062,9 +4127,6 @@ function startVoiceRecordingDirect() {
     if (!info.terminal) return;                 // no-speech: onend decides whether to keep listening
     const message = (event.error === "not-allowed" && voiceInsecureContext()) ? VOICE_INSECURE_MSG : info.msg;
     endVoiceSession(message);
-    if (event.error === "not-allowed" && typeof showMicrophoneBlockedModal === 'function') {
-      try { showMicrophoneBlockedModal(); } catch (e) {}
-    }
   };
 
   rec.onend = function() {
@@ -4084,97 +4146,11 @@ function startVoiceRecordingDirect() {
     }
   };
 
-  // If browser supports getUserMedia, request audio stream in background to trigger native permission prompt
-  if (typeof navigator !== 'undefined' && navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function') {
-    navigator.mediaDevices.getUserMedia({ audio: true })
-      .then(stream => {
-        try { stream.getTracks().forEach(t => t.stop()); } catch (e) {}
-      })
-      .catch(err => {
-        console.warn("Microphone permission check:", err);
-      });
-  }
-
   try {
     rec.start();
   } catch (e) {
     console.warn("Could not start speech recognition:", e);
     endVoiceSession("Voice recognition could not start. Press VOICE ORDER to try again.");
-  }
-}
-
-function showMicrophoneBlockedModal() {
-  if (typeof document === 'undefined' || !document.body) return;
-  const existing = document.getElementById("pos-mic-blocked-modal");
-  if (existing) existing.remove();
-
-  const modal = document.createElement("div");
-  modal.id = "pos-mic-blocked-modal";
-  modal.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,0.65); display:flex; align-items:center; justify-content:center; z-index:99999; backdrop-filter:blur(3px);";
-  modal.innerHTML = `
-    <div style="background:#ffffff; border-radius:14px; max-width:500px; width:92%; padding:24px; box-shadow:0 25px 50px -12px rgba(0,0,0,0.35); font-family:inherit; animation:fadeIn 0.2s ease;">
-      <div style="display:flex; align-items:center; gap:14px; margin-bottom:16px;">
-        <div style="width:44px; height:44px; border-radius:50%; background:#fee2e2; display:flex; align-items:center; justify-content:center; color:#dc2626; font-size:22px; flex-shrink:0;">
-          <i class="fas fa-microphone-slash"></i>
-        </div>
-        <div>
-          <h3 style="margin:0; font-size:18px; font-weight:700; color:#18181b;">Microphone Access Blocked</h3>
-          <p style="margin:3px 0 0; font-size:13px; color:#71717a;">Browser blocked the microphone for this page</p>
-        </div>
-      </div>
-      <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:14px; margin-bottom:16px; font-size:13px; color:#334155; line-height:1.6;">
-        <strong style="color:#0f172a; display:block; margin-bottom:6px;"><i class="fas fa-info-circle" style="color:#3b82f6;"></i> How to enable in Chrome / Edge:</strong>
-        <ol style="margin:0; padding-left:20px;">
-          <li style="margin-bottom:4px;">Look at the address bar at the top (next to <code>127.0.0.1:8000</code>).</li>
-          <li style="margin-bottom:4px;">Click the <strong>Site Information / Tune</strong> icon <i class="fas fa-sliders-h" style="font-size:11px;"></i> (or camera/mic with red &times;).</li>
-          <li style="margin-bottom:4px;">Switch <strong>Microphone</strong> from <em>Block</em> to <strong>Allow</strong>.</li>
-          <li>Click <strong>Retry Voice Order</strong> below.</li>
-        </ol>
-      </div>
-      <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:12px; margin-bottom:18px;">
-        <label style="display:block; font-size:12px; font-weight:700; color:#92400e; margin-bottom:6px;"><i class="fas fa-keyboard"></i> Test Voice Order (Simulate Spoken Audio):</label>
-        <div style="display:flex; gap:8px;">
-          <input id="mic-sim-text-input" type="text" placeholder='e.g. "see 121", "2 see bee 111", "pee see 116"' style="flex:1; border:1px solid #d4d4d8; border-radius:6px; padding:8px 12px; font-size:13px; outline:none;">
-          <button id="mic-sim-submit-btn" type="button" class="btn" style="background:#d97706; color:#fff; padding:8px 14px; font-size:13px; font-weight:600; border-radius:6px; border:none; cursor:pointer;">Simulate</button>
-        </div>
-        <span style="font-size:11px; color:#b45309; display:block; margin-top:4px;">Test pronunciation (e.g. "see" = "c", "see 121" = Caramel Macchiato) directly!</span>
-      </div>
-      <div style="display:flex; justify-content:flex-end; gap:10px;">
-        <button type="button" id="mic-blocked-modal-close" class="btn" style="background:#f1f5f9; color:#475569; padding:9px 16px; border-radius:6px; font-size:13px; font-weight:600; border:none; cursor:pointer;">Close</button>
-        <button type="button" id="mic-blocked-modal-retry" class="btn" style="background:#dc2626; color:#ffffff; padding:9px 18px; border-radius:6px; font-size:13px; font-weight:600; border:none; cursor:pointer; display:flex; align-items:center; gap:6px;">
-          <i class="fas fa-redo"></i> Retry Voice Order
-        </button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(modal);
-
-  const closeBtn = document.getElementById("mic-blocked-modal-close");
-  if (closeBtn) closeBtn.onclick = () => modal.remove();
-
-  const retryBtn = document.getElementById("mic-blocked-modal-retry");
-  if (retryBtn) {
-    retryBtn.onclick = () => {
-      modal.remove();
-      if (typeof startVoiceRecordingDirect === 'function') {
-        startVoiceRecordingDirect();
-      }
-    };
-  }
-
-  const simBtn = document.getElementById("mic-sim-submit-btn");
-  const simInput = document.getElementById("mic-sim-text-input");
-  if (simBtn && simInput) {
-    const doSim = () => {
-      const val = simInput.value.trim();
-      if (!val) return;
-      modal.remove();
-      if (typeof executeVoiceOrderDirect === 'function') {
-        executeVoiceOrderDirect(val, true);
-      }
-    };
-    simBtn.onclick = doSim;
-    simInput.onkeydown = (e) => { if (e.key === "Enter") doSim(); };
   }
 }
 
@@ -4279,7 +4255,21 @@ function executeVoiceOrderDirect(text, isFinal = true) {
 
   items.forEach(item => {
     if (item.isOnlyQty) return;
-    const needsChoice = item.confidence === 'ambiguous' || item.confidence === 'low';
+    // Auto-detect and track: if voice was not clear or partial, but related or matched to a candidate,
+    // automatically detect and add that item directly into the cart without confirmation modal
+    if (!item.product && item.candidates && item.candidates.length) {
+      const codeMatch = item.candidates.find(c => {
+        const cSku = (c.sku || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const qClean = (item.itemStr || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        return cSku === qClean || (qClean.length >= 2 && (cSku.includes(qClean) || qClean.includes(cSku)));
+      });
+      if (codeMatch) {
+        item.product = codeMatch;
+      } else if (item.candidates.length === 1 || item.confidence === 'low') {
+        item.product = item.candidates[0];
+      }
+    }
+    const needsChoice = !item.product && item.confidence === 'ambiguous' && item.candidates && item.candidates.length > 1;
     if (!item.product && !needsChoice) return;
     if (!validVoiceQty(item.qty)) {
       problems.push(`Quantity ${item.qty} for "${item.itemStr}" is not allowed (1 to ${VOICE_MAX_LINE_QTY} per item).`);
@@ -4416,6 +4406,8 @@ function showCheckoutError(message) {
 
 function setCheckoutBusy(busy) {
   posCheckout.inFlight = busy;
+  // Note: the checkout modal is closed optimistically before the API call,
+  // so the button DOM element may no longer exist when this runs.
   const btn = document.getElementById("checkout-confirm-btn");
   if (btn) {
     btn.disabled = busy;
@@ -4474,10 +4466,9 @@ async function openPaymentModal() {
     ? [["CASH", "Cash (Cash Register)"], ["CARD", "Debit / Credit Card"]]
     : [["CASH", "Cash (Cash Register)"], ["GCASH", "GCash E-Wallet"], ["CARD", "Debit / Credit Card"]];
   const orderNote = online ? `
-      <div style="padding:10px 12px; background:#fffbeb; border:1px solid rgba(205,190,150,0.4); border-radius:10px; margin-bottom:14px; font-size:12px;">
-        <strong>Customer order ${Utils.escapeHtml(online.order_number)}</strong> &bull; ${Utils.escapeHtml(online.customer_name)}<br>
-        ${paymentBadgeHtml(online)}
-        ${online.payment_method ? "" : '<div style="margin-top:6px; color:#92400e;">This is an older order: no payment method was recorded. Collect payment as usual; it is not assumed to be GCash.</div>'}
+      <div style="padding:10px 12px; background:#fffbeb; border:1px solid rgba(205,190,150,0.4); border-radius:10px; margin-bottom:14px; font-size:12px; display:flex; align-items:center; gap:8px;">
+        <i class="fas fa-chair" style="color:#c9a227;"></i>
+        <strong>${Utils.escapeHtml(online.table_number ? (online.table_number.toLowerCase().startsWith('table') ? online.table_number : 'Table ' + online.table_number) : (online.order_type || 'Take Out'))}</strong>
       </div>` : "";
 
   Utils.openModal('<i class="fas fa-credit-card" style="color:var(--accent); margin-right:8px;"></i> Process Order Checkout', `
@@ -4628,7 +4619,13 @@ async function submitCheckout() {
 
   const errorBox = document.getElementById("checkout-error");
   if (errorBox) errorBox.style.display = "none";
-  setCheckoutBusy(true);
+
+  // Optimistic UI: close the heavy modal immediately so the cashier feels instant response.
+  // The receipt pops up as soon as the server confirms (usually < 300 ms on local SQLite).
+  posCheckout.inFlight = true;
+  const checkoutBtn = document.getElementById("checkout-confirm-btn");
+  if (checkoutBtn) { checkoutBtn.disabled = true; checkoutBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...'; }
+  Utils.closeModal();
 
   try {
     const res = await Auth.fetch("/api/v1/transactions", {
@@ -4649,7 +4646,6 @@ async function submitCheckout() {
     }
 
     Utils.showToast(tx.idempotent_replay ? "This sale was already recorded. Showing the original receipt." : "Order completed successfully!", tx.idempotent_replay ? "info" : "success");
-    Utils.closeModal();
     const committedNet = Number(tx.net_amount !== undefined ? tx.net_amount : total);
     const committedMethod = String((tx.payments && tx.payments[0] && tx.payments[0].payment_method) || method).toUpperCase();
 
@@ -4685,20 +4681,22 @@ async function submitCheckout() {
       if (dRes.ok) {
         const dData = await dRes.json();
         const cUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
-        const myS = (dData.shifts || []).find(s => s.status === 'open' && !!cUser && s.cashier_id === cUser.id);   // own drawer only, never another person's
+        const myS = resolveCashierShift(dData.shifts, cUser);
         const dCashEl = document.getElementById("pos-cash-in-drawer-display");
         const dOrdEl = document.getElementById("pos-complete-orders-display");
-        if (dCashEl && myS) dCashEl.textContent = Utils.formatCurrency(myS.expected_cash);
-        if (dOrdEl && myS) dOrdEl.textContent = "Orders: " + Utils.formatCurrency(myS.total_sales);
+        const cashVal = myS ? (myS.expected_cash ?? 0) : (dData.total_cash_in_drawers || 0);
+        const ordVal = myS ? (myS.total_sales ?? 0) : (dData.today_total_orders_amount || 0);
+        if (dCashEl) dCashEl.textContent = Utils.formatCurrency(cashVal);
+        if (dOrdEl) dOrdEl.textContent = "Orders: " + Utils.formatCurrency(ordVal);
       }
     } catch (e) {}
   } catch (err) {
+    // The checkout modal was already closed optimistically. Show errors as an alert.
     if (err && err.definitive) {
-      showCheckoutError(err.message);
+      alert("Checkout Error: " + err.message);
     } else {
-      // No answer from the server: the sale may or may not have been saved. The key is kept, so pressing
-      // Confirm again returns the original sale instead of creating a second one.
-      showCheckoutError("No response from the server, so the sale may or may not have been saved. Press Confirm again: the same checkout reference is reused and cannot charge twice.");
+      // No answer from the server: the sale may or may not have been saved. Key is kept for retry.
+      alert("Checkout: No response from the server. The sale may or may not have been saved.\nPress \"Checkout\" again — the same reference is reused and cannot charge twice.");
     }
   } finally {
     setCheckoutBusy(false);
@@ -4710,6 +4708,7 @@ async function submitCheckout() {
 // ─────────────────────────────────────────────────────────────────────────────
 async function renderKitchen(c) {
   c = c || document.getElementById('view-container');
+  if (!c) return;
   const res = await Auth.fetch(`/api/v1/kitchen/orders?type=food&_t=${Date.now()}`);
   if (!res.ok) throw new Error("Failed to load kitchen orders from server.");
   const orders = await res.json();
@@ -4719,6 +4718,9 @@ async function renderKitchen(c) {
     window.kitchenOrdersInterval = null;
   }
   window.kitchenOrdersInterval = setInterval(async () => {
+    // If WebSocket is connected, skip redundant HTTP poll to keep responses instant & server fast
+    const wsSocket = window.BlessieRealtime && window.BlessieRealtime.getSocket();
+    if (wsSocket && wsSocket.readyState === WebSocket.OPEN) return;
     const kGrid = document.getElementById("kitchen-tickets-grid");
     if (kGrid) {
       const liveRes = await Auth.fetch(`/api/v1/kitchen/orders?type=food&_t=${Date.now()}`);
@@ -4729,7 +4731,7 @@ async function renderKitchen(c) {
       clearInterval(window.kitchenOrdersInterval);
       window.kitchenOrdersInterval = null;
     }
-  }, 6000);
+  }, 8000);
 
   c.innerHTML = `
     <style>
@@ -4818,7 +4820,7 @@ async function renderKitchen(c) {
         }
 
         return `
-        <div class="section-card" style="padding:0; overflow:hidden; border:1px solid ${isCompleted ? 'rgba(16,185,129,0.3)' : 'rgba(201,162,39,0.3)'};">
+        <div class="section-card" id="ticket-card-${ord.raw_id || ord.id}" data-order-id="${ord.raw_id || ord.id}" style="padding:0; overflow:hidden; border:1px solid ${isCompleted ? 'rgba(16,185,129,0.3)' : 'rgba(201,162,39,0.3)'}; transition:all 0.2s ease;">
           <!-- Ticket Header -->
           <div style="background:${isCompleted ? '#f0fdf4' : '#faf8f3'}; padding:16px 20px; border-bottom:1px solid rgba(205,190,150,0.2); display:flex; justify-content:space-between; align-items:center;">
             <div>
@@ -4854,17 +4856,16 @@ async function renderKitchen(c) {
                 <i class="fas fa-check-circle" style="font-size:16px;"></i> Order Completed
               </div>
             ` : `
-              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+              <div style="display:grid; grid-template-columns:${ord.status !== 'PREPARING' ? '1fr 1fr 1fr' : '1fr 1fr'}; gap:6px;">
                 ${ord.status !== 'PREPARING' ? `
-                  <button type="button" class="btn" style="font-size:12px; font-weight:700; padding:8px 10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:6px; border:1px solid #3b82f6; color:#3b82f6; background:rgba(59,130,246,0.06); cursor:pointer;" onclick="updateOrderStatus(${Utils.jsArg(ord.raw_id || ord.id)}, 'PREPARING')">
+                  <button type="button" class="btn" style="font-size:11px; font-weight:700; padding:8px 6px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:4px; border:1px solid #3b82f6; color:#3b82f6; background:rgba(59,130,246,0.06); cursor:pointer;" onclick="updateOrderStatus(${Utils.jsArg(ord.raw_id || ord.id)}, 'PREPARING')">
                     <i class="fas fa-fire-burner"></i> Preparing
                   </button>
-                ` : `
-                  <button type="button" class="btn" style="font-size:12px; font-weight:700; padding:8px 10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:6px; border:1px solid #ef4444; color:#ef4444; background:rgba(239,68,68,0.06); cursor:pointer;" onclick="promptRejectOrder(${Utils.jsArg(ord.raw_id || ord.id)})">
-                    <i class="fas fa-ban"></i> Reject
-                  </button>
-                `}
-                <button type="button" class="btn btn-primary" style="font-size:12px; font-weight:700; padding:8px 10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:6px; background:#10b981; color:#fff; border:none; cursor:pointer;" onclick="updateOrderStatus(${Utils.jsArg(ord.raw_id || ord.id)}, 'COMPLETED')">
+                ` : ''}
+                <button type="button" class="btn" style="font-size:11px; font-weight:700; padding:8px 6px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:4px; border:1px solid #ef4444; color:#ef4444; background:rgba(239,68,68,0.06); cursor:pointer;" onclick="promptRejectOrder(${Utils.jsArg(ord.raw_id || ord.id)})">
+                  <i class="fas fa-ban"></i> Reject
+                </button>
+                <button type="button" class="btn btn-primary" style="font-size:11px; font-weight:700; padding:8px 6px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:4px; background:#10b981; color:#fff; border:none; cursor:pointer;" onclick="updateOrderStatus(${Utils.jsArg(ord.raw_id || ord.id)}, 'COMPLETED')">
                   <i class="fas fa-check-circle"></i> Complete
                 </button>
               </div>
@@ -4890,6 +4891,7 @@ async function renderKitchen(c) {
 // ─────────────────────────────────────────────────────────────────────────────
 async function renderKitchenLogs(c) {
   c = c || document.getElementById('view-container') || document.getElementById('main-content');
+  if (!c) return;
   const res = await Auth.fetch(`/api/v1/kitchen/orders?type=food&_t=${Date.now()}`);
   const orders = res.ok ? await res.json() : [];
   const completedOrders = orders.filter(o => o.status === 'COMPLETED' || o.status === 'READY');
@@ -4956,22 +4958,44 @@ async function renderKitchenLogs(c) {
 }
 
 async function updateOrderStatus(orderId, newStatus) {
+  const card = document.getElementById(`ticket-card-${orderId}`) || document.querySelector(`[data-order-id="${orderId}"]`);
+  if (card) {
+    if (newStatus === 'COMPLETED' || newStatus === 'READY') {
+      card.style.transition = 'all 0.2s ease';
+      card.style.opacity = '0';
+      card.style.transform = 'scale(0.95)';
+      card.style.pointerEvents = 'none';
+      setTimeout(() => { if (card) card.remove(); }, 220);
+    } else if (newStatus === 'PREPARING') {
+      const badge = card.querySelector('.badge');
+      if (badge) {
+        badge.textContent = 'PREPARING';
+        badge.style.background = 'rgba(59,130,246,0.12)';
+        badge.style.color = '#3b82f6';
+      }
+      const prepBtn = card.querySelector('button[onclick*="PREPARING"]');
+      if (prepBtn) {
+        prepBtn.remove();
+      }
+    }
+  }
+
   try {
     const res = await Auth.fetch(`/api/v1/kitchen/orders/${orderId}/status`, {
       method: "PUT",
       body: JSON.stringify({ status: newStatus, station: "food" })
     });
     if (res.ok) {
-      Utils.showToast(`Order #${orderId} marked as ${newStatus}!`, "success");
-      renderKitchen();
       localStorage.setItem("RESTOTRACK_SYNC_KITCHEN", JSON.stringify({ timestamp: Date.now(), orderId: orderId, status: newStatus }));
+      renderKitchen();
     } else {
-      const err = await res.json();
+      const err = await res.json().catch(() => ({}));
       Utils.showToast(err.detail || "Failed to update order status.", "danger");
+      renderKitchen();
     }
   } catch (err) {
     console.error("Failed to update status", err);
-    Utils.showToast("Network error updating status", "danger");
+    renderKitchen();
   }
 }
 
@@ -4993,6 +5017,9 @@ async function renderDrinksStation(c) {
     window.drinksStationInterval = null;
   }
   window.drinksStationInterval = setInterval(async () => {
+    // If WebSocket is connected, skip redundant HTTP poll
+    const wsSocket = window.BlessieRealtime && window.BlessieRealtime.getSocket();
+    if (wsSocket && wsSocket.readyState === WebSocket.OPEN) return;
     const grid = document.getElementById('drinks-tickets-grid');
     if (grid) {
       const liveRes = await Auth.fetch(`/api/v1/kitchen/drinks-orders?_t=${Date.now()}`);
@@ -5003,7 +5030,7 @@ async function renderDrinksStation(c) {
       clearInterval(window.drinksStationInterval);
       window.drinksStationInterval = null;
     }
-  }, 7000);
+  }, 8000);
 
   const activeOrders = orders.filter(o => o.status !== 'COMPLETED' && o.status !== 'READY');
   const pendingOrders = orders.filter(o => o.status === 'PENDING');
@@ -5155,7 +5182,7 @@ async function renderDrinksStation(c) {
                   </div>
                 ` : `
                   <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-                    <button type="button" class="btn" style="font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:6px; border:1px solid #ef4444; color:#ef4444; background:rgba(239,68,68,0.06); cursor:pointer;" onclick="promptRejectOrder(${ord.raw_id || ord.id})">
+                    <button type="button" class="btn" style="font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:6px; border:1px solid #ef4444; color:#ef4444; background:rgba(239,68,68,0.06); cursor:pointer;" onclick="promptRejectOrder(${Utils.jsArg(ord.raw_id || ord.id)})">
                       <i class="fas fa-ban"></i> Reject
                     </button>
                     <button type="button" class="btn btn-primary" style="font-size:13px; font-weight:700; padding:10px; border-radius:8px; display:inline-flex; justify-content:center; align-items:center; gap:8px; background:#10b981; color:#fff; border:none; cursor:pointer;" onclick="updateDrinksStatus(${Utils.jsArg(ord.raw_id)}, 'COMPLETED')">
@@ -5242,6 +5269,25 @@ async function renderTransactions(c) {
   // Cache for quick modal lookups
   window._recentTransactionsCache = list;
 
+  if (window._transactionsInterval) {
+    clearInterval(window._transactionsInterval);
+    window._transactionsInterval = null;
+  }
+  window._transactionsInterval = setInterval(async () => {
+    const tbody = document.getElementById("tx-tbody");
+    if (tbody) {
+      const liveRes = await Auth.fetch("/api/v1/transactions?limit=50");
+      if (liveRes.ok) {
+        const liveList = await liveRes.json();
+        window._recentTransactionsCache = liveList;
+        renderTransactions(c);
+      }
+    } else {
+      clearInterval(window._transactionsInterval);
+      window._transactionsInterval = null;
+    }
+  }, 4000);
+
   c.innerHTML = `
     <div class="section-card">
       <div class="section-head" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
@@ -5271,20 +5317,33 @@ async function renderTransactions(c) {
           </thead>
           <tbody id="tx-tbody">
             ${list.length ? list.map(tx => {
-              const statusUpper = (tx.status || 'COMPLETED').toUpperCase();
-              let statusBadge = '';
-              if (statusUpper === 'PENDING') {
-                statusBadge = `<span class="badge" style="background:#fef3c7; color:#b45309; border:1px solid rgba(245,158,11,0.3); font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><i class="far fa-clock"></i> PENDING</span>`;
-              } else if (statusUpper === 'PREPARING') {
-                statusBadge = `<span class="badge" style="background:#dbeafe; color:#1e40af; border:1px solid rgba(59,130,246,0.3); font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><i class="fas fa-fire"></i> PREPARING</span>`;
-              } else if (statusUpper === 'REJECTED' || statusUpper === 'CANCELLED') {
-                statusBadge = `<span class="badge" style="background:#fee2e2; color:#b91c1c; border:1px solid rgba(239,68,68,0.3); font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><i class="fas fa-times-circle"></i> ${Utils.escapeHtml(statusUpper)}</span>`;
+              const fulfillment = String(tx.fulfillment_status || '').toUpperCase();
+              const saleStatus = String(tx.status || '').toUpperCase();
+
+              let displayStatus = 'COMPLETED';
+              if (saleStatus === 'REJECTED' || saleStatus === 'CANCELLED' || fulfillment === 'REJECTED' || fulfillment === 'CANCELLED') {
+                displayStatus = 'REJECTED';
+              } else if (fulfillment === 'PREPARING' || saleStatus === 'PREPARING') {
+                displayStatus = 'PREPARING';
+              } else if (fulfillment === 'PENDING' || saleStatus === 'PENDING') {
+                displayStatus = 'PENDING';
               } else {
-                statusBadge = `<span class="badge badge-success" style="font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><i class="fas fa-check-circle"></i> ${Utils.escapeHtml(statusUpper)}</span>`;
+                displayStatus = 'COMPLETED';
+              }
+
+              let statusBadge = '';
+              if (displayStatus === 'PENDING') {
+                statusBadge = `<span class="badge" style="background:#fef3c7; color:#b45309; border:1px solid rgba(245,158,11,0.3); font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><i class="far fa-clock"></i> PENDING</span>`;
+              } else if (displayStatus === 'PREPARING') {
+                statusBadge = `<span class="badge" style="background:#dbeafe; color:#1e40af; border:1px solid rgba(59,130,246,0.3); font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><i class="fas fa-fire"></i> PREPARING</span>`;
+              } else if (displayStatus === 'REJECTED') {
+                statusBadge = `<span class="badge" style="background:#fee2e2; color:#b91c1c; border:1px solid rgba(239,68,68,0.3); font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><i class="fas fa-times-circle"></i> REJECTED</span>`;
+              } else {
+                statusBadge = `<span class="badge badge-success" style="font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px;"><i class="fas fa-check-circle"></i> COMPLETED</span>`;
               }
 
               let actionHtml = '';
-              if (statusUpper === 'PENDING' || statusUpper === 'PREPARING') {
+              if (displayStatus === 'PENDING' || displayStatus === 'PREPARING') {
                 actionHtml = `
                   <div style="display:flex; justify-content:center; align-items:center; gap:6px;">
                     <button type="button" class="btn btn-sm" onclick="promptRejectOrder(${tx.id})" style="background:#ef4444; color:#ffffff; border:none; border-radius:6px; padding:5px 12px; font-size:11px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:5px; box-shadow:0 2px 5px rgba(239,68,68,0.25); transition:0.2s;" onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'" title="Reject order if customer cancels">
@@ -5295,7 +5354,7 @@ async function renderTransactions(c) {
                     </button>
                   </div>
                 `;
-              } else if (statusUpper === 'REJECTED' || statusUpper === 'CANCELLED') {
+              } else if (displayStatus === 'REJECTED') {
                 actionHtml = `
                   <div style="display:flex; justify-content:center; align-items:center; gap:6px;">
                     <span style="display:inline-flex; align-items:center; gap:4px; color:#ef4444; font-size:11px; font-weight:700;"><i class="fas fa-ban"></i> Cancelled</span>
@@ -5394,23 +5453,17 @@ window.viewOrderItemsModal = function(txId) {
 
 window.promptRejectOrder = function(txId) {
   const list = window._recentTransactionsCache || [];
-  const existingTx = list.find(t => t.id === txId);
+  const existingTx = list.find(t => String(t.id) === String(txId));
   if (existingTx && (existingTx.status === 'rejected' || existingTx.status === 'cancelled')) {
     Utils.showToast(`Order #${txId} is already rejected. Once rejected, the order status is locked and cannot be changed.`, "warning");
     return;
   }
 
-  Utils.openModal(`
+  const modalTitle = `<i class="fas fa-exclamation-triangle" style="color:#ef4444; margin-right:8px;"></i> Reject / Cancel Order #${Utils.escapeHtml(txId)}`;
+
+  const modalBody = `
     <div style="padding:4px;">
-      <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;">
-        <div style="width:44px; height:44px; border-radius:50%; background:rgba(239,68,68,0.12); color:#ef4444; display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0;">
-          <i class="fas fa-exclamation-triangle"></i>
-        </div>
-        <div>
-          <h3 style="font-size:17px; font-weight:800; color:var(--text-main); margin:0;">Reject / Cancel Order #${Utils.escapeHtml(txId)}</h3>
-          <p style="font-size:12px; color:var(--text-muted); margin:3px 0 0 0;">Customer cancelled order. This will void the transaction.</p>
-        </div>
-      </div>
+      <p style="font-size:12px; color:var(--text-muted); margin:0 0 16px 0;">Customer cancelled order. This will void the transaction / cancel the ticket.</p>
 
       <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:12px; margin-bottom:16px; font-size:12px; color:#991b1b; line-height:1.4;">
         <i class="fas fa-info-circle"></i> <strong>Note:</strong> Marking this order as <strong>REJECTED</strong> is permanent. Once rejected, the order status cannot be changed.
@@ -5432,15 +5485,17 @@ window.promptRejectOrder = function(txId) {
         <label style="display:block; font-size:12px; font-weight:700; color:var(--text-main); margin-bottom:6px;">Custom Reason</label>
         <input type="text" id="reject-custom-reason" class="form-control" placeholder="Specify cancellation reason..." style="width:100%; padding:9px 12px; border-radius:8px; border:1px solid rgba(205,190,150,0.4); font-size:13px;">
       </div>
-
-      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
-        <button type="button" class="btn btn-outline" onclick="Utils.closeModal()" style="padding:8px 18px; font-size:13px; font-weight:600;">Back</button>
-        <button type="button" class="btn" onclick="submitRejectOrder(${txId})" style="background:#ef4444; color:#fff; border:none; padding:8px 20px; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 6px rgba(239,68,68,0.3);">
-          <i class="fas fa-times-circle"></i> Confirm Rejection
-        </button>
-      </div>
     </div>
-  `);
+  `;
+
+  const modalFooter = `
+    <button type="button" class="btn btn-outline" onclick="Utils.closeModal()" style="padding:8px 18px; font-size:13px; font-weight:600;">Back</button>
+    <button type="button" class="btn" onclick="submitRejectOrder(${Utils.jsArg(txId)})" style="background:#ef4444; color:#fff; border:none; padding:8px 20px; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 2px 6px rgba(239,68,68,0.3);">
+      <i class="fas fa-times-circle"></i> Confirm Rejection
+    </button>
+  `;
+
+  Utils.openModal(modalTitle, modalBody, modalFooter);
 };
 
 // Refund state of a voided sale. The POS never moves money: "Record refund" only records what staff did.
@@ -5516,17 +5571,50 @@ window.submitRejectOrder = async function(txId) {
     reason = customEl.value.trim();
   }
 
+  // Instant visual feedback: dim card & close modal immediately
+  const card = document.getElementById(`ticket-card-${txId}`) || document.querySelector(`[data-order-id="${txId}"]`);
+  if (card) {
+    card.style.transition = 'all 0.25s ease';
+    card.style.opacity = '0.3';
+    card.style.pointerEvents = 'none';
+  }
+  Utils.closeModal();
+
+  const txStr = String(txId || "").trim();
+  const isCustOrder = txStr.toUpperCase().startsWith("CUST-") || txStr.toUpperCase().startsWith("CUST");
+
   try {
-    const res = await Auth.fetch(`/api/v1/transactions/${txId}/status`, {
-      method: "PUT",
-      body: JSON.stringify({
-        status: "rejected",
-        reason: reason
-      })
-    });
+    let res;
+    if (isCustOrder) {
+      res = await Auth.fetch(`/api/v1/kitchen/orders/${encodeURIComponent(txStr)}/status`, {
+        method: "PUT",
+        body: JSON.stringify({
+          status: "rejected",
+          station: "food",
+          reason: reason
+        })
+      });
+      if (!res.ok) {
+        const numericCustId = parseInt(txStr.replace(/[^0-9]/g, ""), 10);
+        if (numericCustId) {
+          res = await Auth.fetch(`/api/v1/customer-orders/${numericCustId}/status`, {
+            method: "PUT",
+            body: JSON.stringify({ status: "rejected", reason: reason })
+          });
+        }
+      }
+    } else {
+      res = await Auth.fetch(`/api/v1/transactions/${txId}/status`, {
+        method: "PUT",
+        body: JSON.stringify({
+          status: "rejected",
+          reason: reason
+        })
+      });
+    }
 
     if (!res.ok) {
-      const err = await res.json();
+      const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || "Failed to reject order.");
     }
 
@@ -5554,6 +5642,14 @@ window.submitRejectOrder = async function(txId) {
       renderTransactions(document.getElementById("view-container"));
     } else if (typeof renderKitchen === "function") {
       renderKitchen();
+    }
+
+    // Refresh Customer Orders & badge immediately so rejected orders show in Recent Processed Orders
+    if (typeof loadCustomerOrdersTable === "function") {
+      loadCustomerOrdersTable();
+    }
+    if (typeof fetchPendingOnlineOrders === "function") {
+      fetchPendingOnlineOrders();
     }
   } catch (err) {
     Utils.showToast(err.message, "danger");
@@ -5596,7 +5692,92 @@ window.changeOrderStatusDirect = async function(txId, newStatus) {
 // ─────────────────────────────────────────────────────────────────────────────
 // 7. USER MANAGEMENT (BRANCH ADMIN)
 // ─────────────────────────────────────────────────────────────────────────────
+function renderStaffRowsHtml(users) {
+  if (!users || !users.length) {
+    return '<tr><td colspan="4" style="text-align:center; padding:30px; color:var(--text-muted);">No staff registered in this branch.</td></tr>';
+  }
+  return users.map(u => `
+    <tr>
+      <td><strong style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(u.username)}</strong></td>
+      <td><span class="badge badge-info" style="font-size:11px; font-weight:700; text-transform:uppercase;">${Utils.escapeHtml(u.role)}</span></td>
+      <td>
+        <span class="badge ${u.is_active ? 'badge-success' : 'badge-danger'}" style="font-size:11px; font-weight:700;">
+          ${u.is_active ? 'Active' : 'Inactive'}
+        </span>
+      </td>
+      <td style="text-align:right;">
+        <div style="display:inline-flex; gap:6px; justify-content:flex-end;">
+          <button class="btn btn-outline btn-sm" onclick="promptResetStaffPassword(${u.id}, ${Utils.jsArg(u.username)})" style="padding:4px 8px; font-size:12px; border-color:#c9a227; color:#c9a227;" title="Reset Password">
+            <i class="fas fa-key"></i> Reset Password
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="toggleStaffStatus(${u.id}, ${u.is_active})" style="padding:4px 8px; font-size:12px;" title="${u.is_active ? 'Deactivate User' : 'Activate User'}">
+            <i class="fas ${u.is_active ? 'fa-user-slash' : 'fa-user-check'}"></i> ${u.is_active ? 'Deactivate' : 'Activate'}
+          </button>
+          <button class="btn btn-danger btn-sm" onclick="confirmDeleteStaff(${u.id}, ${Utils.jsArg(u.username)})" style="padding:4px 8px; font-size:12px;" title="Delete Staff Account">
+            <i class="fas fa-trash-alt"></i> Delete
+          </button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function startUsersRealtimePolling() {
+  if (window._userRealtimePoll) {
+    clearInterval(window._userRealtimePoll);
+  }
+  window._userRealtimePoll = setInterval(async () => {
+    const tbodyEl = document.getElementById("branch-staff-tbody");
+    if (!tbodyEl) {
+      clearInterval(window._userRealtimePoll);
+      window._userRealtimePoll = null;
+      return;
+    }
+    const modal = document.getElementById("modal-container");
+    if (modal && modal.style.display !== "none" && modal.innerHTML.trim() !== "") {
+      return; // Do not interrupt if add modal is open
+    }
+    try {
+      const [usersRes, statsRes] = await Promise.all([
+        Auth.fetch("/api/v1/users?exclude_self=false"),
+        Auth.fetch("/api/v1/users/stats")
+      ]);
+      if (!usersRes.ok || !statsRes.ok) return;
+      const curRole = (typeof Auth !== 'undefined' && Auth.getRole ? Auth.getRole() : "").toLowerCase();
+      const isAdminViewer = curRole === "admin" || curRole === "super_admin";
+      const users = rawUsers.filter(u => {
+        const r = (u.role || "").toUpperCase();
+        if (isAdminViewer) return r !== "SUPER_ADMIN";
+        return r !== "SUPER_ADMIN" && r !== "ADMIN";
+      });
+      const stats = await statsRes.json();
+
+      const curTbody = document.getElementById("branch-staff-tbody");
+      if (curTbody) {
+        curTbody.innerHTML = renderStaffRowsHtml(users);
+      }
+      const totalEl = document.getElementById("stat-total-staff");
+      if (totalEl) totalEl.textContent = users.length;
+      const mgrEl = document.getElementById("stat-managers");
+      if (mgrEl) mgrEl.textContent = stats.managers || 0;
+      const cashEl = document.getElementById("stat-cashiers");
+      if (cashEl) cashEl.textContent = stats.cashiers || 0;
+      const kitEl = document.getElementById("stat-kitchen");
+      if (kitEl) kitEl.textContent = stats.kitchen || 0;
+      const summaryEl = document.getElementById("users-count-summary");
+      if (summaryEl) summaryEl.textContent = `${users.length} staff accounts registered`;
+      const badgeEl = document.getElementById("users-badge-count");
+      if (badgeEl) badgeEl.textContent = `${users.length} staff accounts`;
+    } catch (_) {}
+  }, 2500);
+}
+
 async function renderUsers(c) {
+  if (!c) {
+    c = document.getElementById("view-container") || document.getElementById("content") || document.querySelector(".page-wrapper");
+  }
+  if (!c) return;
+
   const [usersRes, statsRes] = await Promise.all([
     Auth.fetch("/api/v1/users?exclude_self=false"),
     Auth.fetch("/api/v1/users/stats")
@@ -5605,19 +5786,22 @@ async function renderUsers(c) {
   if (!usersRes.ok) throw new Error("Failed to load users from server.");
   if (!statsRes.ok) throw new Error("Failed to load user statistics from server.");
   const rawUsers = await usersRes.json();
+  const curRole = (typeof Auth !== 'undefined' && Auth.getRole ? Auth.getRole() : "").toLowerCase();
+  const isAdminViewer = curRole === "admin" || curRole === "super_admin";
   const users = rawUsers.filter(u => {
     const r = (u.role || "").toUpperCase();
+    if (isAdminViewer) return r !== "SUPER_ADMIN";
     return r !== "SUPER_ADMIN" && r !== "ADMIN";
   });
   const stats = await statsRes.json();
 
   c.innerHTML = `
-    <div class="stats-grid">
+    <div class="stats-grid" id="users-stats-grid">
       <div class="stat-card">
         <div class="stat-icon gold"><i class="fas fa-users"></i></div>
         <div class="stat-info">
           <h3>Total Branch Staff</h3>
-          <div class="stat-count" style="color:#c9a227;">${Utils.escapeHtml(users.length)}</div>
+          <div class="stat-count" id="stat-total-staff" style="color:#c9a227;">${Utils.escapeHtml(users.length)}</div>
           <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-user-friends"></i> Active Staff</div>
         </div>
       </div>
@@ -5625,7 +5809,7 @@ async function renderUsers(c) {
         <div class="stat-icon purple"><i class="fas fa-user-tie"></i></div>
         <div class="stat-info">
           <h3>Managers</h3>
-          <div class="stat-count" style="color:#7b1fa2;">${Utils.escapeHtml(stats.managers || 0)}</div>
+          <div class="stat-count" id="stat-managers" style="color:#7b1fa2;">${Utils.escapeHtml(stats.managers || 0)}</div>
           <div class="stat-trend" style="color:#7b1fa2;"><i class="fas fa-briefcase"></i> Shift leaders</div>
         </div>
       </div>
@@ -5633,7 +5817,7 @@ async function renderUsers(c) {
         <div class="stat-icon green"><i class="fas fa-cash-register"></i></div>
         <div class="stat-info">
           <h3>Cashiers</h3>
-          <div class="stat-count" style="color:#10b981;">${Utils.escapeHtml(stats.cashiers || 0)}</div>
+          <div class="stat-count" id="stat-cashiers" style="color:#10b981;">${Utils.escapeHtml(stats.cashiers || 0)}</div>
           <div class="stat-trend" style="color:#10b981;"><i class="fas fa-receipt"></i> POS Staff</div>
         </div>
       </div>
@@ -5641,14 +5825,14 @@ async function renderUsers(c) {
         <div class="stat-icon orange"><i class="fas fa-utensils"></i></div>
         <div class="stat-info">
           <h3>Kitchen Crew</h3>
-          <div class="stat-count" style="color:#f97316;">${Utils.escapeHtml(stats.kitchen || 0)}</div>
+          <div class="stat-count" id="stat-kitchen" style="color:#f97316;">${Utils.escapeHtml(stats.kitchen || 0)}</div>
           <div class="stat-trend" style="color:#f97316;"><i class="fas fa-fire"></i> KDS Staff</div>
         </div>
       </div>
     </div>
 
     <div class="toolbar fade-up delay-1" style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px; flex-wrap:wrap;">
-      <div style="font-size:13px; color:var(--text-muted);">${Utils.escapeHtml(users.length)} staff accounts registered</div>
+      <div id="users-count-summary" style="font-size:13px; color:var(--text-muted);">${Utils.escapeHtml(users.length)} staff accounts registered</div>
       <button class="btn btn-primary" onclick="openAddStaffModal()" style="display:inline-flex; align-items:center; gap:8px;">
         <i class="fas fa-user-plus"></i> Add Staff Member
       </button>
@@ -5657,48 +5841,102 @@ async function renderUsers(c) {
     <div class="section-card">
       <div class="section-head">
         <h2>Branch Staff Members</h2>
-        <span style="font-size:13px; color:var(--text-muted);">${Utils.escapeHtml(users.length)} staff accounts</span>
+        <span id="users-badge-count" style="font-size:13px; color:var(--text-muted);">${Utils.escapeHtml(users.length)} staff accounts</span>
       </div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
               <th>Staff User</th>
-              <th>Email</th>
               <th>Assigned Role</th>
               <th>Status</th>
               <th style="text-align:right;">Actions</th>
             </tr>
           </thead>
-          <tbody>
-            ${users.length ? users.map(u => `
-              <tr>
-                <td><strong style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(u.username)}</strong></td>
-                <td style="color:var(--text-muted); font-size:13px;">${Utils.escapeHtml(u.email || '—')}</td>
-                <td><span class="badge badge-info" style="font-size:11px; font-weight:700; text-transform:uppercase;">${Utils.escapeHtml(u.role)}</span></td>
-                <td>
-                  <span class="badge ${u.is_active ? 'badge-success' : 'badge-danger'}" style="font-size:11px; font-weight:700;">
-                    ${u.is_active ? 'Active' : 'Inactive'}
-                  </span>
-                </td>
-                <td style="text-align:right;">
-                  <div style="display:inline-flex; gap:6px; justify-content:flex-end;">
-                    <button class="btn btn-outline btn-sm" onclick="toggleStaffStatus(${u.id}, ${u.is_active})" style="padding:4px 8px; font-size:12px;" title="${u.is_active ? 'Deactivate User' : 'Activate User'}">
-                      <i class="fas ${u.is_active ? 'fa-user-slash' : 'fa-user-check'}"></i> ${u.is_active ? 'Deactivate' : 'Activate'}
-                    </button>
-                    <button class="btn btn-danger btn-sm" onclick="confirmDeleteStaff(${u.id}, ${Utils.jsArg(u.username)})" style="padding:4px 8px; font-size:12px;" title="Delete Staff Account">
-                      <i class="fas fa-trash-alt"></i> Delete
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            `).join('') : '<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-muted);">No staff registered in this branch.</td></tr>'}
+          <tbody id="branch-staff-tbody">
+            ${renderStaffRowsHtml(users)}
           </tbody>
         </table>
       </div>
     </div>
   `;
+
+  startUsersRealtimePolling();
 }
+
+window.promptResetStaffPassword = function(id, username) {
+  Utils.openModal("Reset Staff Password", `
+    <form id="form-reset-password" onsubmit="event.preventDefault(); executeResetStaffPassword(${id});">
+      <div style="margin-bottom:14px; text-align:left;">
+        <p style="font-size:13px; color:var(--text-muted); margin:0 0 14px 0;">
+          Resetting password for staff account: <strong style="color:var(--text-main);">@${Utils.escapeHtml(username)}</strong>
+        </p>
+        <div class="input-group" style="margin-bottom:12px;">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">New Password (6-20 chars) <span style="color:var(--danger);">*</span></label>
+          <input type="password" id="reset-new-password" class="input-field" required maxlength="20" placeholder="Enter new password" style="width:100%;">
+        </div>
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Confirm New Password <span style="color:var(--danger);">*</span></label>
+          <input type="password" id="reset-confirm-password" class="input-field" required maxlength="20" placeholder="Confirm new password" style="width:100%;">
+        </div>
+      </div>
+    </form>
+  `, `
+    <div style="display:flex; justify-content:flex-end; gap:10px; width:100%;">
+      <button type="button" class="btn btn-outline" onclick="Utils.closeModal()">Cancel</button>
+      <button type="button" class="btn btn-primary" id="btn-save-reset-pwd" onclick="executeResetStaffPassword(${id})" style="background:#c9a227; border-color:#c9a227; color:#18181b; font-weight:700;">
+        <i class="fas fa-key"></i> Save New Password
+      </button>
+    </div>
+  `);
+};
+
+window.executeResetStaffPassword = async function(id) {
+  const newPwd = document.getElementById("reset-new-password")?.value || "";
+  const confirmPwd = document.getElementById("reset-confirm-password")?.value || "";
+  const saveBtn = document.getElementById("btn-save-reset-pwd");
+
+  if (!newPwd || !confirmPwd) {
+    Utils.showToast("Please fill in both password fields.", "danger");
+    return;
+  }
+  if (newPwd.length < 6) {
+    Utils.showToast("Password must be at least 6 characters.", "danger");
+    return;
+  }
+  if (newPwd.length > 20) {
+    Utils.showToast("Password cannot exceed 20 characters.", "danger");
+    return;
+  }
+  if (newPwd !== confirmPwd) {
+    Utils.showToast("Passwords do not match. Please re-enter.", "danger");
+    return;
+  }
+
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Saving...`;
+  }
+
+  try {
+    const res = await Auth.fetch(`/api/v1/users/${id}/password`, {
+      method: "PUT",
+      body: JSON.stringify({ new_password: newPwd })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to reset password.");
+    }
+    Utils.showToast("Password has been reset successfully!", "success");
+    Utils.closeModal();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = `<i class="fas fa-key"></i> Save New Password`;
+    }
+  }
+};
 
 window.confirmDeleteStaff = function(id, username) {
   Utils.openModal("Confirm Staff Deletion", `
@@ -5735,7 +5973,8 @@ window.executeDeleteStaff = async function(id) {
     }
     Utils.showToast("Staff account deleted successfully.", "success");
     Utils.closeModal();
-    renderUsers();
+    const c = document.getElementById("view-container") || document.querySelector(".page-wrapper");
+    await renderUsers(c);
   } catch (err) {
     Utils.showToast(err.message, "danger");
     if (btn) {
@@ -5756,13 +5995,16 @@ window.toggleStaffStatus = async function(id, currentStatus) {
     }
     const data = await res.json();
     Utils.showToast(data.message || "User status updated!", "success");
-    renderUsers();
+    const c = document.getElementById("view-container") || document.querySelector(".page-wrapper");
+    await renderUsers(c);
   } catch (err) {
     Utils.showToast(err.message, "danger");
   }
 };
 
 function openAddStaffModal() {
+  const curRole = (typeof Auth !== 'undefined' && Auth.getRole ? Auth.getRole() : "").toLowerCase();
+  const isAdminViewer = curRole === "admin" || curRole === "super_admin";
   Utils.openModal("Create New Branch Staff", `
     <form id="form-add-staff" onsubmit="event.preventDefault(); submitAddStaff();">
       <div class="input-group" style="margin-bottom:14px;">
@@ -5779,13 +6021,15 @@ function openAddStaffModal() {
           <input id="st-lastname" class="input-field" required placeholder="Doe" style="width:100%;">
         </div>
       </div>
-      <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Email Address <span style="color:var(--danger);">*</span></label>
-        <input type="email" id="st-email" class="input-field" required placeholder="jane.doe@example.com" style="width:100%;">
-      </div>
-      <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Password (Min. 6 chars) <span style="color:var(--danger);">*</span></label>
-        <input type="password" id="st-password" class="input-field" required placeholder="••••••••" style="width:100%;">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Password (6-20 chars) <span style="color:var(--danger);">*</span></label>
+          <input type="password" id="st-password" class="input-field" required maxlength="20" placeholder="Max 20 chars" style="width:100%;">
+        </div>
+        <div class="input-group">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Confirm Password <span style="color:var(--danger);">*</span></label>
+          <input type="password" id="st-confirm-password" class="input-field" required maxlength="20" placeholder="Confirm password" style="width:100%;">
+        </div>
       </div>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
         <div class="input-group">
@@ -5795,6 +6039,7 @@ function openAddStaffModal() {
             <option value="KITCHEN">Kitchen Staff</option>
             <option value="INVENTORY">Inventory Staff</option>
             <option value="MANAGER">Manager</option>
+            ${isAdminViewer ? '<option value="ADMIN">Branch Admin</option>' : ''}
             <option value="CUSTOMER">Customer</option>
           </select>
         </div>
@@ -5814,20 +6059,35 @@ async function submitAddStaff() {
   const username = document.getElementById("st-username")?.value.trim();
   const first_name = document.getElementById("st-firstname")?.value.trim();
   const last_name = document.getElementById("st-lastname")?.value.trim();
-  const email = document.getElementById("st-email")?.value.trim();
-  const password = document.getElementById("st-password")?.value;
+  const password = document.getElementById("st-password")?.value || "";
+  const confirmPassword = document.getElementById("st-confirm-password")?.value || "";
   const role = document.getElementById("st-role")?.value;
   const is_active = document.getElementById("st-status")?.value === "true";
 
-  if (!username || !first_name || !last_name || !email || !password) {
+  if (!username || !first_name || !last_name || !password || !confirmPassword) {
     Utils.showToast("Please fill in all required fields", "danger");
+    return;
+  }
+
+  if (password.length < 6) {
+    Utils.showToast("Password must be at least 6 characters.", "danger");
+    return;
+  }
+
+  if (password.length > 20) {
+    Utils.showToast("Password cannot exceed 20 characters.", "danger");
+    return;
+  }
+
+  if (password !== confirmPassword) {
+    Utils.showToast("Passwords do not match. Please re-enter.", "danger");
     return;
   }
 
   try {
     const res = await Auth.fetch("/api/v1/users", {
       method: "POST",
-      body: JSON.stringify({ username, first_name, last_name, email, password, role, is_active })
+      body: JSON.stringify({ username, first_name, last_name, password, role, is_active })
     });
     if (!res.ok) {
       const err = await res.json();
@@ -5835,7 +6095,11 @@ async function submitAddStaff() {
     }
     Utils.showToast("Staff account created successfully!", "success");
     Utils.closeModal();
-    renderUsers();
+    try {
+      localStorage.setItem("RESTOTRACK_SYNC_USERS", Date.now().toString());
+    } catch (_) {}
+    const c = document.getElementById("view-container") || document.getElementById("content") || document.querySelector(".page-wrapper");
+    await renderUsers(c);
   } catch (err) {
     Utils.showToast(err.message, "danger");
   }
@@ -5845,9 +6109,13 @@ async function submitAddStaff() {
 // 8. AUDIT LOGS
 // ─────────────────────────────────────────────────────────────────────────────
 async function renderLogs(c) {
-  const res = await Auth.fetch("/api/v1/activity-logs?limit=50");
-  if (!res.ok) throw new Error("Failed to load activity logs from server.");
-  const logs = await res.json();
+  c = c || document.getElementById("view-container");
+  if (!c) return;
+  let logs = [];
+  try {
+    const res = await Auth.fetch("/api/v1/activity-logs?limit=50");
+    if (res.ok) logs = await res.json();
+  } catch(e) {}
 
   c.innerHTML = `
     <div class="section-card">
@@ -5887,9 +6155,13 @@ async function renderLogs(c) {
 // 9. REPORTS & ANALYTICS
 // ─────────────────────────────────────────────────────────────────────────────
 async function renderReports(c) {
-  const txRes = await Auth.fetch("/api/v1/transactions?limit=100");
-  if (!txRes.ok) throw new Error("Failed to load sales report transactions from server.");
-  const transactions = await txRes.json();
+  c = c || document.getElementById("view-container");
+  if (!c) return;
+  let transactions = [];
+  try {
+    const txRes = await Auth.fetch("/api/v1/transactions?limit=100");
+    if (txRes.ok) transactions = await txRes.json();
+  } catch(e) {}
 
   const totalSales = transactions.reduce((acc, t) => acc + (t.net_amount || 0), 0);
 
@@ -5939,7 +6211,11 @@ async function renderReports(c) {
 // 10. SETTINGS & PROFILE
 // ─────────────────────────────────────────────────────────────────────────────
 async function renderSettings(c) {
-  const user = Auth.getUser();
+  c = c || document.getElementById("view-container");
+  if (!c) return;
+  const user = (typeof Auth !== 'undefined' && Auth.getUser) ? (Auth.getUser() || {}) : {};
+  const username = user.username || localStorage.getItem("username") || "User";
+  const roleName = ((user.role || localStorage.getItem("role") || "Staff") + "").replace(/_/g, ' ').toUpperCase();
   c.innerHTML = `
     <div class="section-card" style="max-width:550px;">
       <div class="section-head">
@@ -5948,11 +6224,11 @@ async function renderSettings(c) {
       <div style="padding:22px 24px;">
         <div class="input-group" style="margin-bottom:14px;">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Logged-in Username</label>
-          <input class="input-field" value="${Utils.escapeHtml(user.username)}" disabled style="width:100%;">
+          <input class="input-field" value="${Utils.escapeHtml(username)}" disabled style="width:100%;">
         </div>
         <div class="input-group" style="margin-bottom:14px;">
           <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Assigned Role</label>
-          <input class="input-field" value="${user.role.toUpperCase()}" disabled style="width:100%;">
+          <input class="input-field" value="${Utils.escapeHtml(roleName)}" disabled style="width:100%;">
         </div>
         <div style="margin-top:20px; padding-top:16px; border-top:1px solid rgba(205,190,150,0.25);">
           <button class="btn btn-danger" onclick="Auth.logout()"><i class="fas fa-sign-out-alt"></i> End Session / Logout</button>
@@ -5968,7 +6244,8 @@ async function renderSettings(c) {
 let globalSuppliers = [];
 
 async function renderSuppliers(c) {
-  if (!c) c = document.getElementById("content-area") || document.querySelector('.content-area') || document.querySelector('main');
+  c = c || document.getElementById("view-container") || document.getElementById("content-area");
+  if (!c) return;
   c.innerHTML = `<div style="padding:40px; text-align:center; color:var(--text-muted);">
     <i class="fas fa-spinner fa-spin" style="font-size:24px; margin-bottom:10px;"></i>
     <div>Loading suppliers...</div>
@@ -7263,7 +7540,10 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
           <div class="pl-stat-info">
             <h3>Total Orders Revenue</h3>
             <div class="pl-stat-count" style="color:#c9a227;">${Utils.formatCurrency(rev.total_orders_revenue || 0)}</div>
-            <div class="pl-stat-trend" style="color:var(--success, #10b981);"><i class="fas fa-receipt"></i> ${Utils.escapeHtml(rev.total_orders_count || 0)} completed order(s)</div>
+            <div class="pl-stat-trend" style="color:${(rev.total_orders_revenue || 0) > 0 ? 'var(--success, #10b981)' : '#f59e0b'};">
+              <i class="fas ${(rev.total_orders_revenue || 0) > 0 ? 'fa-vault' : 'fa-clock'}"></i>
+              ${(rev.total_orders_revenue || 0) > 0 ? Utils.escapeHtml((rev.transferred_orders_count || 0)) + ' transferred order(s) saved' : 'Awaiting manager transfer to income'}
+            </div>
           </div>
         </div>
 
@@ -7942,17 +8222,14 @@ window.addEventListener("storage", (e) => {
     if (role === "kitchen") {
       renderKitchen();
     } else if (role === "cashier") {
-      try {
-        const payload = JSON.parse(e.newValue);
-        if (payload.status === "READY" || payload.status === "COMPLETED") {
-          Utils.showToast(`Kitchen: Order #${payload.orderId} is READY TO GO!`, "success");
-        } else if (payload.status === "PREPARING") {
-          Utils.showToast(`Kitchen accepted Order #${payload.orderId}`, "info");
-        } else {
-          Utils.showToast("Kitchen order status updated", "info");
-        }
-      } catch (err) {
-        Utils.showToast("Kitchen order status updated", "info");
+      if (document.getElementById("tx-tbody") && typeof renderTransactions === "function") {
+        renderTransactions();
+      }
+      if (document.getElementById("cust-orders-content") && typeof loadCustomerOrdersTable === "function") {
+        loadCustomerOrdersTable();
+      }
+      if (typeof fetchPendingOnlineOrders === "function") {
+        fetchPendingOnlineOrders();
       }
     }
   }
@@ -8013,16 +8290,10 @@ function openOnlineOrdersModal() {
             <div>
               <span style="background:#c9a227; color:#18181b; font-size:11px; padding:3px 8px; border-radius:4px; font-weight:bold; margin-right:8px;">TABLE ${Utils.escapeHtml(o.table_number || 'Takeout')}</span>
               <strong style="color:var(--text-main); font-size:14px;">${Utils.escapeHtml(o.order_number)}</strong>
-              <div style="margin-top:6px;">${paymentBadgeHtml(o)}</div>
             </div>
             <div style="font-size:12px; color:var(--text-muted);">
-              ${new Date(o.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+              <i class="fas fa-clock" style="margin-right:4px;"></i> Ordered at ${new Date(o.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
             </div>
-          </div>
-          <div style="font-size:13px; color:var(--text-main); margin-bottom:12px;">
-            <div><i class="fas fa-user" style="color:var(--text-muted); margin-right:6px;"></i> <strong>${Utils.escapeHtml(o.customer_name)}</strong></div>
-            <div><i class="fas fa-chair" style="color:var(--text-muted); margin-right:6px;"></i> ${Utils.escapeHtml(o.table_number || o.order_type)}</div>
-            ${o.notes ? `<div style="background:#fef3c7; color:#92400e; padding:4px 8px; border-radius:6px; font-size:11px; margin-top:6px;"><i class="fas fa-comment"></i> ${Utils.escapeHtml(o.notes)}</div>` : ''}
           </div>
           <ul style="list-style:none; padding:0; margin:0 0 16px 0; font-size:13px;">
             ${itemsHtml}
@@ -8487,18 +8758,14 @@ async function loadCustomerOrdersTable() {
             <div>
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                 <span style="background:#c9a227; color:#18181b; font-weight:800; font-size:12px; padding:4px 10px; border-radius:16px; letter-spacing:0.5px;">
-                  <i class="fas fa-chair" style="margin-right:4px;"></i> TABLE ${Utils.escapeHtml(o.table_number || 'Takeout')}
+                  <i class="fas fa-chair" style="margin-right:4px;"></i> ${Utils.escapeHtml(o.table_number ? (o.table_number.toLowerCase().startsWith('table') ? o.table_number.toUpperCase() : 'TABLE ' + o.table_number) : 'TAKEOUT')}
                 </span>
                 <span style="font-size:11px; font-family:monospace; background:rgba(201,162,39,0.12); color:#c9a227; padding:3px 8px; border-radius:4px; font-weight:800; letter-spacing:0.5px;">
                   ${(typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('CUST', o.id) : (o.order_number || `CUST-${o.id}`)}
                 </span>
               </div>
-              <div style="margin-bottom:8px; font-size:13px;">
-                <div><i class="fas fa-user" style="color:var(--text-muted); margin-right:6px;"></i> <strong>${Utils.escapeHtml(o.customer_name)}</strong></div>
-                <div style="color:var(--text-muted); font-size:11px; margin-top:2px;"><i class="fas fa-clock" style="margin-right:4px;"></i> Ordered at ${Utils.escapeHtml(timeStr)} • ${Utils.escapeHtml(o.order_type || 'Dine In')}</div>
-                <div style="margin-top:8px;">${paymentBadgeHtml(o)}</div>
-                ${o.payment_attempt && o.payment_attempt.outcome === 'mismatch' && o.payment_status === 'discrepancy' ? `<div style="margin-top:6px; padding:6px 8px; background:#fee2e2; color:#991b1b; border-radius:6px; font-size:11px; font-weight:700;"><i class="fas fa-exclamation-triangle"></i> Expected ${Utils.formatCurrency(o.payment_attempt.expected_amount)}, reported ${Utils.formatCurrency(o.payment_attempt.reported_amount)}</div>` : ''}
-                ${o.notes ? `<div style="background:#fef3c7; color:#92400e; padding:4px 8px; border-radius:6px; font-size:11px; margin-top:6px;"><i class="fas fa-comment"></i> ${Utils.escapeHtml(o.notes)}</div>` : ''}
+              <div style="margin-bottom:8px; font-size:12px;">
+                <div style="color:var(--text-muted);"><i class="fas fa-clock" style="margin-right:4px;"></i> Ordered at ${Utils.escapeHtml(timeStr)} • ${Utils.escapeHtml(o.order_type || 'Dine In')}</div>
               </div>
               <div style="margin:12px 0; max-height:140px; overflow-y:auto;">
                 ${itemsList}
@@ -8513,9 +8780,6 @@ async function loadCustomerOrdersTable() {
                 ${customerOrderVerifyButton(o)}
                 <button class="btn btn-primary btn-sm" onclick="processOnlineOrder(${Number(o.id)})" style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; font-weight:700;">
                   <i class="fas fa-cash-register"></i> Send to POS
-                </button>
-                <button class="btn btn-outline btn-sm" onclick="setCustomerOrderStatus(${o.id}, 'accepted')" title="Accept Order">
-                  <i class="fas fa-check"></i> Accept
                 </button>
                 <button class="btn btn-danger btn-sm" onclick="setCustomerOrderStatus(${o.id}, 'rejected')" title="Reject / Cancel" style="background:#dc3545; border-color:#dc3545; color:#fff;">
                   <i class="fas fa-times"></i>
@@ -8543,7 +8807,6 @@ async function loadCustomerOrdersTable() {
                 <tr>
                   <th>Order #</th>
                   <th>Table</th>
-                  <th>Customer</th>
                   <th>Items</th>
                   <th>Total</th>
                   <th>Status</th>
@@ -8557,7 +8820,6 @@ async function loadCustomerOrdersTable() {
                   <tr>
                     <td><strong style="font-family:monospace; font-size:12px; color:#c9a227;">${(typeof Utils !== 'undefined' && Utils.formatId) ? Utils.formatId('CUST', h.id) : h.order_number}</strong></td>
                     <td><span class="badge" style="background:rgba(201,162,39,0.15); color:#c9a227; font-weight:700;">${Utils.escapeHtml(h.table_number || h.order_type)}</span></td>
-                    <td><strong>${Utils.escapeHtml(h.customer_name)}</strong></td>
                     <td style="font-size:12px; color:var(--text-muted);">${(h.items || []).map(i => `${i.quantity}x ${Utils.escapeHtml(i.name)}`).join(', ')}</td>
                     <td><strong style="color:#c9a227;">₱${parseFloat(h.total_amount).toFixed(2)}</strong></td>
                     <td>
@@ -8602,6 +8864,8 @@ async function setCustomerOrderStatus(id, newStatus) {
 // TABLE QR CODE MANAGEMENT
 // ─────────────────────────────────────────────────────────────────────────────
 async function renderTables(c) {
+  c = c || document.getElementById("view-container");
+  if (!c) return;
   c.innerHTML = `
     <div class="section-card" style="padding:24px; margin-bottom: 24px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
@@ -9634,6 +9898,8 @@ async function submitEditCashierDrawer(event, shiftId) {
       localStorage.setItem("RESTOTRACK_DRAWER_RESET", Date.now().toString());
     } catch (e) {}
 
+        const _posEl = document.getElementById("pos-cash-in-drawer-display");
+    if (_posEl) _posEl.textContent = Utils.formatCurrency(amount);
     debouncedDrawerRefresh(true);
   } catch (err) {
     console.error("Submit edit cashier drawer error:", err);
@@ -9695,7 +9961,7 @@ window.reloadTransferDialogData = reloadTransferDialogData;
   }
 
   function handleRealtimeEvent(event, data) {
-    console.log(`[RealTime] Live event received: ${event}`, data);
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') console.log(`[RealTime] Live event received: ${event}`, data);
 
     try {
       localStorage.setItem("RESTOTRACK_EVENT", JSON.stringify({ event, data, timestamp: Date.now() }));
@@ -9720,6 +9986,8 @@ window.reloadTransferDialogData = reloadTransferDialogData;
         }
 
         if (activeView === "cash_drawer") {
+          const _posEl = document.getElementById("pos-cash-in-drawer-display");
+          if (_posEl && typeof amount !== "undefined") _posEl.textContent = Utils.formatCurrency(amount);
           debouncedDrawerRefresh(true);
         } else if (activeView === "profit_loss" || activeView === "purchases") {
           if (typeof renderProfitLoss === "function") renderProfitLoss();
@@ -9732,11 +10000,13 @@ window.reloadTransferDialogData = reloadTransferDialogData;
             Auth.fetch("/api/v1/shifts/drawer-summary").then(r => r.ok ? r.json() : null).then(dData => {
               if (!dData) return;
               const cUser = Auth.getUser();
-              const myS = (dData.shifts || []).find(s => s.status === 'open' && !!cUser && s.cashier_id === cUser.id);   // own drawer only, never another person's
+              const myS = resolveCashierShift(dData.shifts, cUser);
               const dCashEl = document.getElementById("pos-cash-in-drawer-display");
               const dOrdEl = document.getElementById("pos-complete-orders-display");
-              if (dCashEl) dCashEl.textContent = Utils.formatCurrency(myS ? myS.expected_cash : 0);
-              if (dOrdEl) dOrdEl.textContent = "Orders: " + Utils.formatCurrency(myS ? myS.total_sales : 0);
+              const cashVal = myS ? (myS.expected_cash ?? 0) : (dData.total_cash_in_drawers || 0);
+              const ordVal = myS ? (myS.total_sales ?? 0) : (dData.today_total_orders_amount || 0);
+              if (dCashEl) dCashEl.textContent = Utils.formatCurrency(cashVal);
+              if (dOrdEl) dOrdEl.textContent = "Orders: " + Utils.formatCurrency(ordVal);
             }).catch(() => {});
           }
         }
@@ -9828,9 +10098,20 @@ window.reloadTransferDialogData = reloadTransferDialogData;
         } else if (activeView === "dashboard") {
           if (typeof renderDashboard === "function") renderDashboard();
         } else if (activeView === "cash_drawer") {
+          const _posEl = document.getElementById("pos-cash-in-drawer-display");
+          if (_posEl && typeof amount !== "undefined") _posEl.textContent = Utils.formatCurrency(amount);
           debouncedDrawerRefresh(true);
         } else if (activeView === "transactions") {
           if (typeof renderTransactions === "function") renderTransactions();
+        }
+        break;
+
+      case "USER_CREATED":
+      case "USER_UPDATED":
+      case "USERS_UPDATED":
+        if (document.getElementById("branch-staff-tbody") || activeView === "users") {
+          const c = document.getElementById("view-container") || document.getElementById("content") || document.querySelector(".page-wrapper");
+          if (typeof renderUsers === "function") renderUsers(c);
         }
         break;
     }
@@ -9925,10 +10206,15 @@ window.reloadTransferDialogData = reloadTransferDialogData;
               if (document.getElementById("form-cash-movement") && typeof reloadTransferDialogData === "function") {
                 reloadTransferDialogData(false);
               }
-              if (activeView === "cash_drawer") debouncedDrawerRefresh(true);
-              else if (activeView === "profit_loss" || activeView === "purchases") renderProfitLoss();
-              else if (activeView === "dashboard") renderDashboard();
-              else if (activeView === "transactions") renderTransactions();
+              if (activeView === "cash_drawer") {
+                debouncedDrawerRefresh(true);
+              } else if (activeView === "profit_loss" || activeView === "purchases") {
+                renderProfitLoss();
+              } else if (activeView === "dashboard") {
+                renderDashboard();
+              } else if (activeView === "transactions") {
+                renderTransactions();
+              }
               break;
             case "ORDER_CREATED":
             case "CUSTOMER_ORDER_CREATED":
@@ -9942,6 +10228,7 @@ window.reloadTransferDialogData = reloadTransferDialogData;
               if (activeView === "kitchen") renderKitchen();
               else if (activeView === "drinks" || activeView === "drinks_station") renderDrinksStation();
               else if (activeView === "customer_orders") renderCustomerOrdersView();
+              else if (activeView === "transactions") renderTransactions();
               break;
             case "INVENTORY_UPDATED":
               cachedInventory = [];
@@ -9953,14 +10240,24 @@ window.reloadTransferDialogData = reloadTransferDialogData;
               if (document.getElementById("form-cash-movement") && typeof reloadTransferDialogData === "function") {
                 reloadTransferDialogData(false);
               }
-              if (activeView === "profit_loss" || activeView === "purchases") renderProfitLoss();
-              else if (activeView === "dashboard") renderDashboard();
-              else if (activeView === "cash_drawer") debouncedDrawerRefresh(true);
-              else if (activeView === "transactions") renderTransactions();
+              if (activeView === "profit_loss" || activeView === "purchases") {
+                renderProfitLoss();
+              } else if (activeView === "dashboard") {
+                renderDashboard();
+              } else if (activeView === "cash_drawer") {
+                debouncedDrawerRefresh(true);
+              } else if (activeView === "transactions") {
+                renderTransactions();
+              }
               break;
           }
         }
       } catch (err) {}
+    } else if (e.key === "RESTOTRACK_SYNC_USERS") {
+      const c = document.getElementById("view-container") || document.getElementById("content") || document.querySelector(".page-wrapper");
+      if (document.getElementById("branch-staff-tbody") && typeof renderUsers === "function") {
+        renderUsers(c);
+      }
     }
   });
 

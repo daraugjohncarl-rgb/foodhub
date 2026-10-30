@@ -24,6 +24,7 @@ from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from app.db import engine, Base, get_db
 import app.models as models
 from app.core.security import get_password_hash, IS_PRODUCTION
@@ -232,6 +233,8 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(RequestContextMiddleware)
+# GZip compression: reduces payload size for JS/CSS/JSON (510KB views.js → ~120KB over the wire)
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 @app.exception_handler(Exception)
@@ -286,13 +289,17 @@ class PublicStaticFiles(StaticFiles):
         normalized = path.replace("\\", "/").lstrip("/")
         if normalized.lower().endswith((".html", ".htm")) and normalized not in PUBLIC_STATIC_HTML:
             raise HTTPException(status_code=404)
-        return await super().get_response(path, scope)
+        response = await super().get_response(path, scope)
+        ext = os.path.splitext(normalized)[1].lower()
+        if ext in (".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".woff", ".woff2", ".ttf"):
+            response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=604800"
+        return response
 
 
 # Mount static files directories to serve frontend assets using absolute paths
 app.mount("/static", PublicStaticFiles(directory=STATIC_DIR), name="static")
 if os.path.exists(os.path.join(STATIC_DIR, "assets")):
-    app.mount("/assets", StaticFiles(directory=os.path.join(STATIC_DIR, "assets")), name="assets")
+    app.mount("/assets", PublicStaticFiles(directory=os.path.join(STATIC_DIR, "assets")), name="assets")
 
 
 NO_CACHE_HEADERS = {

@@ -28,7 +28,7 @@ class UserCreate(BaseModel):
     last_name: Optional[str] = Field(None, max_length=50)
     email: Optional[str] = Field(None, max_length=100)
     phone: Optional[str] = Field(None, max_length=30)
-    password: str = Field(..., min_length=8, max_length=128, description="Plaintext password to hash")
+    password: str = Field(..., min_length=6, max_length=128, description="Plaintext password to hash")
     role: UserRole = Field(UserRole.ADMIN)
     tenant_id: Optional[int] = Field(None, description="Nullable. Required for non-superadmin users")
     is_active: Optional[bool] = Field(True)
@@ -47,7 +47,7 @@ class PasswordChangeRequest(BaseModel):
     new_password: str = Field(..., min_length=8, max_length=128)
 
 class PasswordResetRequest(BaseModel):
-    new_password: str = Field(..., min_length=8, max_length=128)
+    new_password: str = Field(..., min_length=6, max_length=128)
 
 class CustomerRegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50, description="Desired customer username")

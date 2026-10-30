@@ -8,18 +8,18 @@ sys.stdout.reconfigure(encoding='utf-8')
 BASE_URL = "http://127.0.0.1:8000"
 
 def run_e2e_tests():
-    client = httpx.Client(base_url=BASE_URL, timeout=15.0, follow_redirects=True)
+    client = httpx.Client(base_url=BASE_URL, headers={"Origin": BASE_URL}, timeout=15.0, follow_redirects=True)
     
     print("\n==========================================")
     print(" 🚀 STARTING FULL SYSTEM E2E VALIDATION")
     print("==========================================\n")
     
     # 1. Health and DB Connection Check
-    print("▶ 1. Testing DB Connectivity (/test-db)...")
-    db_res = client.get("/test-db")
+    print("▶ 1. Testing DB Connectivity (/readyz)...")
+    db_res = client.get("/readyz")
     assert db_res.status_code == 200, f"DB test failed: {db_res.text}"
     db_data = db_res.json()
-    print(f"  ✓ Database Online: {db_data.get('database_name')} | Active Tenants: {db_data['stats']['active_tenants']} | Users: {db_data['stats']['total_users']}")
+    print(f"  ✓ Database Online: Status={db_data.get('status')}")
 
     # 2. Authentication for all default roles
     print("\n▶ 2. Testing Authentication For All 6 Roles...")
@@ -195,20 +195,22 @@ def run_e2e_tests():
         "notes": "Extra crispy fries please",
         "total": 240.0,
         "items": [
-            {"name": test_product["name"], "variant": "Regular", "price": float(test_product["price"]), "quantity": 2}
+            {"product_id": test_product["id"], "name": test_product["name"], "variant": "Regular", "price": float(test_product["price"]), "quantity": 2}
         ]
     }
     cust_res = client.post("/api/v1/customer-orders", json=cust_payload)
     assert cust_res.status_code == 201, f"Customer order submission failed: {cust_res.text}"
     cust_data = cust_res.json()
-    print(f"  ✓ Customer Order [{cust_order_no}] placed successfully (ID: {cust_data.get('order_id')})")
+    actual_order_no = cust_data.get("order_number", cust_order_no)
+    actual_order_id = cust_data.get("order_id")
+    print(f"  ✓ Customer Order [{actual_order_no}] placed successfully (ID: {actual_order_id})")
 
     # Cashier sees pending customer order
     pending_res = client.get("/api/v1/customer-orders/pending", headers=cashier_headers)
     assert pending_res.status_code == 200
     pending_list = pending_res.json()
-    matched = [o for o in pending_list if o["order_number"] == cust_order_no]
-    assert len(matched) > 0, f"Order {cust_order_no} not found in pending list"
+    matched = [o for o in pending_list if o.get("order_number") == actual_order_no or o.get("id") == actual_order_id]
+    assert len(matched) > 0, f"Order {actual_order_no} (ID: {actual_order_id}) not found in pending list"
     print(f"  ✓ Cashier received pending online order from '{matched[0]['customer_name']}' for Table 8")
 
     # Cashier accepts the customer order

@@ -1,4 +1,4 @@
-/* =========================================================
+﻿/* =========================================================
    BLESSIE FOOD HUB
    CUSTOMER QR MENU
    MINIMAL / RESPONSIVE
@@ -2219,3 +2219,5 @@ img {
 }
 
 
+
+.toast, .toast.show { display: none !important; visibility: hidden !important; opacity: 0 !important; pointer-events: none !important; }

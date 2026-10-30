@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from app.db import get_db
 import app.models as models
 from app.core.dependencies import require_kitchen_access, resolve_tenant_id
-from app.routers.customer_orders import apply_customer_order_status
+from app.routers.customer_orders import change_customer_order_status, _lock_order
 
 router = APIRouter(prefix="/kitchen", tags=["Kitchen — KDS & Drinks"])
 
@@ -282,19 +282,20 @@ def update_order_status(
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid customer order ID.")
 
-        order = db.query(models.CustomerOrder).filter(
-            models.CustomerOrder.id == cust_id,
-            models.CustomerOrder.tenant_id == tenant_id
-        ).first()
-        if not order:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer order not found.")
+        # Same locked path and rules as PUT /customer-orders/{id}/status (payment disputes, final states,
+        # no rejection while a sale is recorded), so the kitchen cannot bypass them.
+        order = _lock_order(db, tenant_id, cust_id)
 
         # Map KDS statuses to CustomerOrder statuses
         target_status = "completed" if new_status in ["completed", "ready"] else new_status
         if target_status == "cancelled":
             target_status = "rejected"
-        apply_customer_order_status(order, target_status)
-        db.commit()
+        try:
+            change_customer_order_status(db, order, target_status, current_user)
+            db.commit()
+        except HTTPException:
+            db.rollback()
+            raise
 
         # Real-time WebSocket notifications
         try:
@@ -307,7 +308,8 @@ def update_order_status(
             notify_realtime_event(order.tenant_id, "CUSTOMER_ORDER_UPDATED", {
                 "order_id": order.id,
                 "order_number": order.order_number,
-                "status": target_status
+                "status": target_status,
+                "payment_status": order.payment_status
             })
             notify_realtime_event(order.tenant_id, "ORDER_UPDATED", {
                 "order_id": order.id,
@@ -330,26 +332,41 @@ def update_order_status(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid order ID format.")
 
-    tx = db.query(models.Transaction).options(
-        joinedload(models.Transaction.items).joinedload(models.TransactionItem.product)
-    ).filter(
+    tx = db.query(models.Transaction).filter(
         models.Transaction.id == tx_id,
         models.Transaction.tenant_id == tenant_id
-    ).first()
+    ).with_for_update().first()
 
     if not tx:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction order not found.")
 
     if tx.status in ["rejected", "cancelled"]:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Order #{tx.id} has already been {tx.status.upper()}. Its status is locked and cannot be changed."
         )
+    if tx.fulfillment_status == "completed" and new_status != "completed":
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"Order #{tx.id} was already completed and cannot be reopened.")
 
-    # Update fulfillment_status, leaving payment status intact
     tx.fulfillment_status = new_status
     if new_status in ["rejected", "cancelled"]:
-        tx.status = new_status
+        tx.status = "rejected"
+        tx.void_reason = str(body.get("reason") or "Rejected by kitchen crew")[:150]
+        from datetime import datetime
+        tx.voided_at = datetime.now()
+        tx.voided_by = getattr(current_user, "id", None)
+        collected = any(p.status == "completed" for p in tx.payments)
+        tx.refund_status = "pending" if collected else None
+        for p in tx.payments:
+            p.status = "cancelled"
+        try:
+            from app.services import stock
+            stock.restore_for_void(db, tx, current_user.id)
+        except Exception:
+            pass
 
     db.commit()
 

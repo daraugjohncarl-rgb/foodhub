@@ -6,7 +6,7 @@ import re
 BASE_URL = "http://127.0.0.1:8000"
 
 def test_system():
-    client = httpx.Client(base_url=BASE_URL, timeout=10.0, follow_redirects=True)
+    client = httpx.Client(base_url=BASE_URL, headers={"Origin": BASE_URL}, timeout=10.0, follow_redirects=True)
     
     print("=== 1. TESTING HTML ROUTES AND STATIC ASSETS ===")
     pages = [
@@ -119,14 +119,15 @@ def test_system():
         "notes": "No onions",
         "total": 150.0,
         "items": [
-            {"name": "Burger", "variant": "Regular", "price": 75.0, "quantity": 2}
+            {"product_id": 1, "name": "Burger", "variant": "Regular", "price": 75.0, "quantity": 2}
         ]
     }
     order_res = client.post("/api/v1/customer-orders", json=order_payload)
     print(f"  Customer order submission: {order_res.status_code} -> {order_res.text}")
     
     # Check pending customer orders
-    pending_res = client.get("/api/v1/customer-orders/pending")
+    h = {"Authorization": f"Bearer {tokens['cashier']}"} if "cashier" in tokens else {}
+    pending_res = client.get("/api/v1/customer-orders/pending", headers=h)
     print(f"  Customer pending orders: {pending_res.status_code} -> {len(pending_res.json()) if pending_res.status_code==200 else pending_res.text} pending")
 
     print("\n=== SUMMARY OF ISSUES FOUND ===")

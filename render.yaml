@@ -8,7 +8,7 @@ services:
     region: singapore # or oregon / frankfurt
     plan: free # use a paid plan for production to avoid cold starts
     buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
-    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2"
     healthCheckPath: "/healthz"
     envVars:
       - key: PYTHON_VERSION

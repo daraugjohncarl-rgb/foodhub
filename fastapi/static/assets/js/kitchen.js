@@ -110,14 +110,16 @@ async function initKitchenApp() {
         renderView(targetView);
     }
 
-    // 9. Periodic auto-refresh
+    // 9. Periodic auto-refresh (skipped if WebSocket is connected and pushing events live)
     setInterval(() => {
+        const wsSocket = window.BlessieRealtime && window.BlessieRealtime.getSocket();
+        if (wsSocket && wsSocket.readyState === WebSocket.OPEN) return;
         const activeLink = document.querySelector("aside.sidebar .nav-link.active, .sidebar a.active");
         const activeView = activeLink ? (activeLink.getAttribute("href") || "").replace(/^#\/?/, "").trim() : "";
         if (activeView === "kitchen" || !activeView) {
             if (typeof renderKitchen === "function") renderKitchen();
         }
-    }, 10000);
+    }, 12000);
 }
 
 // Fast startup: initialize immediately if DOM is already ready, or on DOMContentLoaded

@@ -1,4 +1,4 @@
-/* =========================================================
+﻿/* =========================================================
    BLESSIE FOODHUB ADMIN - UNIFIED STYLESHEET (style.css)
 ========================================================= */
 
@@ -1582,28 +1582,12 @@ tbody tr:hover {
    TOAST
 ========================================================= */
 #toastContainer,
-#toast-container {
-    position: fixed;
-    bottom: 24px;
-    right: 24px;
-    z-index: 1100;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-
+#toast-container,
 .toast {
-    background: #1f1d1a;
-    color: #ffffff;
-    padding: 14px 20px;
-    border-radius: 12px;
-    font-size: 13px;
-    font-weight: 500;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    animation: cardAppear 0.3s ease;
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
 }
 
 /* =========================================================
@@ -2070,20 +2054,81 @@ td {
 
 .pos-item-card,
 .pos-product-card {
-    border-radius: 10px !important;
+    position: relative !important;
+    aspect-ratio: 1 / 1.08 !important;
+    min-height: 130px !important;
+    border-radius: 12px !important;
     overflow: hidden !important;
     display: flex !important;
     flex-direction: column !important;
+    background: #18181b !important;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12) !important;
     transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+    border: none !important;
 }
 
 .pos-item-card:hover,
 .pos-product-card:hover {
-    transform: translateY(-2px) !important;
-    box-shadow: 0 6px 18px rgba(201, 162, 39, 0.15) !important;
+    transform: translateY(-3px) !important;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28) !important;
 }
 
-/* Image container */
+/* Full Bleed Picture Card (Matching Picture 2) */
+.pos-item-card .pos-card-bg-img {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    display: block !important;
+    z-index: 1 !important;
+}
+
+.pos-item-card .pos-card-overlay {
+    position: absolute !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    height: auto !important;
+    z-index: 2 !important;
+    pointer-events: none !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: flex-end !important;
+    padding: 20px 8px 6px 8px !important;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.92) 0%, rgba(0, 0, 0, 0.65) 45%, transparent 100%) !important;
+}
+
+.pos-item-card .pos-card-name,
+.pos-item-card .pos-card-overlay .pos-card-name,
+.pos-item-card > div.pos-card-overlay > div.pos-card-name {
+    font-size: 12.5px !important;
+    font-weight: 800 !important;
+    color: #ffffff !important;
+    line-height: 1.15 !important;
+    height: auto !important;
+    max-height: 28px !important;
+    margin-bottom: 1px !important;
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+    letter-spacing: -0.2px !important;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 2px 6px rgba(0, 0, 0, 0.9) !important;
+}
+
+.pos-item-card .pos-card-price {
+    font-size: 15px !important;
+    font-weight: 900 !important;
+    color: #facc15 !important;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 2px 6px rgba(0, 0, 0, 0.9) !important;
+    letter-spacing: -0.3px !important;
+    line-height: 1.15 !important;
+    margin-top: 0 !important;
+}
+
+/* Image container fallback */
 .pos-item-card > div[style*="background:#f9f9f9"],
 .pos-item-card > div[style*="background: #f9f9f9"] {
     height: 80px !important;
@@ -2094,51 +2139,141 @@ td {
     font-size: 20px !important;
 }
 
-/* Badge and Add button */
-.pos-item-card > div[style*="position:absolute; top:10px"],
-.pos-item-card > div[style*="position:absolute; top: 10px"],
-.pos-item-card > div[style*="position:absolute; top:6px"],
-.pos-item-card > div[style*="position:absolute; top: 6px"] {
-    top: 6px !important;
-    left: 6px !important;
-    right: 6px !important;
+/* Badge: Clean Top-Left Position */
+.pos-card-badge-wrap,
+.pos-item-card .pos-card-badge-wrap,
+.pos-item-card > div[style*="left:8px"],
+.pos-item-card > div[style*="left: 8px"] {
+    top: 8px !important;
+    left: 8px !important;
+    right: auto !important;
+    width: auto !important;
+    z-index: 5 !important;
 }
 
-.pos-item-card > div[style*="position:absolute;"] span {
+.pos-item-card > div[style*="position:absolute;"] span:not(.pos-card-code-badge) {
     font-size: 8px !important;
     padding: 2px 5px !important;
     border-radius: 4px !important;
 }
 
-.pos-item-card .add-btn {
-    width: 22px !important;
-    height: 22px !important;
-    font-size: 9px !important;
+/* Picture 2 Style: Clean Gold Code with Crisp Outline Shadow, Erased Black Background */
+.pos-card-code-badge,
+.pos-item-card .pos-card-code-badge,
+.pos-item-card > div span.pos-card-code-badge,
+span.pos-card-code-badge {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: transparent !important;
+    background-color: transparent !important;
+    color: #facc15 !important;
+    border: none !important;
+    outline: none !important;
+    font-weight: 900 !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 15px !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    letter-spacing: 0.5px !important;
+    text-transform: uppercase !important;
+    line-height: 1 !important;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 2px 6px rgba(0, 0, 0, 0.9), 1px 1px 2px #000, -1px -1px 2px #000, 1px -1px 2px #000, -1px 1px 2px #000 !important;
+    z-index: 5 !important;
+}
+
+.pos-card-badge-wrap,
+.pos-item-card .pos-card-badge-wrap,
+.pos-item-card div.pos-card-badge-wrap {
+    background: transparent !important;
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+/* Plus button completely erased */
+.pos-item-card .add-btn,
+.pos-item-card button.add-btn {
+    display: none !important;
+    visibility: hidden !important;
 }
 
 /* Product Card Details */
 .pos-item-card > div[style*="padding:14px"],
 .pos-item-card > div[style*="padding: 14px"],
+.pos-item-card > div[style*="padding:10px"],
+.pos-item-card > div[style*="padding: 10px"],
 .pos-item-card > div[style*="padding:8px"],
 .pos-item-card > div[style*="padding: 8px"] {
     padding: 8px 10px !important;
 }
 
-.pos-item-card > div[style*="padding:"] > div[style*="font-weight:700"] {
-    font-size: 11px !important;
+.pos-item-card > div[style*="padding:"]:not(.pos-card-overlay) > div[style*="font-weight:"] {
+    font-size: 12.5px !important;
+    font-weight: 800 !important;
     line-height: 1.25 !important;
-    height: 28px !important;
-    margin-bottom: 6px !important;
+    height: 30px !important;
+    margin-bottom: 5px !important;
     display: -webkit-box !important;
     -webkit-line-clamp: 2 !important;
     -webkit-box-orient: vertical !important;
     overflow: hidden !important;
 }
 
+/* Explicit bottom placement for product name right above price */
+.pos-item-card .pos-card-overlay {
+    position: absolute !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    height: auto !important;
+    z-index: 2 !important;
+    pointer-events: none !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: flex-end !important;
+    padding: 16px 8px 6px 8px !important;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.92) 0%, rgba(0, 0, 0, 0.65) 45%, transparent 100%) !important;
+}
+
+.pos-item-card .pos-card-name,
+.pos-item-card .pos-card-overlay .pos-card-name,
+.pos-item-card > div.pos-card-overlay > div.pos-card-name {
+    font-size: 12.5px !important;
+    font-weight: 800 !important;
+    color: #ffffff !important;
+    line-height: 1.15 !important;
+    height: auto !important;
+    max-height: 28px !important;
+    margin-bottom: 1px !important;
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+    letter-spacing: -0.2px !important;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 2px 6px rgba(0, 0, 0, 0.9) !important;
+}
+
+.pos-item-card .pos-card-price,
+.pos-item-card .pos-card-overlay .pos-card-price {
+    font-size: 15px !important;
+    font-weight: 900 !important;
+    color: #facc15 !important;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 2px 6px rgba(0, 0, 0, 0.9) !important;
+    letter-spacing: -0.3px !important;
+    line-height: 1.15 !important;
+    margin-top: 0 !important;
+}
+
+.pos-item-card span[style*="font-size:15px"],
+.pos-item-card span[style*="font-size: 15px"],
 .pos-item-card span[style*="font-size:16px"],
 .pos-item-card span[style*="font-size: 16px"] {
-    font-size: 13px !important;
-    font-weight: 800 !important;
+    font-size: 15px !important;
+    font-weight: 900 !important;
+    color: #d97706 !important;
 }
 
 .pos-item-card span[style*="font-size:11px"],

@@ -19,8 +19,19 @@ import argparse
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-# Configure sys.path so 'app.*' imports work from the root workspace
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Self-healing environment check: if uvicorn or dependencies are missing, delegate to .venv
+try:
+    import uvicorn
+    import fastapi
+except ImportError:
+    venv_py = os.path.join(ROOT_DIR, ".venv", "Scripts", "python.exe")
+    if os.path.exists(venv_py) and os.path.abspath(sys.executable).lower() != os.path.abspath(venv_py).lower():
+        import subprocess
+        sys.exit(subprocess.call([venv_py, os.path.abspath(__file__)] + sys.argv[1:]))
+
+# Configure sys.path so 'app.*' imports work from the root workspace
 FASTAPI_DIR = os.path.join(ROOT_DIR, "fastapi")
 if FASTAPI_DIR not in sys.path:
     sys.path.insert(0, FASTAPI_DIR)
@@ -57,6 +68,7 @@ def main():
     print(" 🍔 INBOX POS - BLESSIE FOODHUB BACKEND & WEB APP")
     print("========================================================")
     print(f"  • Local Server URL : http://{args.host}:{args.port}")
+    print(f"  • Cashier POS URL  : http://{args.host}:{args.port}/cashier#pos")
     print(f"  • API Documentation: http://{args.host}:{args.port}/docs")
     print(f"  • Health check     : http://{args.host}:{args.port}/healthz")
     print("--------------------------------------------------------")

@@ -515,7 +515,7 @@ def create_inventory_item(
         tenant_id=tenant_id,
         name=body.name.strip(),
         category=body.category.strip() if body.category else "Kitchen",
-        sku=body.sku.strip() if body.sku else f"SKU-{int(time.time())}",
+        sku=body.sku.strip() if (body.sku and body.sku.strip()) else None,
         quantity=body.quantity,
         unit=body.unit.strip(),
         min_stock=body.min_stock,

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * UI Utilities, Modals, Toasts, Receipt Printing & Formatting
  */
 
@@ -16,29 +16,8 @@ const Utils = {
   },
 
   showToast(msg, type = "info") {
-    let container = document.getElementById("toast-container");
-    if (!container) {
-      container = document.createElement("div");
-      container.id = "toast-container";
-      document.body.appendChild(container);
-    }
-
-    const toast = document.createElement("div");
-    toast.className = `toast toast-${type === 'danger' ? 'danger' : type === 'success' ? 'success' : 'info'}`;
-    const iconHtml = type === 'success' 
-      ? '<i class="fas fa-check-circle" style="color:var(--success, #10b981);"></i>' 
-      : type === 'danger' 
-        ? '<i class="fas fa-exclamation-triangle" style="color:var(--danger, #ef4444);"></i>' 
-        : '<i class="fas fa-info-circle" style="color:var(--info, #0284c7);"></i>';
-    toast.innerHTML = `<span style="display:inline-flex; align-items:center;">${iconHtml}</span> <span class="toast-msg"></span>`;
-    toast.querySelector(".toast-msg").textContent = msg;
-    container.appendChild(toast);
-
-    setTimeout(() => {
-      toast.style.opacity = '0';
-      toast.style.transform = 'translateX(100%)';
-      setTimeout(() => toast.remove(), 300);
-    }, 3500);
+    // Toast notifications erased across the system
+    return;
   },
 
   openModal(title, bodyHTML, footerHTML = "", size = "") {
@@ -68,7 +47,7 @@ const Utils = {
         <button type="button" class="btn-icon" onclick="Utils.closeModal()" style="border:none; background:transparent; cursor:pointer; font-size:18px; color:var(--text-muted); display:inline-flex; align-items:center; justify-content:center; width:44px; height:44px; min-width:44px; min-height:44px; border-radius:8px;" aria-label="Close dialog"><i class="fas fa-times"></i></button>
       </div>
       <div class="modal-body" style="padding:16px 18px; overflow-y:auto; max-height:calc(85dvh - 120px);">${bodyHTML}</div>
-      ${footerHTML ? `<div class="modal-footer" style="padding:12px 18px; border-top:1px solid rgba(205,190,150,0.25); display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;">${footerHTML}</div>` : ''}
+      ${(footerHTML && footerHTML !== "undefined") ? `<div class="modal-footer" style="padding:12px 18px; border-top:1px solid rgba(205,190,150,0.25); display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;">${footerHTML}</div>` : ''}
     `;
 
     container.classList.remove("hidden");

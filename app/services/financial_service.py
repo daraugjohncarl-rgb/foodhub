@@ -534,6 +534,27 @@ def get_consolidated_financial_report(
         sum((to_decimal(m.amount) for m in period_transfers), Decimal("0.00")) - sum((to_decimal(m.amount) for m in period_reversals), Decimal("0.00"))
     ))
 
+    # Total Orders Revenue: only count revenue from shifts transferred to Manager Income.
+    # If not yet transferred by manager, revenue stays at 0 (not saved/counted).
+    # Automatically saved when manager performs "Transfer Cashier Drawer to Manager Income".
+    transferred_shift_ids = {m.shift_id for m in cashier_cashouts}
+    transferred_orders_revenue = quantize(sum(
+        (to_decimal(tx.net_amount) for tx in all_completed_tx if tx.shift_id in transferred_shift_ids),
+        Decimal("0.00")
+    ))
+    transferred_orders_count = sum(1 for tx in all_completed_tx if tx.shift_id in transferred_shift_ids)
+
+    # Period-specific transferred revenue (transfers made in selected date range)
+    period_cashier_cashouts = [
+        m for m in cashier_cashouts
+        if m.created_at and start_dt <= m.created_at < end_dt
+    ]
+    period_transferred_shift_ids = {m.shift_id for m in period_cashier_cashouts}
+    period_transferred_orders_revenue = quantize(sum(
+        (to_decimal(tx.net_amount) for tx in completed_tx if tx.shift_id in period_transferred_shift_ids),
+        Decimal("0.00")
+    ))
+
     # Manager safe cash reduces when transferred to Admin
     manager_safe_cash = quantize(max(Decimal("0.00"), total_cashout_income - total_transferred_to_admin))
     admin_transfer_income = total_transferred_to_admin
@@ -656,8 +677,9 @@ def get_consolidated_financial_report(
         },
         # Legacy structure for existing Manager and Admin UI components
         "revenue": {
-            "total_orders_revenue": float(all_net_sales),
+            "total_orders_revenue": float(transferred_orders_revenue),
             "today_orders_revenue": float(net_sales),
+            "transferred_orders_count": transferred_orders_count,
             "cash_sales": float(all_cash_collections),
             "non_cash_sales": float(all_digital_collections),
             "period_cash_sales": float(cash_collections),

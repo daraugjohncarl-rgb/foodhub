@@ -1,4 +1,4 @@
-import os
+﻿import os
 import uuid
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status, BackgroundTasks
@@ -138,6 +138,8 @@ def login(
     return {
         "access_token": access_token,
         "token_type": "bearer",
+        "id": user.id,
+        "user_id": user.id,
         "role": user.role,
         "tenant_id": user.tenant_id,
         "username": user.username,

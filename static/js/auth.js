@@ -1,4 +1,4 @@
-try { localStorage.removeItem("access_token"); sessionStorage.removeItem("access_token"); } catch (e) {} // legacy JWT copies are purged: the session lives only in the HttpOnly cookie
+﻿try { localStorage.removeItem("access_token"); sessionStorage.removeItem("access_token"); } catch (e) {} // legacy JWT copies are purged: the session lives only in the HttpOnly cookie
 /**
  * Centralized Authentication & API Fetch Wrapper
  * Blessie FoodHub / RestoTrack Multi-Role Dashboard
@@ -97,6 +97,8 @@ const Auth = {
       storage.setItem("tenant_id", data.tenant_id !== null ? data.tenant_id : "GLOBAL");
 
       const userProfile = {
+        id: data.id || data.user_id,
+        user_id: data.id || data.user_id,
         username: data.username,
         name: fullName,
         first_name: data.first_name,
@@ -298,7 +300,7 @@ function requireRole(allowedRoles = []) {
       if (data) {
         const parts = [data.first_name, data.last_name].filter(p => p && p.trim());
         const resolvedName = parts.length > 0 ? parts.join(" ") : (data.username || displayName);
-        user.name = resolvedName;
+        user.name = resolvedName; if (data.id) user.id = data.id;
         user.first_name = data.first_name;
         user.last_name = data.last_name;
         localStorage.setItem("RESTOTRACK_USER", JSON.stringify(user));

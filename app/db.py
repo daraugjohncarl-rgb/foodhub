@@ -140,7 +140,7 @@ if DATABASE_URL.startswith("sqlite"):
     # Used only by the automated tests (disposable database file); never a production target.
     connect_args["check_same_thread"] = False
 else:
-    engine_kwargs.update(pool_recycle=300, pool_size=5, max_overflow=5, pool_timeout=30)
+    engine_kwargs.update(pool_recycle=280, pool_size=5, max_overflow=5, pool_timeout=25)
 if is_postgres:
     connect_args["prepare_threshold"] = None
 

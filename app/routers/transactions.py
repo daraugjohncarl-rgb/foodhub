@@ -15,6 +15,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -120,8 +121,8 @@ def _serialize_tx(tx: models.Transaction, *, detail: bool, audit: bool = False) 
         ],
         "payments": payments,
     }
+    data["fulfillment_status"] = tx.fulfillment_status
     if detail:
-        data["fulfillment_status"] = tx.fulfillment_status
     return data
 
 
@@ -449,6 +450,28 @@ def create_transaction(
         db.add(tx)
         db.flush()
 
+        has_inv_deduction = False
+        # Decrement linked inventory item stock based on Cashier POS Product Code
+        sku_quantities = {}
+        for it in validated_items:
+            prod = products.get(it.product_id)
+            if prod and prod.sku:
+                clean_sku = str(prod.sku).strip()
+                if clean_sku:
+                    norm_sku = clean_sku.upper()
+                    sku_quantities[norm_sku] = sku_quantities.get(norm_sku, Decimal("0.00")) + Decimal(str(it.quantity))
+
+        if sku_quantities:
+            for norm_sku, total_sold_qty in sku_quantities.items():
+                inv_items = db.query(models.InventoryItem).filter(
+                    models.InventoryItem.tenant_id == tenant_id,
+                    func.upper(func.trim(models.InventoryItem.sku)) == norm_sku
+                ).all()
+                for inv in inv_items:
+                    current_qty = Decimal(str(inv.quantity or 0))
+                    inv.quantity = max(Decimal("0.00"), current_qty - total_sold_qty)
+                    has_inv_deduction = True
+
         if order is not None:
             _settle_customer_order(db, order, verified_attempt, order_status_before)
 
@@ -487,46 +510,64 @@ def create_transaction(
         db.rollback()
         logger.exception("Failed to create transaction")
         raise HTTPException(status_code=500, detail="Could not record the transaction.")
-    db.refresh(tx)
+    # Real-time events: run in a background thread so the HTTP response is returned
+    # to the client immediately (fire-and-forget, never blocks checkout).
+    _tx_id       = tx.id
+    _tx_client   = tx.client_tx_id
+    _tx_net      = float(tx.net_amount)
+    _tx_status   = tx.status
+    _tx_fulfill  = tx.fulfillment_status
+    _order_id    = order.id if order is not None else None
+    _order_num   = order.order_number if order is not None else None
+    _order_stat  = order.status if order is not None else None
+    _order_pay   = order.payment_status if order is not None else None
+    _cashier     = current_user.username
+    _has_k       = has_kitchen
+    _has_d       = has_drinks
+    _has_inv     = has_inv_deduction
+    _tenant      = tenant_id
 
-    # Real-time events are sent only after the commit above succeeded (tenant-scoped).
-    try:
-        from app.core.websocket import notify_realtime_event
-        notify_realtime_event(tenant_id, "ORDER_CREATED", {
-            "order_id": tx.id,
-            "order_code": f"TXN-{tx.id:04d}",
-            "client_tx_id": tx.client_tx_id,
-            "net_amount": float(tx.net_amount),
-            "status": tx.status,
-            "fulfillment_status": tx.fulfillment_status,
-            "cashier": current_user.username
-        })
-        if has_kitchen:
-            notify_realtime_event(tenant_id, "KITCHEN_UPDATED", {
-                "order_id": f"ORD-{tx.id:04d}",
-                "raw_id": tx.id,
-                "status": "PENDING",
-                "station": "food"
+    import threading as _threading
+    def _broadcast_tx():
+        try:
+            from app.core.websocket import notify_realtime_event
+            notify_realtime_event(_tenant, "ORDER_CREATED", {
+                "order_id": _tx_id,
+                "order_code": f"TXN-{_tx_id:04d}",
+                "client_tx_id": _tx_client,
+                "net_amount": _tx_net,
+                "status": _tx_status,
+                "fulfillment_status": _tx_fulfill,
+                "cashier": _cashier
             })
-        if has_drinks:
-            notify_realtime_event(tenant_id, "KITCHEN_UPDATED", {
-                "order_id": f"ORD-{tx.id:04d}",
-                "raw_id": tx.id,
-                "status": "PENDING",
-                "station": "drinks"
-            })
-        if order is not None:
-            # Status and payment status only: no amounts, references or discrepancy details.
-            notify_realtime_event(tenant_id, "CUSTOMER_ORDER_UPDATED", {
-                "order_id": order.id,
-                "order_number": order.order_number,
-                "status": order.status,
-                "payment_status": order.payment_status
-            })
-        notify_realtime_event(tenant_id, "DRAWER_UPDATED", {"reason": "pos_sale", "order_id": tx.id})
-        notify_realtime_event(tenant_id, "FINANCIAL_UPDATED", {"reason": "pos_sale", "order_id": tx.id})
-    except Exception:
-        logger.warning("Failed to broadcast transaction events", exc_info=True)
+            if _has_k:
+                notify_realtime_event(_tenant, "KITCHEN_UPDATED", {
+                    "order_id": f"ORD-{_tx_id:04d}",
+                    "raw_id": _tx_id,
+                    "status": "PENDING",
+                    "station": "food"
+                })
+            if _has_d:
+                notify_realtime_event(_tenant, "KITCHEN_UPDATED", {
+                    "order_id": f"ORD-{_tx_id:04d}",
+                    "raw_id": _tx_id,
+                    "status": "PENDING",
+                    "station": "drinks"
+                })
+            if _order_id is not None:
+                notify_realtime_event(_tenant, "CUSTOMER_ORDER_UPDATED", {
+                    "order_id": _order_id,
+                    "order_number": _order_num,
+                    "status": _order_stat,
+                    "payment_status": _order_pay
+                })
+            notify_realtime_event(_tenant, "DRAWER_UPDATED", {"reason": "pos_sale", "order_id": _tx_id})
+            notify_realtime_event(_tenant, "FINANCIAL_UPDATED", {"reason": "pos_sale", "order_id": _tx_id})
+            if _has_inv:
+                notify_realtime_event(_tenant, "INVENTORY_UPDATED", {"reason": "pos_sale", "order_id": _tx_id})
+        except Exception:
+            logger.warning("Failed to broadcast transaction events", exc_info=True)
+    _threading.Thread(target=_broadcast_tx, daemon=True).start()
 
     result = {
         "id": tx.id,
@@ -666,7 +707,7 @@ def update_transaction_status(
     body: dict,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_pos_access),
+    current_user: models.User = Depends(require_kitchen_access),
 ):
     """
     Allows cashier and management to change order status.

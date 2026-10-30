@@ -1,4 +1,4 @@
-/* =========================================================
+﻿/* =========================================================
    BLESSIE FOOD HUB
    MERGED CUSTOMER JS (REAL API + NEW UI)
 ========================================================= */
@@ -147,13 +147,13 @@ function initCustomerApp() {
     const headerTableNum = document.getElementById("headerTableNum");
     
     if (tableParam) {
+        const formattedTable = (tableParam.toLowerCase().startsWith('table') ? tableParam : 'Table ' + tableParam);
         if (tableInput) {
-            tableInput.value = tableParam;
+            tableInput.value = formattedTable;
             tableInput.readOnly = true;
         }
-        // When customer uses QR code, hide table number and notes so only Customer Name and Order Type are visible
         if (tableGroup) {
-            tableGroup.style.display = "none";
+            tableGroup.style.display = "block";
         }
         if (notesGroup) {
             notesGroup.style.display = "none";
@@ -163,7 +163,7 @@ function initCustomerApp() {
             orderTypeSelect.disabled = true;
         }
         if (headerTableBadge && headerTableNum) {
-            headerTableNum.textContent = tableParam;
+            headerTableNum.textContent = formattedTable;
             headerTableBadge.style.display = "inline-flex";
         }
     } else {
@@ -227,6 +227,13 @@ function initCustomerApp() {
     // 4. Cart UI Buttons
     const headerCart = document.getElementById("headerCart");
     if (headerCart) headerCart.addEventListener("click", openCart);
+
+    const customerLogoutBtn = document.getElementById("customerLogoutBtn");
+    if (customerLogoutBtn) {
+        customerLogoutBtn.addEventListener("click", () => {
+            customerLogout();
+        });
+    }
     
     const closeCartBtn = document.getElementById("closeCart");
     if (closeCartBtn) closeCartBtn.addEventListener("click", closeCart);
@@ -261,6 +268,8 @@ function initCustomerApp() {
         closeCheckout();
         if (success) success.classList.remove("active");
         if (checkoutContent) checkoutContent.style.display = "block";
+        const chkHeader = document.querySelector(".checkout-header");
+        if (chkHeader) chkHeader.style.display = "block";
         cart = [];
         updateCart();
         window.scrollTo(0, 0);
@@ -710,17 +719,29 @@ function openCheckout() {
     const orderTypeEl = document.getElementById("orderType");
 
     if (tableParam) {
-        if (tableGroup) tableGroup.style.display = "none";
-        if (notesGroup) notesGroup.style.display = "none";
+        const formattedTable = (tableParam.toLowerCase().startsWith('table') ? tableParam : 'Table ' + tableParam);
         if (tableInput) {
-            tableInput.value = tableParam;
+            tableInput.value = formattedTable;
             tableInput.readOnly = true;
         }
+        if (tableGroup) tableGroup.style.display = "block";
+        if (notesGroup) notesGroup.style.display = "none";
         if (orderTypeEl) {
             orderTypeEl.value = "Dine In";
             orderTypeEl.disabled = true;
         }
+    } else {
+        if (tableGroup && orderTypeEl) {
+            tableGroup.style.display = orderTypeEl.value === "Dine In" ? "block" : "none";
+        }
     }
+
+    const chkHeader = document.querySelector(".checkout-header");
+    if (chkHeader) chkHeader.style.display = "block";
+    const chkContent = document.getElementById("checkoutContent");
+    if (chkContent) chkContent.style.display = "block";
+    const successBox = document.getElementById("success");
+    if (successBox) successBox.classList.remove("active");
 
     if (checkoutOverlay) checkoutOverlay.classList.add("active");
     document.body.classList.add("modal-open");
@@ -754,15 +775,17 @@ async function submitOrder(event) {
         return;
     }
 
-    const rawName = document.getElementById("customerName") ? document.getElementById("customerName").value.trim() : "";
     const orderTypeEl = document.getElementById("orderType");
     const orderType = orderTypeEl ? orderTypeEl.value : (tableParam ? "Dine In" : "Take Out");
     const tableNumberInput = document.getElementById("tableNumber");
-    const tableNumber = (tableNumberInput ? tableNumberInput.value.trim() : "") || tableParam || "";
-    const notes = document.getElementById("orderNotes") ? document.getElementById("orderNotes").value : "";
+    let tableNumber = (tableNumberInput ? tableNumberInput.value.trim() : "") || tableParam || "";
+    if (tableNumber && !tableNumber.toLowerCase().startsWith('table') && !isNaN(parseInt(tableNumber))) {
+        tableNumber = 'Table ' + tableNumber;
+    }
+    const customerName = tableNumber ? tableNumber : (orderType === "Take Out" ? "Take Out Customer" : "Dine In Customer");
+    const notes = "";
     const paymentMethodEl = document.getElementById("paymentMethod");
     const paymentMethod = paymentMethodEl && paymentMethodEl.value === "GCASH" ? "GCASH" : "PAY_AT_COUNTER";
-    const customerName = rawName || (tableNumber ? `Table ${tableNumber} Guest` : "Guest Customer");
     
     const submitBtn = event.currentTarget || document.getElementById("placeOrder");
     const originalText = submitBtn ? submitBtn.textContent : "Place Order";
@@ -804,6 +827,8 @@ async function submitOrder(event) {
         checkoutIdempotencyKey = null;
 
         if (checkoutContent) checkoutContent.style.display = "none";
+        const chkHeader = document.querySelector(".checkout-header");
+        if (chkHeader) chkHeader.style.display = "none";
         if (success) success.classList.add("active");
         
         const orderNumEl = document.getElementById("orderNumber");
@@ -811,6 +836,25 @@ async function submitOrder(event) {
         const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
         const successTotalEl = document.getElementById("successTotal");
         if (successTotalEl) successTotalEl.textContent = peso(total);
+
+        const receiptTable = document.getElementById("receiptTable");
+        if (receiptTable) receiptTable.textContent = tableNumber || (orderType === "Take Out" ? "Take Out" : "Dine In");
+
+        const receiptOrderType = document.getElementById("receiptOrderType");
+        if (receiptOrderType) receiptOrderType.textContent = orderType;
+
+        const receiptDateTime = document.getElementById("receiptDateTime");
+        if (receiptDateTime) receiptDateTime.textContent = new Date().toLocaleString([], { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+        const receiptItemsList = document.getElementById("receiptItemsList");
+        if (receiptItemsList) {
+            receiptItemsList.innerHTML = cart.map(item => `
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0;">
+                    <span><strong>${item.quantity}x</strong> ${escapeHTML(item.name)}</span>
+                    <span style="font-weight:600; color:#18181b;">${peso(item.price * item.quantity)}</span>
+                </div>
+            `).join('');
+        }
 
         // Update live status text
         const liveStatusEl = document.getElementById("liveStatusText");
@@ -856,41 +900,40 @@ async function submitOrder(event) {
    TOAST
 ========================================================= */
 let toastTimer;
-function showToast(message, type="info") {
-    if (!toast) return;
-    toast.textContent = message;
-    toast.classList.add("show");
-    clearTimeout(toastTimer);
-    toastTimer = window.setTimeout(() => {
-        toast.classList.remove("show");
-    }, 2200);
-}
+function showToast(message, type='info') { return; }
 
 /* =========================================================
    CUSTOMER AUTHENTICATION & ACCOUNT CREATION
 ========================================================= */
 function updateCustomerAuthUI() {
+    const accountArea = document.getElementById("customerAccountArea");
+    const accountName = document.getElementById("customerAccountName");
     const loginBtn = document.getElementById("headerLoginBtn");
     const profileBadge = document.getElementById("customerProfileBadge");
     const greeting = document.getElementById("customerGreeting");
     const customerNameInput = document.getElementById("customerName");
 
-    // Check if customer is authenticated
-    const token = true; // the session itself is an HttpOnly cookie; display state comes from role/name below
     const customerName = localStorage.getItem("customer_name") || localStorage.getItem("username");
     const role = (localStorage.getItem("role") || "").toLowerCase();
 
-    if (token && (role === "customer" || customerName)) {
+    // Check if customer scanned a table QR code
+    const isTableQr = !!(tableParam || sessionStorage.getItem("customer_qr_table") || localStorage.getItem("customer_qr_table"));
+
+    // User rule: "in the customer account can you add the logout but if use the qr do not add the logout okayy only the account of customer"
+    // Hide logout on table QR scans. Only show logout if explicitly logged into a customer account.
+    const isCustomerAccount = (role === "customer" || role === "user") && customerName && customerName !== "Guest Customer" && !customerName.startsWith("Table ") && !isTableQr;
+
+    if (isCustomerAccount) {
+        if (accountArea) accountArea.style.display = "inline-flex";
+        if (accountName) accountName.textContent = customerName;
         if (loginBtn) loginBtn.style.display = "none";
         if (profileBadge) {
             profileBadge.style.display = "inline-flex";
             if (greeting) greeting.innerHTML = `<i class="fas fa-user-circle" style="margin-right:5px; color:var(--accent, #c9a227);"></i> ${escapeHTML(customerName)}`;
         }
-        if (customerNameInput && !customerNameInput.value) {
-            customerNameInput.value = customerName;
-        }
     } else {
-        if (loginBtn) loginBtn.style.display = "inline-flex";
+        if (accountArea) accountArea.style.display = "none";
+        if (loginBtn) loginBtn.style.display = isTableQr ? "none" : "inline-flex";
         if (profileBadge) profileBadge.style.display = "none";
     }
 }
@@ -1090,19 +1133,17 @@ async function handleCustomerRegister(e) {
 }
 
 function customerLogout() {
-    // Revoke the server session and clear the HttpOnly cookie.
     fetch("/api/v1/auth/logout", { method: "POST", credentials: "include", keepalive: true }).catch(() => {});
-    if (typeof Auth !== "undefined" && Auth.logout) {
-        localStorage.removeItem("access_token");
-        localStorage.removeItem("username");
-        localStorage.removeItem("role");
-        localStorage.removeItem("customer_name");
-        localStorage.removeItem("RESTOTRACK_USER");
-    } else {
-        localStorage.clear();
-    }
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("username");
+    localStorage.removeItem("role");
+    localStorage.removeItem("customer_name");
+    localStorage.removeItem("RESTOTRACK_USER");
     updateCustomerAuthUI();
-    showToast("Signed out successfully.");
+    showToast("Signed out from customer account.");
+    setTimeout(() => {
+        window.location.reload();
+    }, 350);
 }
 
 /* =========================================================

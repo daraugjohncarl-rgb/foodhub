@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -2237,7 +2237,7 @@ img {
 
 
 </style>
-</head>
+<style id="erase-toast-style">#toastContainer, #toast-container, .toast { display: none !important; opacity: 0 !important; visibility: hidden !important; pointer-events: none !important; }</style></head>
 
 <body>
 
@@ -2316,26 +2316,47 @@ img {
         </div>
 
 
-        <button
-            class="header-cart"
-            id="headerCart"
-            type="button"
-        >
+        <div style="display:flex; align-items:center; gap:8px;">
 
-            🛒
+            <!-- Customer Account & Logout (shown only when logged into an account, hidden on QR table scans) -->
+            <div id="customerAccountArea" style="display:none; align-items:center; gap:8px;">
+                <span id="customerAccountBadge" style="display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:700; color:#18181b; background:#faf8f5; border:1px solid #e7e2d7; padding:6px 10px; border-radius:20px;">
+                    <i class="fas fa-user-circle" style="color:#c9a227; font-size:13px;"></i>
+                    <span id="customerAccountName">Customer</span>
+                </span>
+                <button
+                    id="customerLogoutBtn"
+                    type="button"
+                    style="height:38px; padding:0 12px; border:1px solid #ef4444; background:rgba(239,68,68,0.08); color:#ef4444; border-radius:10px; font-size:11px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:6px; transition:all .2s ease;"
+                    title="Log out from customer account"
+                >
+                    <i class="fas fa-sign-out-alt"></i>
+                    <span>Logout</span>
+                </button>
+            </div>
 
-            <span>
-                Cart
-            </span>
-
-            <span
-                class="cart-count"
-                id="cartCount"
+            <button
+                class="header-cart"
+                id="headerCart"
+                type="button"
             >
-                0
-            </span>
 
-        </button>
+                🛒
+
+                <span>
+                    Cart
+                </span>
+
+                <span
+                    class="cart-count"
+                    id="cartCount"
+                >
+                    0
+                </span>
+
+            </button>
+
+        </div>
 
     </div>
 
@@ -2747,105 +2768,55 @@ img {
             id="checkoutContent"
         >
 
-            <div class="form-group">
-
+            <div
+                class="form-group"
+                id="tableGroup"
+            >
                 <label>
-                    CUSTOMER NAME
+                    TABLE NUMBER
                 </label>
-
                 <input
-                    id="customerName"
+                    id="tableNumber"
                     type="text"
-                    placeholder="Your name"
+                    placeholder="Example: Table 5"
                 >
-
             </div>
 
-
             <div class="form-group">
-
                 <label>
                     ORDER TYPE
                 </label>
-
                 <select id="orderType">
-
                     <option value="Dine In">
                         Dine In
                     </option>
-
                     <option value="Take Out">
                         Take Out
                     </option>
-
                 </select>
-
             </div>
 
-
             <div class="form-group">
-
                 <label>
                     PAYMENT METHOD
                 </label>
-
                 <select id="paymentMethod">
-
                     <option value="PAY_AT_COUNTER">
                         Pay at Counter
                     </option>
-
                     <option value="GCASH">
                         GCash
                     </option>
-
                 </select>
-
                 <p
                     id="paymentHint"
                     style="margin:8px 0 0; font-size:12.5px; line-height:1.45; color:#6b7280;"
                 >
                     You will pay the cashier at the counter.
                 </p>
-
             </div>
-
-
-            <div
-                class="form-group"
-                id="tableGroup"
-            >
-
-                <label>
-                    TABLE NUMBER
-                </label>
-
-                <input
-                    id="tableNumber"
-                    type="text"
-                    placeholder="Example: Table 5"
-                >
-
-            </div>
-
-
-            <div class="form-group">
-
-                <label>
-                    SPECIAL INSTRUCTIONS
-                </label>
-
-                <textarea
-                    id="orderNotes"
-                    rows="3"
-                    placeholder="Optional"
-                ></textarea>
-
-            </div>
-
 
             <div class="checkout-actions">
-
                 <button
                     class="cancel-button"
                     id="cancelCheckout"
@@ -2853,7 +2824,6 @@ img {
                 >
                     Cancel
                 </button>
-
                 <button
                     class="place-button"
                     id="placeOrder"
@@ -2861,52 +2831,68 @@ img {
                 >
                     Place Order
                 </button>
-
             </div>
-
         </div>
 
-
-        <!-- SUCCESS -->
-
+        <!-- SUCCESS RECEIPT: PAY FIRST YOUR ORDER -->
         <div
             class="success"
             id="success"
+            style="padding: 24px 18px;"
         >
-
-            <div class="success-icon">
-                ✓
+            <div style="width: 52px; height: 52px; margin: 0 auto 12px; border-radius: 50%; background: #fef3c7; color: #d97706; display: flex; align-items: center; justify-content: center; font-size: 24px;">
+                <i class="fas fa-receipt"></i>
             </div>
 
-            <h2>
-                Order Received
-            </h2>
+            <div style="background: #fffbeb; border: 1.5px dashed #f59e0b; border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; text-align: center;">
+                <div style="color: #b45309; font-size: 15px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">
+                    ⚠️ Pay First Your Order
+                </div>
+                <div style="color: #92400e; font-size: 12px; line-height: 1.45;">
+                    Please proceed to the <strong>Cashier Counter</strong> to pay. The kitchen will prepare your food once payment is confirmed.
+                </div>
+            </div>
 
-            <p>
-                Your order has been received.
-                Please wait for our staff.
-            </p>
+            <div style="background: #faf8f5; border: 1px solid #e7e2d7; border-radius: 12px; padding: 14px; text-align: left; margin-bottom: 14px;">
+                <div style="text-align: center; border-bottom: 1px dashed #d1c9b8; padding-bottom: 8px; margin-bottom: 10px;">
+                    <div style="font-weight: 800; font-size: 14px; color: #18181b;">BLESSIE FOOD HUB</div>
+                    <div style="font-size: 11px; color: #71717a;">Customer Order Slip</div>
+                    <div style="font-size: 15px; font-weight: 800; color: #c9a227; font-family: monospace; margin-top: 4px;" id="orderNumber">BFH-0000</div>
+                    <div style="font-size: 10.5px; color: #71717a; margin-top: 2px;" id="receiptDateTime"></div>
+                </div>
 
-            <div class="order-number">
+                <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+                    <span style="color: #71717a;">Table:</span>
+                    <strong style="color: #18181b;" id="receiptTable">—</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 8px;">
+                    <span style="color: #71717a;">Order Type:</span>
+                    <strong style="color: #18181b;" id="receiptOrderType">Dine In</strong>
+                </div>
 
-                Order Number
+                <div style="border-top: 1px dashed #d1c9b8; padding-top: 8px; margin-bottom: 8px;">
+                    <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #71717a; margin-bottom: 6px;">Items Ordered</div>
+                    <div id="receiptItemsList" style="font-size: 12px; line-height: 1.6; max-height: 120px; overflow-y: auto;"></div>
+                </div>
 
-                <br>
+                <div style="border-top: 1.5px solid #18181b; padding-top: 8px; margin-top: 8px; display: flex; justify-content: space-between; align-items: center;">
+                    <strong style="font-size: 12.5px; color: #18181b;">TOTAL PAYABLE:</strong>
+                    <strong style="font-size: 17px; color: #c9a227;" id="successTotal">₱0.00</strong>
+                </div>
 
-                <strong id="orderNumber">
-                    BFH-0000
-                </strong>
-
+                <div style="margin-top: 8px; padding: 6px 10px; background: #fee2e2; border-radius: 6px; text-align: center; color: #991b1b; font-size: 11px; font-weight: 700;">
+                    STATUS: UNPAID • Please Pay at Counter
+                </div>
             </div>
 
             <button
                 class="done-button"
                 id="doneButton"
                 type="button"
+                style="display: flex; align-items: center; justify-content: center; gap: 8px;"
             >
-                Done
+                <i class="fas fa-check"></i> Done / View Orders
             </button>
-
         </div>
 
     </div>
@@ -2926,7 +2912,7 @@ img {
 
 <script src="/static/js/storage.js"></script>
 <script src="/static/js/auth.js"></script>
-<script src="/static/js/customer.js?v=20261024_payment"></script>
+<script src="/static/js/customer.js?v=20261030_v201"></script>
 
 </body>
 </html>
