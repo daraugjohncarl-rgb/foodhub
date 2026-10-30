@@ -9222,6 +9222,9 @@ function renderCashDrawerTrackerUI(container, data) {
         <button class="btn btn-primary btn-sm" onclick="openAddCashMovementModal(null, 'manager_income')" title="Transfer Cashier Drawer to Manager Income Safe" style="display:inline-flex; align-items:center; gap:6px; font-weight:700; border-radius:10px; padding:6px 14px; background:linear-gradient(135deg, #10b981 0%, #059669 100%); border:none; color:#fff; cursor:pointer;">
           <i class="fas fa-paper-plane"></i> Transfer Income
         </button>
+        <button class="btn btn-outline btn-sm" onclick="openAssignCashierModal()" title="Assign Cashier Account to Cash Drawer" style="display:inline-flex; align-items:center; gap:6px; color:#3b82f6; border-color:#3b82f6; font-weight:700; border-radius:10px; padding:6px 14px;">
+          <i class="fas fa-user-check"></i> Assign Account
+        </button>
         <button class="btn btn-outline btn-sm" onclick="openEditCashierDrawerModal(null)" title="Edit Cashier Drawer" style="display:inline-flex; align-items:center; gap:6px; color:#c9a227; border-color:#c9a227; font-weight:700; border-radius:10px; padding:6px 14px;">
           <i class="fas fa-pen-to-square"></i> Edit Drawer
         </button>
@@ -9294,7 +9297,14 @@ function renderCashDrawerTrackerUI(container, data) {
 
 function renderDrawerTableRows(shifts) {
   if (!shifts || !shifts.length) {
-    return '<tr><td colspan="9" style="text-align:center; padding:30px; color:var(--text-muted);"><i class="fas fa-info-circle"></i> No cashier shifts recorded yet.</td></tr>';
+    return `<tr><td colspan="9" style="text-align:center; padding:30px; color:var(--text-muted);">
+      <i class="fas fa-info-circle"></i> No cashier shifts recorded yet.
+      <div style="margin-top:10px;">
+        <button type="button" class="btn btn-outline btn-sm" onclick="openAssignCashierModal()" style="color:#3b82f6; border-color:#3b82f6; font-weight:700;">
+          <i class="fas fa-user-check"></i> Assign Cashier Account
+        </button>
+      </div>
+    </td></tr>`;
   }
   return shifts.map(s => {
     const isOpen = s.status === 'open';
@@ -9306,13 +9316,21 @@ function renderDrawerTableRows(shifts) {
 
     return `
       <tr>
-        <td style="white-space:nowrap; min-width:180px;">
+        <td style="white-space:nowrap; min-width:210px;">
           <div style="display:flex; align-items:center; gap:10px;">
             <div class="avatar-fallback" style="width:34px; height:34px; font-size:12px; border-radius:8px; background:rgba(201,162,39,0.15); color:#c9a227; font-weight:800; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;">
               ${(s.cashier_username || 'C').substring(0,2).toUpperCase()}
             </div>
             <div style="min-width:0;">
               <strong style="color:var(--text-main); font-size:13.5px; font-weight:700; text-transform:capitalize; white-space:nowrap; display:block; letter-spacing:0.2px;">${Utils.escapeHtml(s.cashier_name)}</strong>
+              <div style="display:flex; align-items:center; gap:6px; margin-top:2px;">
+                <span style="font-size:11px; color:var(--text-muted); font-weight:600;">@${Utils.escapeHtml(s.cashier_username || 'cashier')}</span>
+                ${isOpen ? `
+                <button type="button" onclick="openAssignCashierModal(${s.id}, ${s.cashier_id || 'null'})" title="Assign / Change Cashier Account" style="padding:1px 6px; font-size:10px; font-weight:700; color:#3b82f6; background:rgba(59,130,246,0.1); border:1px solid rgba(59,130,246,0.3); border-radius:4px; cursor:pointer; display:inline-flex; align-items:center; gap:3px;">
+                  <i class="fas fa-user-check"></i> Assign Account
+                </button>
+                ` : ''}
+              </div>
             </div>
           </div>
         </td>
@@ -9814,6 +9832,99 @@ function openShiftMovementsModal(shiftId) {
   }
 
   Utils.openModal(`Shift #${s.id} Cash Movements Audit Log`, bodyHtml);
+}
+
+async function openAssignCashierModal(shiftId = null, currentUserId = null) {
+  let cashiers = [];
+  try {
+    const res = await Auth.fetch("/api/v1/users?exclude_self=false");
+    if (res.ok) {
+      const allUsers = await res.json();
+      cashiers = (allUsers || []).filter(u => String(u.role || "").toUpperCase() === "CASHIER" && u.is_active !== false);
+    }
+  } catch (e) {
+    console.warn("Failed to load cashier accounts:", e);
+  }
+
+  if (!cashiers.length) {
+    Utils.showToast("No active Cashier accounts found. Please add a Cashier in User Management first.", "warning");
+    return;
+  }
+
+  const shifts = (cachedDrawerData && cachedDrawerData.shifts) || [];
+  const targetShift = shiftId ? shifts.find(s => s.id === shiftId) : shifts.find(s => s.status === "open");
+  const activeShiftId = targetShift ? targetShift.id : "";
+  const selectedUid = currentUserId || (targetShift ? targetShift.cashier_id : cashiers[0].id);
+
+  const optionsHtml = cashiers.map(c => {
+    const fullName = `${c.first_name || ""} ${c.last_name || ""}`.trim() || c.username;
+    return `<option value="${Utils.escapeHtml(c.id)}" ${Number(c.id) === Number(selectedUid) ? "selected" : ""}>${Utils.escapeHtml(fullName)} (@${Utils.escapeHtml(c.username)}) — CASHIER</option>`;
+  }).join("");
+
+  Utils.openModal("Assign Cashier Account to Cash Drawer", `
+    <form id="form-assign-cashier" onsubmit="event.preventDefault(); submitAssignCashierAccount();">
+      <input type="hidden" id="assign-cashier-shift-id" value="${Utils.escapeHtml(activeShiftId)}">
+      <div style="background:rgba(59,130,246,0.08); border:1px solid rgba(59,130,246,0.25); border-radius:10px; padding:12px 14px; margin-bottom:16px; font-size:12.5px; color:var(--text-muted);">
+        <div style="font-weight:700; color:#3b82f6; margin-bottom:4px;"><i class="fas fa-user-check"></i> Cashier Drawer Account Assignment</div>
+        Select the Cashier staff account assigned to operate and track this Cash Drawer.
+      </div>
+      <div class="input-group" style="margin-bottom:16px;">
+        <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:6px;">
+          Select Cashier Account <span style="color:var(--danger);">*</span>
+        </label>
+        <select id="assign-cashier-user-id" class="input-field" required style="width:100%; font-weight:700;">
+          ${optionsHtml}
+        </select>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button type="button" class="btn btn-outline" onclick="Utils.closeModal()">Cancel</button>
+        <button type="submit" id="btn-submit-assign-cashier" class="btn btn-primary" style="background:#3b82f6; border-color:#3b82f6; color:#fff; font-weight:700;">
+          <i class="fas fa-user-check"></i> Assign Cashier Account
+        </button>
+      </div>
+    </form>
+  `);
+}
+
+async function submitAssignCashierAccount() {
+  const userIdVal = document.getElementById("assign-cashier-user-id")?.value;
+  const shiftIdVal = document.getElementById("assign-cashier-shift-id")?.value;
+  const btn = document.getElementById("btn-submit-assign-cashier");
+
+  if (!userIdVal) {
+    Utils.showToast("Please select a Cashier account.", "danger");
+    return;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Assigning...`;
+  }
+
+  try {
+    const res = await Auth.fetch("/api/v1/shifts/assign-cashier", {
+      method: "POST",
+      body: JSON.stringify({
+        user_id: parseInt(userIdVal, 10),
+        shift_id: shiftIdVal ? parseInt(shiftIdVal, 10) : null
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to assign cashier account.");
+    }
+    const data = await res.json();
+    Utils.closeModal();
+    Utils.showToast(data.message || "Cashier account assigned to Cash Drawer!", "success");
+    cachedDrawerData = null;
+    await renderCashDrawerTracker(null, true);
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<i class="fas fa-user-check"></i> Assign Cashier Account`;
+    }
+  }
 }
 
 function openEditCashierDrawerModal(shiftId = null, cashierName = null, currentCash = null) {

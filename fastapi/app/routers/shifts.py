@@ -127,6 +127,27 @@ def get_drawer_summary(
     ).limit(30).all()
 
     has_open_shift = any(s.status == "open" for s in shifts)
+    if not has_open_shift:
+        cashier_q = db.query(models.User).filter(
+            models.User.tenant_id == tenant_id,
+            models.User.role == models.UserRole.CASHIER,
+            models.User.is_active == True
+        )
+        if not is_manager:
+            cashier_q = cashier_q.filter(models.User.id == current_user.id)
+        cashier_user = cashier_q.order_by(models.User.id.asc()).first()
+        if cashier_user:
+            new_shift = models.Shift(
+                tenant_id=tenant_id,
+                user_id=cashier_user.id,
+                start_cash=Decimal("0.0"),
+                status="open"
+            )
+            db.add(new_shift)
+            db.commit()
+            db.refresh(new_shift)
+            shifts = [new_shift] + list(shifts)
+            has_open_shift = True
     # Sales totals below are tenant-wide for managers and the caller's own sales for a cashier.
     own_sales = [] if is_manager else [models.Transaction.user_id == current_user.id]
 
@@ -612,4 +633,84 @@ def edit_shift_drawer_cash(
         "new_drawer_cash": float(new_amount),
         "adjustment": float(delta)
     }
+
+
+@router.post("/assign-cashier")
+def assign_cashier_to_drawer(
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_pos_access)
+):
+    """
+    Assign or switch a Cashier account in the Cash Drawer (Manager / Admin).
+    If shift_id is provided, reassigns that open shift to the chosen cashier account;
+    otherwise ensures an open shift exists for the chosen cashier account.
+    """
+    if not _is_drawer_manager(current_user):
+        raise HTTPException(status_code=403, detail="Only a manager or admin can assign a cashier account to the cash drawer.")
+    tenant_id = _get_user_tenant_id(db, current_user)
+
+    user_id = body.get("user_id")
+    shift_id = body.get("shift_id")
+    try:
+        user_id = int(user_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Please select a valid cashier account.")
+
+    cashier_user = db.query(models.User).filter(
+        models.User.id == user_id,
+        models.User.tenant_id == tenant_id,
+        models.User.role == models.UserRole.CASHIER
+    ).first()
+    if not cashier_user:
+        raise HTTPException(status_code=404, detail="Cashier account not found in this branch.")
+
+    target_shift = None
+    if shift_id:
+        try:
+            sid = int(shift_id)
+            target_shift = db.query(models.Shift).filter(
+                models.Shift.id == sid,
+                models.Shift.tenant_id == tenant_id,
+                models.Shift.status == "open"
+            ).first()
+        except (TypeError, ValueError):
+            target_shift = None
+
+    if target_shift:
+        target_shift.user_id = cashier_user.id
+        db.commit()
+        db.refresh(target_shift)
+    else:
+        existing_open = db.query(models.Shift).filter(
+            models.Shift.tenant_id == tenant_id,
+            models.Shift.user_id == cashier_user.id,
+            models.Shift.status == "open"
+        ).first()
+        if existing_open:
+            target_shift = existing_open
+        else:
+            target_shift = models.Shift(
+                tenant_id=tenant_id,
+                user_id=cashier_user.id,
+                start_cash=Decimal("0.0"),
+                status="open"
+            )
+            db.add(target_shift)
+            db.commit()
+            db.refresh(target_shift)
+
+    from app.core.websocket import notify_realtime_event
+    notify_realtime_event(tenant_id, "DRAWER_UPDATED", {"shift_id": target_shift.id, "user_id": cashier_user.id})
+
+    c_name = f"{cashier_user.first_name or ''} {cashier_user.last_name or ''}".strip() or cashier_user.username
+    return {
+        "success": True,
+        "message": f"Assigned cashier account @{cashier_user.username} ({c_name}) to Cash Drawer Shift #{target_shift.id}.",
+        "shift_id": target_shift.id,
+        "cashier_id": cashier_user.id,
+        "cashier_username": cashier_user.username,
+        "cashier_name": c_name
+    }
+
 
