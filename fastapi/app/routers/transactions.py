@@ -515,15 +515,21 @@ def create_transaction(
                     sku_quantities[norm_sku] = sku_quantities.get(norm_sku, Decimal("0.00")) + Decimal(str(it.quantity))
 
         if sku_quantities:
-            for norm_sku, total_sold_qty in sku_quantities.items():
-                inv_items = db.query(models.InventoryItem).filter(
-                    models.InventoryItem.tenant_id == tenant_id,
-                    func.upper(func.trim(models.InventoryItem.sku)) == norm_sku
-                ).all()
-                for inv in inv_items:
-                    current_qty = Decimal(str(inv.quantity or 0))
-                    inv.quantity = max(Decimal("0.00"), current_qty - total_sold_qty)
-                    has_inv_deduction = True
+            # Query all inventory items for this tenant that have a SKU assigned
+            inv_items = db.query(models.InventoryItem).filter(
+                models.InventoryItem.tenant_id == tenant_id,
+                models.InventoryItem.sku.isnot(None)
+            ).all()
+            for inv in inv_items:
+                if not inv.sku:
+                    continue
+                # Split comma-separated SKUs to support multiple linked product codes
+                linked_skus = [s.strip().upper() for s in inv.sku.split(",") if s.strip()]
+                for norm_sku, total_sold_qty in sku_quantities.items():
+                    if norm_sku in linked_skus:
+                        current_qty = Decimal(str(inv.quantity or 0))
+                        inv.quantity = max(Decimal("0.00"), current_qty - total_sold_qty)
+                        has_inv_deduction = True
 
         if order is not None:
             _settle_customer_order(db, order, verified_attempt, order_status_before)

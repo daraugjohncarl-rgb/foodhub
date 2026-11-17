@@ -1,4 +1,4 @@
-import os
+﻿import os
 import uuid
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status, BackgroundTasks
@@ -72,6 +72,24 @@ def login(
         verify_password(form_data.password, _DUMMY_HASH)
     if not user or not verify_password(form_data.password, user.password_hash):
         failed_login_limiter.record(failure_key)
+        try:
+            from app.services.activity_log_service import record_activity
+            if not user or user.role != models.UserRole.SUPER_ADMIN:
+                full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() if user else None
+                record_activity(
+                    db=db,
+                    activity_type="Failed Login Attempt",
+                    description=f"Failed login attempt for account '{identifier}' (Invalid credentials).",
+                    username=identifier,
+                    full_name=full_name,
+                    role=user.role.value if (user and hasattr(user.role, 'value')) else (str(user.role) if user else "UNKNOWN"),
+                    tenant_id=user.tenant_id if user else None,
+                    status="FAILED",
+                    request=request,
+                    metadata={"attempted_username": identifier}
+                )
+        except Exception:
+            pass
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password.",
@@ -80,6 +98,20 @@ def login(
 
     # Verify the user account is active
     if not user.is_active:
+        try:
+            from app.services.activity_log_service import record_activity
+            if user.role != models.UserRole.SUPER_ADMIN:
+                record_activity(
+                    db=db,
+                    activity_type="Failed Login Attempt",
+                    description=f"Sign-in rejected: account '{user.username}' is deactivated.",
+                    user=user,
+                    status="FAILED",
+                    request=request,
+                    metadata={"reason": "account_deactivated"}
+                )
+        except Exception:
+            pass
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Your account is deactivated. Please contact your administrator.",
@@ -110,21 +142,27 @@ def login(
 
     set_session_cookie(response, access_token)
 
-    # Audit log: record login event
-    try:
-        log = models.ActivityLog(
-            tenant_id=user.tenant_id,
-            user_id=user.id,
-            action="Login",
-            performed_by=user.username,
-            target_user=user.username,
-            role=role_str,
-            details=f"User '{user.username}' logged in successfully (Session ID: {session_id[:8]})."
-        )
-        db.add(log)
-        db.commit()
-    except Exception:
-        pass  # Never block login due to log failure
+    # Audit log: record successful login event (EXCLUDE SUPER_ADMIN)
+    if user.role != models.UserRole.SUPER_ADMIN:
+        try:
+            from app.services.activity_log_service import record_activity
+            full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.username
+            record_activity(
+                db=db,
+                activity_type="Successful Login",
+                description=f"User '{user.username}' signed in successfully.",
+                user=user,
+                status="SUCCESS",
+                request=request,
+                session_id=session_id,
+                metadata={
+                    "session_id": session_id,
+                    "role": role_str,
+                    "tenant_id": user.tenant_id
+                }
+            )
+        except Exception:
+            pass  # Never block login due to log failure
 
     # Determine appropriate redirect URL based on user role
     role_lower = role_str.lower()
@@ -138,6 +176,8 @@ def login(
     return {
         "access_token": access_token,
         "token_type": "bearer",
+        "id": user.id,
+        "user_id": user.id,
         "role": user.role,
         "tenant_id": user.tenant_id,
         "username": user.username,
@@ -148,28 +188,34 @@ def login(
     }
 
 
-def record_logout_in_background(user_id: int, tenant_id, username: str, role_str: str):
+def record_logout_in_background(user_id: int, tenant_id, username: str, role_str: str, ip: str = None, ua: str = None, session_id: str = None):
     """
     Asynchronously increments user token_version and logs activity without delaying HTTP client response.
+    EXCLUDES SUPER_ADMIN from activity logs.
     """
     try:
+        if str(role_str).upper() in ("SUPER_ADMIN", "SUPERADMIN"):
+            return
         from app.db import SessionLocal
         bg_db = SessionLocal()
         try:
             u = bg_db.query(models.User).filter(models.User.id == user_id).first()
             if u:
                 u.token_version = (u.token_version or 0) + 1
-                log = models.ActivityLog(
-                    tenant_id=tenant_id,
-                    user_id=user_id,
-                    action="Logout",
-                    performed_by=username,
-                    target_user=username,
-                    role=role_str,
-                    details=f"User '{username}' logged out successfully."
-                )
-                bg_db.add(log)
                 bg_db.commit()
+                from app.services.activity_log_service import record_activity
+                full_name = f"{u.first_name or ''} {u.last_name or ''}".strip() or username
+                record_activity(
+                    db=bg_db,
+                    activity_type="Successful Logout",
+                    description=f"User '{username}' logged out successfully.",
+                    user=u,
+                    status="SUCCESS",
+                    ip_address=ip,
+                    user_agent=ua,
+                    session_id=session_id,
+                    metadata={"session_id": session_id, "role": role_str, "full_name": full_name}
+                )
         finally:
             bg_db.close()
     except Exception:
@@ -202,6 +248,9 @@ def logout(
         if auth_header.startswith("Bearer "):
             auth_token = auth_header[7:].strip()
 
+    req_ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or request.headers.get("x-real-ip") or (request.client.host if request.client else "127.0.0.1")
+    req_ua = request.headers.get("user-agent", "Unknown Device")[:255]
+
     if auth_token:
         try:
             import jwt
@@ -211,12 +260,16 @@ def logout(
             username = payload.get("username", "User")
             role_str = payload.get("role", "User")
             tenant_id = payload.get("tenant_id")
+            session_id = payload.get("jti")
             background_tasks.add_task(
                 record_logout_in_background,
                 user_id,
                 tenant_id,
                 username,
-                role_str
+                role_str,
+                req_ip,
+                req_ua,
+                session_id
             )
         except Exception:
             user = get_current_user_optional(request=request, db=db)
@@ -227,7 +280,10 @@ def logout(
                     user.id,
                     user.tenant_id,
                     user.username,
-                    role_str
+                    role_str,
+                    req_ip,
+                    req_ua,
+                    None
                 )
 
     return {

@@ -37,8 +37,8 @@ async function initKitchenApp() {
         const now = new Date();
         const clockEl = document.getElementById("liveClock");
         const dateEl = document.getElementById("liveDate");
-        if (clockEl) clockEl.textContent = now.toLocaleTimeString();
-        if (dateEl) dateEl.textContent = now.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+        if (clockEl) clockEl.textContent = now.toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour12: true });
+        if (dateEl) dateEl.textContent = now.toLocaleDateString('en-PH', { timeZone: 'Asia/Manila', weekday: "long", year: "numeric", month: "long", day: "numeric" });
     }
     updateClock();
     setInterval(updateClock, 1000);

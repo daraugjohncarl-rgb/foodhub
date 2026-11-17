@@ -12,6 +12,7 @@ from sqlalchemy import func
 
 from app.db import get_db
 import app.models as models
+from app.services.payments import cash_method_clause, is_cash_method
 import app.schemas as schemas
 from app.core.dependencies import require_manager_or_admin, resolve_tenant_id
 
@@ -89,7 +90,7 @@ def get_dashboard_stats(
             models.Transaction.shift_id == s.id,
             models.Payment.status == "completed",
             models.Transaction.status == "completed",
-            func.lower(models.Payment.payment_method).like("cash%")
+            cash_method_clause(models.Payment.payment_method)
         ).scalar() or Decimal("0.0")
 
         p_in = db.query(

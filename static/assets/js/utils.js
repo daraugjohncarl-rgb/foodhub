@@ -55,6 +55,29 @@ const Utils = {
     document.body.style.overflow = "hidden";
   },
 
+  showModal(html, size = "") {
+    let container = document.getElementById("modal-container");
+    if (!container) {
+      container = document.createElement("div");
+      container.id = "modal-container";
+      container.className = "modal-overlay";
+      container.innerHTML = '<div class="modal" id="modal-content"></div>';
+      container.addEventListener("click", (e) => {
+        if (e.target === container) Utils.closeModal();
+      });
+      document.body.appendChild(container);
+    }
+    const content = document.getElementById("modal-content");
+    if (content) {
+      content.className = "modal " + (size || "");
+      content.removeAttribute("style");
+      content.innerHTML = `<div style="padding:18px 22px;">${html}</div>`;
+    }
+    container.classList.remove("hidden");
+    container.style.display = "flex";
+    document.body.style.overflow = "hidden";
+  },
+
   closeModal() {
     const container = document.getElementById("modal-container");
     if (container) {

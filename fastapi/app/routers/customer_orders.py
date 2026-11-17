@@ -715,14 +715,22 @@ def track_customer_order(
 
 @router.get("/menu", summary="Get the public menu for a specific tenant")
 def get_public_menu(
-    tenant_id: Optional[int] = Query(None, gt=0),
+    tenant_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _rl: None = Depends(menu_limit),
 ):
     """
     Public endpoint to fetch active categories and their active products for a specific tenant.
     """
-    tenant_id = _resolve_public_tenant(db, tenant_id)
+    parsed_tenant = None
+    if tenant_id not in (None, "", "null", "undefined"):
+        try:
+            val = int(tenant_id)
+            if val > 0:
+                parsed_tenant = val
+        except (ValueError, TypeError):
+            parsed_tenant = None
+    tenant_id = _resolve_public_tenant(db, parsed_tenant)
 
     categories = db.query(models.Category).filter(models.Category.tenant_id == tenant_id).all()
     active_products = db.query(models.Product).filter(

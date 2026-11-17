@@ -41,8 +41,8 @@ function initReportsApp() {
         const now = new Date();
         const liveClock = document.getElementById('liveClock');
         const liveDate  = document.getElementById('liveDate');
-        if (liveClock) liveClock.textContent = now.toLocaleTimeString('en-US', { hour12: false });
-        if (liveDate)  liveDate.textContent  = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        if (liveClock) liveClock.textContent = now.toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour12: true });
+        if (liveDate)  liveDate.textContent  = now.toLocaleDateString('en-PH', { timeZone: 'Asia/Manila', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
     }
     updateClock();
     setInterval(updateClock, 1000);

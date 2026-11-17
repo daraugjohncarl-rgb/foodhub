@@ -1,4 +1,4 @@
-﻿/* =========================================================
+/* =========================================================
    BLESSIE FOOD HUB
    MERGED CUSTOMER JS (REAL API + NEW UI)
 ========================================================= */
@@ -14,11 +14,12 @@ let searchTerm = "";
 let activeCategory = "All";
 
 // Tenant ID resolution
-let tenantId = new URLSearchParams(window.location.search).get("tenant_id");
-if (!tenantId) {
+let rawTenant = new URLSearchParams(window.location.search).get("tenant_id");
+let tenantId = parseInt(rawTenant, 10);
+if (isNaN(tenantId) || tenantId <= 0) {
     const storedTenant = localStorage.getItem("tenant_id");
-    if (storedTenant && storedTenant !== "GLOBAL" && !isNaN(parseInt(storedTenant))) {
-        tenantId = parseInt(storedTenant);
+    if (storedTenant && storedTenant !== "GLOBAL" && !isNaN(parseInt(storedTenant, 10)) && parseInt(storedTenant, 10) > 0) {
+        tenantId = parseInt(storedTenant, 10);
     } else {
         tenantId = 1;
     }

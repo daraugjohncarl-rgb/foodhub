@@ -10,11 +10,11 @@ function initNotificationsApp() {
     function updateClock() {
         const now = new Date();
         if (liveDateEl) {
-            const options = { weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' };
-            liveDateEl.textContent = now.toLocaleDateString('en-US', options);
+            const options = { timeZone: 'Asia/Manila', weekday: 'long', year: 'numeric', month: 'short', day: 'numeric' };
+            liveDateEl.textContent = now.toLocaleDateString('en-PH', options);
         }
         if (liveClockEl) {
-            liveClockEl.textContent = now.toLocaleTimeString('en-US', { hour12: false });
+            liveClockEl.textContent = now.toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour12: true });
         }
     }
     updateClock();

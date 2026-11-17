@@ -59,6 +59,28 @@ def apply_customer_order_status(order: models.CustomerOrder, new_status: str) ->
     order.status = new_status
 
 
+def change_customer_order_status(db: Session, order: models.CustomerOrder, new_status: str, user: models.User) -> None:
+    """
+    The ONE staff path for moving a customer order (customer-orders API and kitchen API both use it), on a
+    row the caller locked with SELECT ... FOR UPDATE, so payment verification, settlement and status changes
+    of the same order are applied one at a time. The caller commits.
+    """
+    if new_status == "rejected" and order.status != "rejected":
+        sale = db.query(models.Transaction).filter(
+            models.Transaction.tenant_id == order.tenant_id,
+            models.Transaction.customer_order_id == order.id
+        ).first()
+        if sale is not None and sale.status not in pay.VOID_STATUSES:
+            # A rejected order whose sale still counts as income would be an inconsistent record.
+            raise HTTPException(status_code=409, detail=f"This order already has a recorded sale (#{sale.id}). Void that sale first, then reject the order.")
+        if order.payment_status == pay.PS_VERIFIED or sale is not None:
+            # No refund is performed by the system: record that money may need returning outside it.
+            _log(db, user, order.tenant_id, "Paid Order Rejected",
+                 f"Order {order.order_number} rejected after its payment was recorded "
+                 f"({order.payment_status}); any refund is manual.")
+    apply_customer_order_status(order, new_status)
+
+
 class CustomerOrderItemIn(BaseModel):
     """Only the product reference and quantity are accepted. Name and price are always loaded server-side."""
     model_config = ConfigDict(extra="ignore")
@@ -343,23 +365,13 @@ def update_customer_order_status(
         raise HTTPException(status_code=400, detail="Invalid status")
 
     tenant_id = resolve_tenant_id(current_user, db, request)
-    order = db.query(models.CustomerOrder).filter(
-        models.CustomerOrder.id == order_id,
-        models.CustomerOrder.tenant_id == tenant_id
-    ).first()
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
-
-    apply_customer_order_status(order, new_status)
-    if new_status == "rejected" and order.payment_status == pay.PS_VERIFIED:
-        # No refund flow exists: record that a verified payment now needs handling outside the system.
-        db.add(models.ActivityLog(
-            tenant_id=tenant_id, user_id=current_user.id, action="Paid Order Rejected",
-            performed_by=current_user.username,
-            role=current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role),
-            details=f"Order {order.order_number} rejected after its GCash payment was verified; refund is manual."[:255]
-        ))
-    db.commit()
+    order = _lock_order(db, tenant_id, order_id)
+    try:
+        change_customer_order_status(db, order, new_status, current_user)
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
 
     # Real-time WebSocket event broadcast (tenant-scoped)
     try:
@@ -703,14 +715,22 @@ def track_customer_order(
 
 @router.get("/menu", summary="Get the public menu for a specific tenant")
 def get_public_menu(
-    tenant_id: Optional[int] = Query(None, gt=0),
+    tenant_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _rl: None = Depends(menu_limit),
 ):
     """
     Public endpoint to fetch active categories and their active products for a specific tenant.
     """
-    tenant_id = _resolve_public_tenant(db, tenant_id)
+    parsed_tenant = None
+    if tenant_id not in (None, "", "null", "undefined"):
+        try:
+            val = int(tenant_id)
+            if val > 0:
+                parsed_tenant = val
+        except (ValueError, TypeError):
+            parsed_tenant = None
+    tenant_id = _resolve_public_tenant(db, parsed_tenant)
 
     categories = db.query(models.Category).filter(models.Category.tenant_id == tenant_id).all()
     active_products = db.query(models.Product).filter(

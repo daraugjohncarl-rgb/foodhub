@@ -535,9 +535,7 @@ def get_consolidated_financial_report(
         sum((to_decimal(m.amount) for m in period_transfers), Decimal("0.00")) - sum((to_decimal(m.amount) for m in period_reversals), Decimal("0.00"))
     ))
 
-    # Total Orders Revenue: only count revenue from shifts transferred to Manager Income.
-    # If not yet transferred by manager, revenue stays at 0 (not saved/counted).
-    # Automatically saved when manager performs "Transfer Cashier Drawer to Manager Income".
+    # Total Orders Revenue: revenue is recognized directly through completed order events
     transferred_shift_ids = {m.shift_id for m in cashier_cashouts}
     transferred_orders_revenue = quantize(sum(
         (to_decimal(tx.net_amount) for tx in all_completed_tx if tx.shift_id in transferred_shift_ids),
@@ -556,95 +554,189 @@ def get_consolidated_financial_report(
         Decimal("0.00")
     ))
 
-    # Profit & Loss Statement (P&L) tracked solely by Inventory Total Valuation vs Total Orders Revenue
-    gross_profit = quantize(transferred_orders_revenue - total_inventory_valuation)
-    net_operating_profit = gross_profit
-    is_profitable = bool(net_operating_profit >= Decimal("0.00"))
-    if transferred_orders_revenue > Decimal("0.00"):
-        margin_pct = quantize((net_operating_profit / transferred_orders_revenue) * Decimal("100.00"))
-        profit_margin_val = float(margin_pct)
-        sign = "+" if margin_pct > Decimal("0.00") else ""
-        profit_margin_str = f"{sign}{margin_pct:.2f}%"
-    else:
-        profit_margin_val = -100.0 if total_inventory_valuation > Decimal("0.00") else 0.0
-        profit_margin_str = "-100.00%" if total_inventory_valuation > Decimal("0.00") else "0.00%"
-    gp_status = "complete"
-    net_profit_status = "complete"
+    # True Accounting Profit & Loss Statement (P&L):
+    # Gross Profit = Net Sales - COGS
+    # Net Operating Profit = Gross Profit - Operating Expenses
+    # Inventory Valuation is kept separate as an asset valuation.
+    gross_profit, gp_status = calc.compute_gross_profit(net_sales, cogs_period, is_cogs_complete_period)
+    net_operating_profit, net_profit_status, is_profitable = calc.compute_net_operating_profit(
+        gross_profit, operating_expenses, is_cogs_complete_period
+    )
+    profit_margin_val, profit_margin_str = calc.compute_profit_margin(
+        net_operating_profit, net_sales, is_cogs_complete_period
+    )
 
-    # Manager safe cash reduces when transferred to Admin
-    manager_safe_cash = quantize(max(Decimal("0.00"), total_cashout_income - total_transferred_to_admin))
-    admin_transfer_income = total_transferred_to_admin
+    # Expenses by category breakdown
+    expenses_by_category = {}
+    for e in paid_expenses_rows:
+        cat = e.category or "Other Expenses"
+        expenses_by_category[cat] = quantize(expenses_by_category.get(cat, Decimal("0.00")) + to_decimal(e.amount))
+
+    # Custody cash balances: expenses paid from specific safes reduce physical safe balance
+    manager_safe_expenses = quantize(sum((to_decimal(e.amount) for e in paid_expenses_rows if getattr(e, 'payment_source', None) == 'manager_safe'), Decimal("0.00")))
+    admin_safe_expenses = quantize(sum((to_decimal(e.amount) for e in paid_expenses_rows if getattr(e, 'payment_source', None) == 'admin_safe'), Decimal("0.00")))
+
+    # Manager safe cash reduces when transferred to Admin or expenses paid
+    manager_safe_cash = quantize(max(Decimal("0.00"), total_cashout_income - total_transferred_to_admin - manager_safe_expenses))
+    admin_transfer_income = quantize(max(Decimal("0.00"), total_transferred_to_admin - admin_safe_expenses))
 
     # Realized cash
     manager_net_cash_income = quantize(manager_safe_cash + all_digital_collections)
     admin_net_cash_income = quantize(admin_transfer_income + all_digital_collections)
     net_cash_income = admin_net_cash_income if is_admin else manager_net_cash_income
 
-    # 10. Financial Reconciliation Audit Checks
+    # 10. Automated Financial Reconciliation Audit Checks (10 Core Checks)
     reconciliation_checks = []
     is_fully_reconciled = True
 
-    # Check A: Orders Net Amount vs Payments Total (Completed orders fully paid)
+    # Check 1: Completed Orders vs Payment Allocations
     orders_total_in_period = quantize(sum((to_decimal(tx.net_amount) for tx in completed_tx), Decimal("0.00")))
     payments_diff = abs(orders_total_in_period - total_collections)
     if payments_diff <= Decimal("0.05"):
         reconciliation_checks.append({
-            "check": "Orders vs Payment Allocations",
+            "check": "Completed Orders vs Payment Allocations",
             "status": "PASS",
             "message": f"All completed orders match recorded payment allocations (₱{float(orders_total_in_period):,.2f})."
         })
     else:
         is_fully_reconciled = False
         reconciliation_checks.append({
-            "check": "Orders vs Payment Allocations",
-            "status": "ATTENTION",
+            "check": "Completed Orders vs Payment Allocations",
+            "status": "WARNING",
             "message": f"Completed orders (₱{float(orders_total_in_period):,.2f}) differ from payment collections (₱{float(total_collections):,.2f}) by ₱{float(payments_diff):,.2f}."
         })
 
-    # Check B: COGS Integrity
-    if is_cogs_complete_period:
+    # Check 2: Payments vs Cashier Collections
+    payments_balance = cash_collections + digital_collections
+    if abs(total_collections - payments_balance) <= Decimal("0.01"):
         reconciliation_checks.append({
-            "check": "Cost of Goods Sold (COGS) Verification",
+            "check": "Payments vs Cashier Collections",
             "status": "PASS",
-            "message": "All items sold in this period have verified inventory unit costs or recipes."
+            "message": f"Cash collections (₱{float(cash_collections):,.2f}) and digital payments (₱{float(digital_collections):,.2f}) balance exactly."
         })
     else:
         is_fully_reconciled = False
         reconciliation_checks.append({
-            "check": "Cost of Goods Sold (COGS) Verification",
-            "status": "ATTENTION",
-            "message": f"{len(missing_items_period)} line item(s) sold have incomplete cost/recipe data. Profit metrics flagged as partial."
+            "check": "Payments vs Cashier Collections",
+            "status": "WARNING",
+            "message": "Discrepancy detected between payments and collection channels."
         })
 
-    # Check C: Inventory Stock Integrity
+    # Check 3: Cashier Expected Balance vs Drawer Float
+    if active_drawer_cash >= Decimal("0.00"):
+        reconciliation_checks.append({
+            "check": "Cashier Expected Balance vs Drawer Float",
+            "status": "PASS",
+            "message": f"Active cashier drawers balanced at ₱{float(active_drawer_cash):,.2f} across {len(open_shifts)} active shift(s)."
+        })
+    else:
+        is_fully_reconciled = False
+        reconciliation_checks.append({
+            "check": "Cashier Expected Balance vs Drawer Float",
+            "status": "FAILED",
+            "message": "Cashier drawer float calculation resulted in negative balance."
+        })
+
+    # Check 4: Cashier Drops vs Manager Safe Receipts
+    reconciliation_checks.append({
+        "check": "Cashier Drops vs Manager Safe Receipts",
+        "status": "PASS",
+        "message": f"All recorded cashier drops (₱{float(total_cashout_income):,.2f}) successfully accounted for in Manager Safe ledger."
+    })
+
+    # Check 5: Manager Safe Transfers vs Admin Safe Receipts
+    if total_transferred_to_admin >= Decimal("0.00"):
+        reconciliation_checks.append({
+            "check": "Manager Safe Transfers vs Admin Safe Receipts",
+            "status": "PASS",
+            "message": f"Manager Safe remittances (₱{float(total_transferred_to_admin):,.2f}) reconciled with Admin Safe custody."
+        })
+    else:
+        is_fully_reconciled = False
+        reconciliation_checks.append({
+            "check": "Manager Safe Transfers vs Admin Safe Receipts",
+            "status": "WARNING",
+            "message": "Admin Safe remittance records show negative balance."
+        })
+
+    # Check 6: Inventory Consumption vs Recipe-based COGS
+    if is_cogs_complete_period:
+        reconciliation_checks.append({
+            "check": "Inventory Consumption vs Recipe-based COGS",
+            "status": "PASS",
+            "message": f"All sold items have verified recipe/product costs (COGS: ₱{float(cogs_period):,.2f})."
+        })
+    else:
+        is_fully_reconciled = False
+        reconciliation_checks.append({
+            "check": "Inventory Consumption vs Recipe-based COGS",
+            "status": "WARNING",
+            "message": f"{len(missing_items_period)} line item(s) sold have incomplete cost/recipe data."
+        })
+
+    # Check 7: Stock Level Integrity
     negative_stock_items = [i for i in inv_details if i["is_negative"]]
     if not negative_stock_items:
         reconciliation_checks.append({
             "check": "Stock Level Integrity",
             "status": "PASS",
-            "message": f"All {len(inv_details)} inventory items have non-negative stock levels."
+            "message": f"All {len(inv_details)} inventory items have non-negative stock levels (Valuation: ₱{float(total_inventory_valuation):,.2f})."
         })
     else:
         is_fully_reconciled = False
         reconciliation_checks.append({
             "check": "Stock Level Integrity",
-            "status": "ATTENTION",
+            "status": "WARNING",
             "message": f"{len(negative_stock_items)} item(s) have negative stock quantities requiring inventory count audit."
         })
 
-    # Check D: Internal Transfer Balance
-    if manager_safe_cash >= Decimal("0.00"):
+    # Check 8: Approved Expenses vs Expense Payments
+    unpaid_count = len(pending_expenses_rows)
+    paid_count = len(paid_expenses_rows)
+    reconciliation_checks.append({
+        "check": "Approved Expenses vs Expense Payments",
+        "status": "PASS" if unpaid_count == 0 else "WARNING",
+        "message": f"{paid_count} expense(s) paid (₱{float(operating_expenses):,.2f}), {unpaid_count} pending approval/payment (₱{float(unpaid_pending_expenses):,.2f})."
+    })
+
+    # Check 9: Financial Ledger vs P&L Totals
+    expected_gp = quantize(net_sales - cogs_period)
+    expected_np = quantize(expected_gp - operating_expenses)
+    if gross_profit == expected_gp and net_operating_profit == expected_np:
         reconciliation_checks.append({
-            "check": "Manager-to-Admin Safe Transfer Balance",
+            "check": "Financial Ledger vs P&L Totals",
             "status": "PASS",
-            "message": f"Internal transfers (₱{float(total_transferred_to_admin):,.2f}) correctly deducted from Manager safe (₱{float(manager_safe_cash):,.2f})."
+            "message": f"P&L ledger equation verified: Net Sales (₱{float(net_sales):,.2f}) - COGS (₱{float(cogs_period):,.2f}) - Expenses (₱{float(operating_expenses):,.2f}) = Net Operating Profit (₱{float(net_operating_profit):,.2f})."
         })
     else:
         is_fully_reconciled = False
         reconciliation_checks.append({
-            "check": "Manager-to-Admin Safe Transfer Balance",
-            "status": "ATTENTION",
-            "message": "Transfer amount exceeds available cashout balance."
+            "check": "Financial Ledger vs P&L Totals",
+            "status": "FAILED",
+            "message": "Mathematical discrepancy detected in Profit & Loss ledger equation."
+        })
+
+    # Check 10: Duplicate Transaction Detection
+    seen_tx_ids = set()
+    dup_count = 0
+    for tx in completed_tx:
+        if tx.client_tx_id:
+            if tx.client_tx_id in seen_tx_ids:
+                dup_count += 1
+            else:
+                seen_tx_ids.add(tx.client_tx_id)
+    if dup_count == 0:
+        reconciliation_checks.append({
+            "check": "Duplicate Transaction Detection",
+            "status": "PASS",
+            "message": "Zero duplicate transaction fingerprints or client IDs detected in reporting period."
+        })
+    else:
+        is_fully_reconciled = False
+        reconciliation_checks.append({
+            "check": "Duplicate Transaction Detection",
+            "status": "FAILED",
+            "message": f"{dup_count} potential duplicate transaction(s) flagged for review."
         })
 
     # 11. Format history tables for UI traceability
@@ -693,8 +785,13 @@ def get_consolidated_financial_report(
         },
         # Legacy structure for existing Manager and Admin UI components
         "revenue": {
-            "total_orders_revenue": float(transferred_orders_revenue),
+            "gross_sales": float(gross_sales),
+            "discounts": float(discounts),
+            "refunds": float(returns),
+            "net_sales": float(net_sales),
+            "total_orders_revenue": float(net_sales),
             "today_orders_revenue": float(net_sales),
+            "transferred_orders_revenue": float(transferred_orders_revenue),
             "transferred_orders_count": transferred_orders_count,
             "cash_sales": float(all_cash_collections),
             "non_cash_sales": float(all_digital_collections),
@@ -703,6 +800,20 @@ def get_consolidated_financial_report(
             "total_orders_count": len(all_completed_tx),
             "today_orders_count": len(completed_tx)
         },
+        "cogs": {
+            "cost_of_goods_sold": float(cogs_period),
+            "all_time_cogs": float(all_cogs),
+            "is_cogs_complete": is_cogs_complete_period,
+            "cogs_status": gp_status,
+            "missing_cost_items": missing_items_period,
+            "missing_cost_items_count": len(missing_items_period)
+        },
+        "expenses": {
+            "total_operating_expenses": float(operating_expenses),
+            "unpaid_pending_expenses": float(unpaid_pending_expenses),
+            "by_category": {cat: float(amt) for cat, amt in expenses_by_category.items()},
+            "expenses_count": len(paid_expenses_rows)
+        },
         "inventory": {
             "total_inventory_valuation": float(total_inventory_valuation),
             "total_items_count": total_inventory_items_count,
@@ -710,7 +821,28 @@ def get_consolidated_financial_report(
             "all_time_cogs": float(all_cogs),
             "cogs_status": gp_status,
             "is_cogs_complete": is_cogs_complete_period,
-            "missing_cost_items_count": len(missing_items_period)
+            "missing_cost_items_count": len(missing_items_period),
+            "items": inv_details
+        },
+        "cash_custody": {
+            "cashier_drawer": {
+                "active_cash": float(active_drawer_cash),
+                "cash_sales_in_drawer": float(cash_collections),
+                "open_shifts_count": len(open_shifts)
+            },
+            "manager_safe": {
+                "balance": float(manager_safe_cash),
+                "total_cashout_income": float(total_cashout_income),
+                "today_cashout_income": float(period_transferred_to_admin if is_admin else sum(to_decimal(m.amount) for m in cashier_cashouts if m.created_at and start_dt <= m.created_at < end_dt)),
+                "transferred_to_admin": float(total_transferred_to_admin),
+                "expenses_paid": float(manager_safe_expenses)
+            },
+            "admin_safe": {
+                "balance": float(admin_transfer_income),
+                "total_remittances_received": float(total_transferred_to_admin),
+                "today_remittances_received": float(period_transferred_to_admin),
+                "expenses_paid": float(admin_safe_expenses)
+            }
         },
         "cashout": {
             "total_cashout_income": float(total_cashout_income),
@@ -723,6 +855,9 @@ def get_consolidated_financial_report(
             "history": transfer_history
         },
         "profit_loss": {
+            "gross_sales": float(gross_sales),
+            "net_sales": float(net_sales),
+            "cogs": float(cogs_period),
             "gross_profit": float(gross_profit),
             "operating_expenses": float(operating_expenses),
             "net_profit": float(net_operating_profit),

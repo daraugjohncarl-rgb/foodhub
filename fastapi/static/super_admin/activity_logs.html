@@ -3,11 +3,45 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Activity Logs — Blessie FoodHub Admin</title>
+    <title>Superadmin Activity Logs &amp; Audit Trail — Blessie FoodHub</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="/static/css/style.css?v=20261030_v205">
+    <link rel="stylesheet" href="/static/css/style.css?v=20261113_v408">
+    <style>
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 14px;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            padding: 16px;
+            border-radius: 12px;
+            background: #ffffff;
+            border: 1px solid rgba(205,190,150,0.35);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.02);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .filter-pill {
+            padding: 4px 12px;
+            font-size: 11.5px;
+            font-weight: 600;
+            border-radius: 20px;
+            border: 1px solid #d4d4d8;
+            background: #ffffff;
+            color: #52525b;
+            cursor: pointer;
+            transition: 0.15s;
+        }
+        .filter-pill:hover, .filter-pill.active {
+            background: #c9a227;
+            color: #ffffff;
+            border-color: #c9a227;
+        }
+    </style>
 </head>
 <body>
 
@@ -24,7 +58,7 @@
             <li class="nav-item"><a href="dashboard.html" class="nav-link" data-title="Dashboard"><i class="fas fa-home"></i><span>Dashboard</span></a></li>
             <li class="nav-item"><a href="users.html" class="nav-link" data-title="User Lists"><i class="fas fa-users"></i><span>User Lists</span></a></li>
             <li class="nav-item"><a href="create_user.html" class="nav-link" data-title="Create User"><i class="fas fa-user-plus"></i><span>Create User</span></a></li>
-            <li class="nav-item"><a href="activity_logs.html" class="nav-link active" data-title="Activity Logs"><i class="fas fa-history"></i><span>Activity Logs</span></a></li>
+            <li class="nav-item"><a href="activity_logs.html" class="nav-link active" data-title="Activity Logs"><i class="fas fa-shield-halved" style="color:#c9a227;"></i><span>Activity Logs</span></a></li>
             <li class="nav-item"><a href="reports.html" class="nav-link" data-title="Incident Reports"><i class="fas fa-flag"></i><span>Incident Reports</span></a></li>
         </ul>
         <div class="nav-section-title">Account</div>
@@ -56,8 +90,8 @@
         <div class="header-left">
             <button class="mobile-menu-btn" id="mobileMenuBtn" title="Toggle Menu" aria-label="Toggle Menu"><i class="fas fa-bars"></i></button>
             <div class="header-title">
-                <h1>Activity Logs</h1>
-                <p id="liveDate">Loading...</p>
+                <h1>Superadmin Activity Logs &amp; Audit Trail</h1>
+                <p id="liveDate">Philippine Standard Time &bull; Asia/Manila (UTC+08:00)</p>
             </div>
         </div>
         <div class="header-actions">
@@ -80,47 +114,190 @@
     </header>
 
     <div class="page-wrapper">
-        <div class="toolbar fade-up delay-1">
-            <div class="search-wrap">
-                <i class="fas fa-search"></i>
-                <input type="text" id="logSearch" placeholder="Search by action, user, or details…">
+        <!-- 4 Summary Cards -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div style="width:42px; height:42px; border-radius:10px; background:rgba(201,162,39,0.12); color:#c9a227; display:flex; align-items:center; justify-content:center; font-size:18px;">
+                    <i class="fas fa-list-check"></i>
+                </div>
+                <div style="flex:1;">
+                    <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a;">Total Activities Today</div>
+                    <div id="statActivitiesToday" style="font-size:22px; font-weight:800; color:#18181b;">0</div>
+                    <div style="font-size:11px; color:#10b981;"><i class="fas fa-calendar-day"></i> Philippine calendar day</div>
+                </div>
             </div>
-            <select class="filter-select" id="actionFilter">
-                <option value="">All Actions</option>
-                <option value="Login">Login</option>
-                <option value="Logout">Logout</option>
-                <option value="User Created">User Created</option>
-                <option value="User Edited">User Edited</option>
-                <option value="User Deleted">User Deleted</option>
-                <option value="User Activated">User Activated</option>
-                <option value="User Deactivated">User Deactivated</option>
-                <option value="Password Reset">Password Reset</option>
-                <option value="Profile Updated">Profile Updated</option>
-                <option value="Settings Updated">Settings Updated</option>
-            </select>
-            <button class="btn btn-outline" id="clearLogsBtn" style="margin-left:auto;"><i class="fas fa-trash"></i> Clear Logs</button>
+
+            <div class="stat-card">
+                <div style="width:42px; height:42px; border-radius:10px; background:rgba(16,185,129,0.12); color:#10b981; display:flex; align-items:center; justify-content:center; font-size:18px;">
+                    <i class="fas fa-right-to-bracket"></i>
+                </div>
+                <div style="flex:1;">
+                    <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a;">Total Login Sessions Today</div>
+                    <div id="statLoginsToday" style="font-size:22px; font-weight:800; color:#10b981;">0</div>
+                    <div style="font-size:11px; color:#71717a;">Staff accounts authenticated</div>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div style="width:42px; height:42px; border-radius:10px; background:rgba(59,130,246,0.12); color:#3b82f6; display:flex; align-items:center; justify-content:center; font-size:18px;">
+                    <i class="fas fa-users"></i>
+                </div>
+                <div style="flex:1;">
+                    <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a;">Currently Active Users</div>
+                    <div id="statActiveUsers" style="font-size:22px; font-weight:800; color:#3b82f6;">0</div>
+                    <div style="font-size:11px; color:#71717a;">Distinct staff sessions active</div>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div style="width:42px; height:42px; border-radius:10px; background:rgba(239,68,68,0.12); color:#ef4444; display:flex; align-items:center; justify-content:center; font-size:18px;">
+                    <i class="fas fa-user-xmark"></i>
+                </div>
+                <div style="flex:1;">
+                    <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a;">Total Failed Login Attempts</div>
+                    <div id="statFailedLogins" style="font-size:22px; font-weight:800; color:#ef4444;">0</div>
+                    <div style="font-size:11px; color:#ef4444;"><i class="fas fa-shield"></i> Security audit monitor</div>
+                </div>
+            </div>
         </div>
 
-        <div class="page-card fade-up delay-2">
-            <div class="page-card-head">
-                <h2>Audit Trail</h2>
-                <span id="logCount" style="font-size:13px; color:var(--text-muted);">0 entries</span>
+        <!-- Filter Bar Card -->
+        <div class="page-card" style="padding:16px 20px; margin-bottom:18px;">
+            <!-- Quick Date Pills -->
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; padding-bottom:12px; border-bottom:1px solid #e4e4e7; margin-bottom:14px;">
+                <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                    <span style="font-size:11px; font-weight:800; text-transform:uppercase; color:#71717a; margin-right:4px;">
+                        <i class="fas fa-calendar-alt"></i> Period:
+                    </span>
+                    <button type="button" class="filter-pill active" data-range="today">Today</button>
+                    <button type="button" class="filter-pill" data-range="yesterday">Yesterday</button>
+                    <button type="button" class="filter-pill" data-range="last_7_days">Last 7 Days</button>
+                    <button type="button" class="filter-pill" data-range="last_30_days">Last 30 Days</button>
+                    <button type="button" class="filter-pill" data-range="all">All Activities</button>
+                    <button type="button" class="filter-pill" data-range="custom">Custom Range</button>
+                </div>
+                <div style="display:flex; gap:8px;">
+                    <button class="btn btn-outline btn-sm" id="exportLogsBtn" style="border-color:#10b981; color:#059669; font-weight:700;">
+                        <i class="fas fa-file-excel"></i> Export CSV
+                    </button>
+                    <button class="btn btn-outline btn-sm" id="refreshLogsBtn">
+                        <i class="fas fa-rotate"></i> Refresh
+                    </button>
+                </div>
+            </div>
+
+            <!-- Custom Date Inputs (Conditional) -->
+            <div id="customDateRangeBox" style="display:none; align-items:center; gap:10px; margin-bottom:12px; background:#fafafa; padding:10px 14px; border-radius:8px; border:1px solid #e4e4e7; flex-wrap:wrap;">
+                <label style="font-size:12px; font-weight:700; color:#52525b;">Start Date:</label>
+                <input type="date" id="customStartDate" style="padding:4px 8px; font-size:12px; border:1px solid #d4d4d8; border-radius:6px;">
+                <label style="font-size:12px; font-weight:700; color:#52525b;">End Date:</label>
+                <input type="date" id="customEndDate" style="padding:4px 8px; font-size:12px; border:1px solid #d4d4d8; border-radius:6px;">
+                <button type="button" class="btn btn-primary btn-sm" id="applyCustomDateBtn" style="padding:5px 14px; font-size:12px;">Apply</button>
+            </div>
+
+            <!-- Search & Filter Selects -->
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)) 100px; gap:10px; align-items:center;">
+                <div class="search-wrap" style="margin:0;">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="logSearch" placeholder="Search employee, username, IP, action…">
+                </div>
+                <select class="filter-select" id="roleFilter" style="margin:0;">
+                    <option value="ALL">All Roles</option>
+                    <option value="ADMIN">Admin</option>
+                    <option value="MANAGER">Manager</option>
+                    <option value="CASHIER">Cashier</option>
+                    <option value="INVENTORY">Inventory Staff</option>
+                    <option value="KITCHEN">Kitchen Staff</option>
+                </select>
+                <select class="filter-select" id="activityTypeFilter" style="margin:0;">
+                    <option value="ALL">All Activity Types</option>
+                    <option value="Login">Successful Login</option>
+                    <option value="Logout">Successful Logout</option>
+                    <option value="Failed">Failed Login Attempt</option>
+                    <option value="Order">POS &amp; Orders</option>
+                    <option value="Payment">Payment Processing</option>
+                    <option value="Stock">Inventory &amp; Stock</option>
+                    <option value="User">User Management</option>
+                    <option value="Password">Password Reset</option>
+                    <option value="Expense">Expense Actions</option>
+                </select>
+                <select class="filter-select" id="statusFilter" style="margin:0;">
+                    <option value="ALL">All Statuses</option>
+                    <option value="SUCCESS">Success</option>
+                    <option value="FAILED">Failed</option>
+                    <option value="INFO">Info</option>
+                    <option value="WARNING">Warning</option>
+                </select>
+                <button class="btn btn-outline btn-sm" id="resetFiltersBtn" style="height:36px; border-color:#d4d4d8; color:#71717a;" title="Clear all filters">
+                    <i class="fas fa-rotate-left"></i> Reset
+                </button>
+            </div>
+        </div>
+
+        <!-- Table Card -->
+        <div class="page-card">
+            <div class="page-card-head" style="display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <h2>Audit Trail Table</h2>
+                    <span id="logCountMeta" style="font-size:12px; color:var(--text-muted);">Loading entries...</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="font-size:12px; color:var(--text-muted);">Rows per page:</span>
+                    <select id="limitSelect" style="padding:4px 8px; font-size:12px; border:1px solid #d4d4d8; border-radius:6px;">
+                        <option value="15" selected>15</option>
+                        <option value="25">25</option>
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                    </select>
+                </div>
             </div>
             <div class="table-wrap">
                 <table>
                     <thead>
                         <tr>
                             <th>Date</th>
-                            <th>Time</th>
-                            <th>Action</th>
-                            <th>Performed By</th>
-                            <th>Target User</th>
+                            <th>Time (PST)</th>
+                            <th>Account Name</th>
+                            <th>Username / Email</th>
                             <th>Role</th>
+                            <th>Activity</th>
+                            <th style="min-width:220px;">Description</th>
+                            <th>IP Address</th>
+                            <th>Status</th>
+                            <th style="text-align:center;">Action</th>
                         </tr>
                     </thead>
-                    <tbody id="logsTableBody"></tbody>
+                    <tbody id="logsTableBody">
+                        <tr>
+                            <td colspan="10" style="text-align:center; padding:40px; color:var(--text-muted);">
+                                <i class="fas fa-spinner fa-spin" style="margin-right:8px; color:#c9a227;"></i> Loading audit logs...
+                            </td>
+                        </tr>
+                    </tbody>
                 </table>
             </div>
+
+            <!-- Pagination Bar -->
+            <div style="padding:14px 20px; border-top:1px solid #e4e4e7; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; font-size:12px;">
+                <div id="paginationInfo" style="color:#71717a;">Showing 0 to 0 of 0 entries</div>
+                <div id="paginationButtons" style="display:flex; gap:6px;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- LOG DETAIL MODAL -->
+<div class="modal-overlay" id="logDetailModal" style="display:none">
+    <div class="modal modal-md">
+        <div class="modal-header" style="display:flex; justify-content:space-between; align-items:center; padding:14px 18px; border-bottom:1px solid rgba(205,190,150,0.25);">
+            <h3 style="font-size:16px; font-weight:800; margin:0;" id="detailModalTitle"><i class="fas fa-shield-halved" style="color:#c9a227;"></i> Audit Record Inspection</h3>
+            <button type="button" class="btn-icon" id="closeDetailModal" style="border:none; background:transparent; font-size:18px; cursor:pointer;"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="modal-body" id="detailModalBody" style="padding:18px; max-height:75vh; overflow-y:auto;">
+            <!-- Injected by logs.js -->
+        </div>
+        <div class="modal-footer" style="padding:12px 18px; border-top:1px solid #e4e4e7; display:flex; justify-content:flex-end;">
+            <button type="button" class="btn btn-outline" id="closeDetailModalBtn">Close</button>
         </div>
     </div>
 </div>
@@ -131,7 +308,7 @@
         <div class="modal-body" style="text-align:center; padding:36px 28px;">
             <div class="confirm-icon warning"><i class="fas fa-sign-out-alt"></i></div>
             <h2 style="font-size:18px; margin-bottom:10px;">Confirm Logout</h2>
-            <p style="color:var(--text-muted); font-size:14px;">Are you sure you want to logout?</p>
+            <p style="color:var(--text-muted); font-size:14px;">Are you sure you want to end your Superadmin session?</p>
         </div>
         <div class="modal-footer" style="justify-content:center; gap:16px; padding-bottom:28px;">
             <button class="btn btn-outline" id="cancelLogout">Cancel</button>
@@ -146,6 +323,6 @@
 <script src="/static/js/storage.js"></script>
 <script src="/static/js/auth.js"></script>
 <script src="/static/js/notifications.js"></script>
-<script src="/static/js/logs.js"></script>
+<script src="/static/js/logs.js?v=20261113_v408"></script>
 </body>
 </html>

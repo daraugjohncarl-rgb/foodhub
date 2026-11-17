@@ -91,7 +91,7 @@ function restorePosDraft() {
 
 // Views that only some roles may open. Checked here as well as in the menu, so a typed or stale
 // #hash / saved view cannot open them. The server enforces the same rules on the APIs behind them.
-const VIEW_ROLE_RULES = { cash_drawer: ["manager", "admin", "super_admin"] };
+const VIEW_ROLE_RULES = { cash_drawer: ["manager", "admin", "super_admin"], inventory_history: ["admin", "super_admin", "inventory"], logs: ["super_admin"] };
 
 function currentViewRole() {
   try {
@@ -183,20 +183,12 @@ async function renderView(viewId, container) {
       case "cash_drawer":
         await renderCashDrawerTracker(container);
         break;
-      case "inventory": {
-        const _currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
-        const _userRole = (_currentUser && _currentUser.role ? _currentUser.role : (typeof Auth !== 'undefined' ? Auth.getRole() : '')).toLowerCase();
-        const _isAdmin = _userRole === 'admin' || _userRole === 'branch_admin' || _userRole === 'branch admin' || _userRole.includes('admin') || window.location.pathname.includes('/admin');
-        if (_isAdmin) {
-          if (window.location.hash === "#inventory") {
-            history.replaceState(null, "", window.location.pathname + "#dashboard");
-          }
-          await renderDashboard(container);
-          break;
-        }
+      case "inventory":
         await renderInventory(container);
         break;
-      }
+      case "inventory_history":
+        await renderInventoryHistory(container);
+        break;
       case "products":
         await renderProducts(container);
         break;
@@ -392,7 +384,7 @@ async function renderDashboard(c) {
             ${lowStockItems.length ? lowStockItems.map(item => `
               <tr>
                 <td><strong style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(item.name)}</strong></td>
-                <td><strong style="font-size:13px;">${Utils.escapeHtml(item.quantity)}</strong> <span style="font-size:12px; color:var(--text-muted);">${Utils.escapeHtml(item.unit || '')}</span></td>
+                <td><strong style="font-size:13px;">${Utils.escapeHtml(item.quantity)}</strong></td>
                 <td>
                   <span class="badge ${item.quantity <= 0 ? 'badge-danger' : 'badge-warning'}" style="font-size:11px; font-weight:700;">
                     ${item.quantity <= 0 ? 'Out of Stock' : 'Low Stock'}
@@ -444,9 +436,24 @@ async function renderInventory(c) {
     }
   }
 
-  if (!analyticsRes.ok) throw new Error("Failed to load inventory analytics from server.");
-  cachedAnalytics = await analyticsRes.json();
+  if (analyticsRes && analyticsRes.ok) {
+    cachedAnalytics = await analyticsRes.json().catch(() => null);
+  }
+  if (!cachedAnalytics) {
+    cachedAnalytics = {
+      total_items: items.length,
+      total_valuation: items.reduce((sum, i) => sum + (Number(i.quantity) || 0) * (Number(i.unit_price) || 0), 0),
+      health_score: 100,
+      healthy_count: items.filter(i => Number(i.quantity) > Number(i.min_stock)).length,
+      low_stock_count: items.filter(i => Number(i.quantity) <= Number(i.min_stock) && Number(i.quantity) > 0).length,
+      out_of_stock_count: items.filter(i => Number(i.quantity) <= 0).length
+    };
+  }
 
+  const currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
+  const userRole = (currentUser && currentUser.role ? currentUser.role : (typeof Auth !== 'undefined' ? Auth.getRole() : '')).toLowerCase();
+  const isInventoryAccount = userRole === 'inventory' || window.location.pathname.includes('/inventory');
+  const isAdmin = userRole === 'admin' || userRole === 'branch_admin' || userRole === 'super_admin' || userRole.includes('admin') || window.location.pathname.includes('/admin');
   const totalValuation = (cachedAnalytics && cachedAnalytics.total_valuation) || items.reduce((sum, i) => sum + (Number(i.quantity) || 0) * (Number(i.unit_price) || 0), 0);
   const uniqueCats = Array.from(new Set(cachedInventory.map(i => i.category || 'Uncategorized'))).sort();
   const categories = ["ALL", ...uniqueCats];
@@ -505,6 +512,11 @@ async function renderInventory(c) {
         </div>
       </div>
       <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        ${isAdmin ? `
+          <button class="btn btn-outline" onclick="allowAllInventoryStockAgain()" style="display:inline-flex; align-items:center; gap:8px; border-color:#059669; color:#059669;" title="Allow Inventory to add stock again for all locked items">
+            <i class="fas fa-unlock"></i> <strong>Allow All Stock</strong>
+          </button>
+        ` : ''}
         <button class="btn btn-outline" onclick="openImportMasterlistModal()" style="display:inline-flex; align-items:center; gap:8px; border-color:#c9a227; color:#c9a227;">
           <i class="fas fa-file-import"></i> <strong>Import Master List</strong>
         </button>
@@ -573,6 +585,7 @@ async function renderInventory(c) {
               <th>Item Name</th>
               <th>Department / Category</th>
               <th>Current Stock</th>
+              ${isInventoryAccount ? `<th style="background:rgba(5,150,105,0.06); color:#059669;">New Total Stock</th>` : ''}
               <th style="background:rgba(201,162,39,0.08); color:#c9a227;">Price per Unit</th>
               <th style="background:rgba(16,185,129,0.08); color:#10b981;">Total Valuation</th>
               <th>Health Status</th>
@@ -591,10 +604,331 @@ async function renderInventory(c) {
   updateInventoryBulkToolbar();
 }
 
-function renderInventoryRows(items) {
-  if (!items || !items.length) {
-    return `<tr><td colspan="8" style="text-align:center; padding:40px; color:var(--text-muted);"><i class="fas fa-boxes" style="font-size:24px; margin-bottom:8px; display:block; opacity:0.5;"></i>No inventory items match the criteria.<br><button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="openImportMasterlistModal()"><i class="fas fa-file-import"></i> Import Official Master List</button></td></tr>`;
+// Role-specific stock vs price save helper functions
+async function saveInventoryStockOnly(itemId) {
+  const stockInput = document.getElementById(`inv-stock-${itemId}`);
+  if (!stockInput) return;
+  const valStr = stockInput.value.trim();
+  if (valStr === "") {
+    Utils.showToast("Please enter a new total stock quantity.", "warning");
+    stockInput.focus();
+    return;
   }
+  const newStock = parseFloat(valStr);
+  if (isNaN(newStock) || newStock < 0) {
+    Utils.showToast("Please enter a valid stock quantity (0 or greater).", "danger");
+    return;
+  }
+  const item = (cachedInventory || []).find(i => Number(i.id) === Number(itemId));
+  const currentStock = item ? Number(item.quantity) : 0;
+  const delta = newStock - currentStock;
+
+  if (delta === 0) {
+    Utils.showToast("Stock quantity is already " + (newStock % 1 === 0 ? newStock : newStock.toFixed(2)), "info");
+    return;
+  }
+
+  const saveBtn = document.getElementById(`inv-save-btn-${itemId}`);
+  if (saveBtn) saveBtn.disabled = true;
+  window._skipInvWsRefreshUntil = Date.now() + 3000;
+
+  try {
+    const res = await Auth.fetch(`/api/v1/inventory/${itemId}/stock`, {
+      method: "PUT",
+      body: JSON.stringify({
+        quantity_delta: delta,
+        reason: "New Total Stock Update"
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to update stock quantity.");
+    }
+    const updated = await res.json();
+    const newQty = Number(updated.quantity);
+    if (item) {
+      item.quantity = newQty;
+      item.daily_input_submitted = true;
+    }
+
+    // Update only this row in place so other rows' unsaved stock inputs are preserved
+    const row = document.getElementById(`inv-row-${itemId}`);
+    if (row) {
+      const cells = row.querySelectorAll("td");
+      // Col 4 (index 3): Current Stock badge
+      const curBadge = cells[3]?.querySelector(".badge");
+      if (curBadge) {
+        curBadge.textContent = newQty % 1 === 0 ? newQty : newQty.toFixed(2);
+      }
+      // Col 5 (index 4): New Total Stock cell (for Inventory account)
+      if (cells[4]) {
+        cells[4].innerHTML = `
+          <div style="display:inline-flex; align-items:center; gap:6px;">
+            <span class="badge" style="background:rgba(5,150,105,0.1); color:#047857; border:1px solid rgba(5,150,105,0.25); font-weight:700; font-size:12px; padding:6px 12px; border-radius:10px;" title="Stock already saved. Ask an Admin for permission to add stock again.">
+              <i class="fas fa-lock" style="color:#059669; margin-right:5px;"></i>Stock Saved
+            </span>
+          </div>
+        `;
+      }
+      // Total Valuation cell
+      const valEl = document.getElementById(`inv-val-${itemId}`);
+      if (valEl && item) {
+        valEl.textContent = Utils.formatCurrency(newQty * (Number(item.unit_price) || 0));
+      }
+      // Health Status cell (second-to-last td)
+      const healthTd = cells[cells.length - 2];
+      const healthBadge = healthTd?.querySelector(".badge");
+      if (healthBadge && item) {
+        const isOut = newQty <= 0;
+        const isLow = newQty <= Number(item.min_stock);
+        healthBadge.className = `badge ${isOut ? 'badge-danger' : isLow ? 'badge-warning' : 'badge-success'}`;
+        healthBadge.textContent = isOut ? 'Out of Stock' : isLow ? 'Low Stock' : 'In Stock';
+      }
+    }
+
+    Utils.showToast("New total stock saved successfully!", "success");
+  } catch (err) {
+    if (saveBtn) saveBtn.disabled = false;
+    Utils.showToast(err.message || "Failed to save stock.", "danger");
+  }
+}
+
+async function allowInventoryStockAgain(itemId, itemName) {
+  try {
+    const res = await Auth.fetch(`/api/v1/inventory/${itemId}/allow-stock`, {
+      method: "POST"
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to grant stock entry permission.");
+    }
+    const item = (cachedInventory || []).find(i => Number(i.id) === Number(itemId));
+    if (item) item.daily_input_submitted = false;
+    Utils.showToast(`Admin permission granted: Inventory can add stock again for "${itemName}".`, "success");
+    if (typeof renderInventory === "function") {
+      renderInventory();
+    }
+  } catch (err) {
+    Utils.showToast(err.message || "Failed to allow stock entry.", "danger");
+  }
+}
+
+async function allowAllInventoryStockAgain() {
+  try {
+    const res = await Auth.fetch(`/api/v1/inventory/allow-stock-all`, {
+      method: "POST"
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to grant stock entry permission for all items.");
+    }
+    const data = await res.json().catch(() => ({}));
+    (cachedInventory || []).forEach(i => { i.daily_input_submitted = false; });
+    Utils.showToast(data.message || "Admin permission granted: All inventory items unlocked.", "success");
+    if (typeof renderInventory === "function") {
+      renderInventory();
+    }
+  } catch (err) {
+    Utils.showToast(err.message || "Failed to allow all stock.", "danger");
+  }
+}
+
+function hasUnsavedInventoryStockInputs() {
+  const inputs = document.querySelectorAll('input[id^="inv-stock-"]');
+  for (const el of inputs) {
+    if (String(el.value).trim() !== String(el.defaultValue).trim()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+let cachedOverallHistory = [];
+async function openOverallStockHistoryModal(focusItemId, focusItemName) {
+  Utils.openModal(`
+    <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
+      <div>
+        <h3 style="font-size:17px; font-weight:800; margin:0; color:var(--text-main);">
+          <i class="fas fa-clock-rotate-left" style="color:#c9a227; margin-right:8px;"></i>Overall Inventory Stock History
+        </h3>
+        <p style="font-size:12px; color:var(--text-muted); margin:2px 0 0 0;">
+          Previous stock records across all updated inventory items (excludes current new update stock).
+        </p>
+      </div>
+    </div>
+  `, `
+    <div id="overall-history-container" style="min-height:240px;">
+      <div style="text-align:center; padding:40px 16px; color:var(--text-muted);">
+        <i class="fas fa-spinner fa-spin" style="font-size:26px; color:#c9a227;"></i>
+        <div style="margin-top:10px; font-size:13px;">Loading overall previous stock records...</div>
+      </div>
+    </div>
+  `, `<button class="btn btn-outline" onclick="Utils.closeModal()">Close</button>`, "modal-responsive modal-xl");
+
+  try {
+    const res = await Auth.fetch("/api/v1/inventory/overall-history");
+    if (!res.ok) throw new Error("Failed to load overall inventory history.");
+    const items = await res.json();
+    cachedOverallHistory = items || [];
+
+    const host = document.getElementById("overall-history-container");
+    if (!host) return;
+
+    if (!items || !items.length) {
+      host.innerHTML = `
+        <div style="padding:36px 16px; text-align:center; color:var(--text-muted);">
+          <div style="width:52px; height:52px; border-radius:50%; background:rgba(0,0,0,0.04); display:inline-flex; align-items:center; justify-content:center; margin-bottom:12px;">
+            <i class="fas fa-clock-rotate-left" style="font-size:24px; color:var(--text-muted); opacity:0.6;"></i>
+          </div>
+          <div style="font-weight:700; font-size:15px; color:var(--text-main); margin-bottom:4px;">No Previous Stock History Available</div>
+          <div style="font-size:12.5px; line-height:1.5; max-width:400px; margin:0 auto;">
+            Inventory items have not been updated previously yet. Only previous stock updates are shown here (the current active stock is strictly excluded). Prior records will appear here after subsequent stock updates.
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    const categories = Array.from(new Set(items.map(x => x.category || 'Kitchen'))).sort();
+    let catOptions = `<option value="ALL">All Categories (${items.length})</option>`;
+    categories.forEach(c => {
+      const count = items.filter(x => (x.category || 'Kitchen') === c).length;
+      catOptions += `<option value="${Utils.escapeHtml(c)}">${Utils.escapeHtml(c)} (${count})</option>`;
+    });
+
+    host.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:16px;">
+        <div style="display:flex; gap:10px; flex:1; min-width:280px;">
+          <input type="text" id="overall-hist-search" class="input-field" placeholder="Search item name, SKU..." style="flex:1; height:36px; font-size:13px;" oninput="filterOverallHistoryTable()">
+          <select id="overall-hist-cat" class="input-field" style="width:180px; height:36px; font-size:13px;" onchange="filterOverallHistoryTable()">
+            ${catOptions}
+          </select>
+        </div>
+        <div style="font-size:12px; color:var(--text-muted);">
+          Showing <strong id="overall-hist-count" style="color:var(--text-main);">${items.length}</strong> previously updated item(s)
+        </div>
+      </div>
+
+      <div class="table-responsive" style="max-height:55vh; overflow-y:auto; border:1px solid rgba(0,0,0,0.08); border-radius:10px;">
+        <table class="table" style="width:100%; border-collapse:collapse; font-size:13px;">
+          <thead style="position:sticky; top:0; background:#fafafa; z-index:2; border-bottom:1.5px solid rgba(0,0,0,0.1);">
+            <tr style="text-align:left;">
+              <th style="padding:10px 12px;">Item Name</th>
+              <th style="padding:10px 12px;">Category</th>
+              <th style="padding:10px 12px; text-align:center; background:rgba(201,162,39,0.08); color:#b45309;">Previous Stock</th>
+              <th style="padding:10px 12px; text-align:center;">Unit Cost</th>
+              <th style="padding:10px 12px;">Last Recorded Date</th>
+              <th style="padding:10px 12px;">Updated By</th>
+              <th style="padding:10px 12px; text-align:center;">History Log</th>
+            </tr>
+          </thead>
+          <tbody id="overall-hist-tbody">
+            ${renderOverallHistoryRows(items)}
+          </tbody>
+        </table>
+      </div>
+    `;
+
+    if (focusItemName) {
+      const searchBox = document.getElementById("overall-hist-search");
+      if (searchBox) {
+        searchBox.value = focusItemName;
+        filterOverallHistoryTable();
+      }
+    }
+  } catch (err) {
+    const host = document.getElementById("overall-history-container");
+    if (host) host.innerHTML = `<div style="color:var(--danger); padding:16px;">${Utils.escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderOverallHistoryRows(items) {
+  if (!items || !items.length) {
+    return `<tr><td colspan="7" style="text-align:center; padding:24px; color:var(--text-muted);">No matching previously updated items found.</td></tr>`;
+  }
+  return items.map(it => {
+    const prevTimeline = (it.all_previous_records || []).slice(0, 5);
+    const timelineHtml = prevTimeline.map(r => `
+      <div style="font-size:11px; padding:3px 0; border-bottom:1px dashed rgba(0,0,0,0.06); display:flex; justify-content:space-between; gap:12px;">
+        <span><strong>${Number(r.previous_stock) % 1 === 0 ? Number(r.previous_stock) : Number(r.previous_stock).toFixed(2)}</strong></span>
+        <span style="color:var(--text-muted);">${Utils.escapeHtml(r.inventory_date || '')} by ${Utils.escapeHtml(r.submitted_by_username || 'Staff')}</span>
+      </div>
+    `).join('');
+
+    return `
+      <tr style="border-bottom:1px solid rgba(0,0,0,0.05);">
+        <td style="padding:10px 12px;">
+          <div style="font-weight:700; color:var(--text-main);">${Utils.escapeHtml(it.item_name)}</div>
+          ${it.sku ? `<span style="font-size:10px; font-family:monospace; color:var(--text-muted); background:rgba(0,0,0,0.05); padding:1px 4px; border-radius:3px;">${Utils.escapeHtml(it.sku)}</span>` : ''}
+        </td>
+        <td style="padding:10px 12px;">
+          <span class="badge" style="background:rgba(201,162,39,0.1); color:#c9a227; font-size:11px;">${Utils.escapeHtml(it.category || 'Kitchen')}</span>
+        </td>
+        <td style="padding:10px 12px; text-align:center; background:rgba(201,162,39,0.04);">
+          <span style="display:inline-block; font-size:14px; font-weight:800; color:#b45309; padding:3px 10px; background:#fef3c7; border-radius:12px;">
+            ${Number(it.previous_stock) % 1 === 0 ? Number(it.previous_stock) : Number(it.previous_stock).toFixed(2)}
+          </span>
+          <div style="font-size:10px; color:#92400e; margin-top:2px; font-weight:600;">(Previous Update)</div>
+        </td>
+        <td style="padding:10px 12px; text-align:center; font-weight:600; color:#18181b;">
+          ₱${Number(it.previous_unit_price || 0).toFixed(2)}
+        </td>
+        <td style="padding:10px 12px; font-size:12px; color:var(--text-muted);">
+          <div>${Utils.escapeHtml(it.previous_date || '-')}</div>
+          <div style="font-size:10.5px; opacity:0.8;">${it.previous_submitted_at ? new Date(it.previous_submitted_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : ''}</div>
+        </td>
+        <td style="padding:10px 12px; font-size:12px; color:var(--text-main);">
+          <i class="fas fa-user" style="font-size:10px; margin-right:4px; opacity:0.6;"></i>${Utils.escapeHtml(it.previous_submitted_by || 'Staff')}
+        </td>
+        <td style="padding:10px 12px; text-align:center;">
+          <details style="cursor:pointer; text-align:left;">
+            <summary style="font-size:11px; font-weight:700; color:#2563eb; outline:none;">
+              View Prior (${it.total_previous_updates || prevTimeline.length})
+            </summary>
+            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:6px 8px; margin-top:4px; max-width:260px;">
+              ${timelineHtml || '<div style="font-size:11px; color:#94a3b8;">No older records</div>'}
+            </div>
+          </details>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function filterOverallHistoryTable() {
+  const q = (document.getElementById("overall-hist-search")?.value || "").toLowerCase().trim();
+  const cat = document.getElementById("overall-hist-cat")?.value || "ALL";
+  const tbody = document.getElementById("overall-hist-tbody");
+  const countEl = document.getElementById("overall-hist-count");
+
+  const filtered = (cachedOverallHistory || []).filter(it => {
+    const matchCat = cat === "ALL" || (it.category || 'Kitchen') === cat;
+    const matchSearch = !q ||
+      (it.item_name && it.item_name.toLowerCase().includes(q)) ||
+      (it.sku && it.sku.toLowerCase().includes(q)) ||
+      (it.category && it.category.toLowerCase().includes(q));
+    return matchCat && matchSearch;
+  });
+
+  if (tbody) tbody.innerHTML = renderOverallHistoryRows(filtered);
+  if (countEl) countEl.textContent = filtered.length;
+}
+
+function viewDailyHistory(itemId, itemName) {
+  return openOverallStockHistoryModal(itemId, itemName);
+}
+
+function renderInventoryRows(items) {
+  const currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
+  const userRole = (currentUser && currentUser.role ? currentUser.role : (typeof Auth !== 'undefined' ? Auth.getRole() : '')).toLowerCase();
+  const isInventoryAccount = userRole === 'inventory' || window.location.pathname.includes('/inventory');
+  const isManager = userRole === 'manager' || window.location.pathname.includes('/manager');
+  const isAdmin = userRole === 'admin' || userRole === 'branch_admin' || userRole === 'super_admin' || userRole.includes('admin') || window.location.pathname.includes('/admin');
+
+  if (!items || !items.length) {
+    return `<tr><td colspan="${isInventoryAccount ? 9 : 8}" style="text-align:center; padding:40px; color:var(--text-muted);"><i class="fas fa-boxes" style="font-size:24px; margin-bottom:8px; display:block; opacity:0.5;"></i>No inventory items match the criteria.<br><button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="openImportMasterlistModal()"><i class="fas fa-file-import"></i> Import Official Master List</button></td></tr>`;
+  }
+
   return items.map(i => {
     const isOut = Number(i.quantity) <= 0;
     const isLow = Number(i.quantity) <= Number(i.min_stock);
@@ -622,51 +956,118 @@ function renderInventoryRows(items) {
           ${i.sku ? `<span style="font-size:10px; font-family:monospace; background:rgba(0,0,0,0.06); padding:2px 5px; border-radius:4px; margin-left:6px; color:var(--text-muted); font-weight:600;">${Utils.escapeHtml(i.sku)}</span>` : ''}
         </td>
         <td><span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:11px; font-weight:600;">${Utils.escapeHtml(catName)}</span></td>
+        <!-- Current Stock (Cannot update - unclickable status badge) -->
         <td>
           <div style="display:inline-flex; align-items:center; gap:6px;">
-            <input type="number" 
-                   step="any"
-                   id="inv-stock-${Utils.escapeHtml(i.id)}" 
-                   class="input-field" 
-                   value="${Number(i.quantity)}" 
-                   style="width:90px; height:36px; padding:4px 10px; font-size:14px; font-weight:800; border-radius:18px; border:1.5px solid rgba(205,190,150,0.5); background:#fff; text-align:center; color:var(--text-main);" 
-                   onchange="inlineUpdateStock(${i.id}, ${Number(i.quantity)}, this.value)"
-                   title="Adjust stock quantity directly">
-            <span style="font-size:11px; color:var(--text-muted); font-weight:600;">${Utils.escapeHtml(i.unit)}</span>
+            <span class="badge" style="font-size:13px; font-weight:800; background:#f4f4f5; color:#27272a; padding:6px 14px; border-radius:14px; border:1px solid #e4e4e7; cursor:default; user-select:none;" title="Current Stock on Hand (read-only)">
+              ${Number(i.quantity) % 1 === 0 ? Number(i.quantity) : Number(i.quantity).toFixed(2)}
+            </span>
           </div>
         </td>
+        ${isInventoryAccount ? `
+          <!-- New Total Stock: Inventory can save stock once until Admin grants permission again -->
+          <td style="background:rgba(5,150,105,0.02);">
+            ${i.daily_input_submitted ? `
+              <div style="display:inline-flex; align-items:center; gap:6px;">
+                <span class="badge" style="background:rgba(5,150,105,0.1); color:#047857; border:1px solid rgba(5,150,105,0.25); font-weight:700; font-size:12px; padding:6px 12px; border-radius:10px;" title="Stock already saved. Ask an Admin for permission to add stock again.">
+                  <i class="fas fa-lock" style="color:#059669; margin-right:5px;"></i>Stock Saved
+                </span>
+              </div>
+            ` : `
+              <div style="display:inline-flex; align-items:center; gap:6px;">
+                <input type="number" 
+                       step="any"
+                       min="0"
+                       id="inv-stock-${Utils.escapeHtml(i.id)}" 
+                       class="input-field" 
+                       value="${Number(i.quantity)}" 
+                       style="width:85px; height:34px; padding:4px 8px; font-size:13.5px; font-weight:800; border-radius:12px; border:1.5px solid rgba(5,150,105,0.4); background:#fff; text-align:center; color:#059669;" 
+                       title="Enter new total stock">
+                <button id="inv-save-btn-${Utils.escapeHtml(i.id)}"
+                        class="btn btn-primary btn-sm" 
+                        style="padding:4px 9px; font-size:11px; font-weight:700; border-radius:8px; background:#18181b; border-color:#18181b; white-space:nowrap;" 
+                        onclick="saveInventoryStockOnly(${i.id})" 
+                        title="Save New Total Stock">
+                  <i class="fas fa-save"></i> Save Stock
+                </button>
+              </div>
+            `}
+          </td>
+        ` : ''}
         <td style="background:rgba(201,162,39,0.03);">
-          <div style="display:inline-flex; align-items:center; gap:4px;">
-            <span style="font-size:13px; font-weight:800; color:#c9a227;">₱</span>
-            <input type="number" 
-                   step="0.01" 
-                   min="0"
-                   id="inv-price-${Utils.escapeHtml(i.id)}" 
-                   class="input-field" 
-                   value="${Utils.escapeHtml(unitPrice)}" 
-                   style="width:95px; height:36px; padding:4px 10px; font-size:14px; font-weight:800; color:#c9a227; border-radius:18px; border:1.5px solid rgba(201,162,39,0.45); background:#fff; text-align:center;" 
-                   onchange="inlineUpdatePrice(${i.id}, this.value)"
-                   title="Adjust price unit directly">
-          </div>
+          ${isInventoryAccount ? `
+            <!-- Inventory Account: Price per Unit is editable and updated here -->
+            <div style="display:inline-flex; align-items:center; gap:4px;">
+              <span style="font-size:13px; font-weight:800; color:#c9a227;">₱</span>
+              <input type="number" 
+                     step="0.01" 
+                     min="0"
+                     id="inv-price-${Utils.escapeHtml(i.id)}" 
+                     class="input-field" 
+                     value="${unitPrice.toFixed(2)}" 
+                     style="width:90px; height:34px; padding:4px 8px; font-size:13.5px; font-weight:800; color:#c9a227; border-radius:12px; border:1.5px solid rgba(201,162,39,0.5); background:#fff; text-align:center;" 
+                     title="Enter price per unit">
+              <button class="btn btn-outline btn-sm" 
+                      style="padding:4px 8px; font-size:11px; font-weight:700; color:#c9a227; border-color:rgba(201,162,39,0.5); border-radius:8px;" 
+                      onclick="inlineUpdatePrice(${i.id}, document.getElementById('inv-price-${i.id}').value)" 
+                      title="Update Price per Unit">
+                <i class="fas fa-check"></i> Save
+              </button>
+            </div>
+          ` : `
+            <!-- Manager & Admin Account: Price per Unit is read-only (only Inventory account can update price) -->
+            <div style="display:inline-flex; align-items:center; gap:4px;">
+              <span class="badge" style="font-size:13px; font-weight:800; background:rgba(201,162,39,0.1); color:#c9a227; padding:5px 10px; border-radius:12px; border:1px solid rgba(201,162,39,0.25);" title="Price per Unit is managed by the Inventory account">
+                <i class="fas fa-lock" style="font-size:10px; margin-right:4px; opacity:0.6;"></i>₱${unitPrice.toFixed(2)}
+              </span>
+            </div>
+          `}
         </td>
         <td style="background:rgba(16,185,129,0.04);"><strong id="inv-val-${Utils.escapeHtml(i.id)}" style="color:#10b981; font-size:13px; font-weight:700;">${Utils.formatCurrency(totalVal)}</strong></td>
         <td><span class="badge ${badgeClass}" style="font-size:11px; font-weight:700;">${badgeText}</span></td>
         <td style="text-align:right; white-space:nowrap;">
           <div style="display:inline-flex; align-items:center; justify-content:flex-end; gap:6px;">
-            <button class="btn btn-outline btn-sm inv-action-btn inv-edit-btn" 
-                    style="padding:5px 9px; font-size:12px; color:#c9a227; border-color:rgba(201,162,39,0.45); background:rgba(201,162,39,0.06); border-radius:8px;" 
-                    onclick="openEditInventoryModal(${i.id})" 
-                    title="Edit Item" 
-                    aria-label="Edit ${Utils.escapeHtml(i.name)}">
-              <i class="fas fa-pen"></i>
-            </button>
-            <button class="btn btn-outline btn-sm inv-action-btn inv-delete-btn" 
-                    style="padding:5px 9px; font-size:12px; color:var(--danger, #ef4444); border-color:rgba(239,68,68,0.4); background:rgba(239,68,68,0.06); border-radius:8px;" 
-                    onclick="deleteInventoryItem(${i.id}, ${Utils.jsArg(i.name)})" 
-                    title="Delete Item" 
-                    aria-label="Delete ${Utils.escapeHtml(i.name)}">
-              <i class="fas fa-trash"></i>
-            </button>
+            ${(isAdmin && i.daily_input_submitted) ? `
+              <button class="btn btn-outline btn-sm" 
+                      style="padding:5px 10px; font-size:11.5px; font-weight:700; color:#059669; border-color:rgba(5,150,105,0.45); background:rgba(5,150,105,0.08); border-radius:8px;" 
+                      onclick="allowInventoryStockAgain(${i.id}, ${Utils.jsArg(i.name)})" 
+                      title="Allow Inventory to add stock again">
+                <i class="fas fa-unlock"></i> Allow Stock
+              </button>
+            ` : ''}
+            <!-- History button: available to Admin / Owner and Inventory accounts -->
+            ${(isAdmin || isInventoryAccount) ? `
+              <button class="btn btn-outline btn-sm" 
+                      style="padding:5px 10px; font-size:12px; font-weight:700; color:#18181b; border-color:#d4d4d8; background:#fafafa; border-radius:8px;" 
+                      onclick="openInventoryItemHistoryModal(${i.id}, ${Utils.jsArg(i.name)})" 
+                      title="View Complete Item Audit Trail">
+                <i class="fas fa-clock-rotate-left" style="color:#c9a227;"></i> History
+              </button>
+            ` : ''}
+            ${(isAdmin || isManager || isInventoryAccount) ? `
+              <button class="btn btn-outline btn-sm inv-action-btn"
+                      style="padding:5px 9px; font-size:11.5px; font-weight:700; color:#ef4444; border-color:rgba(239,68,68,0.4); background:rgba(239,68,68,0.06); border-radius:8px;"
+                      onclick="openLogWastageModal(${i.id})"
+                      title="Record Wastage / Spoilage for ${Utils.escapeHtml(i.name)}">
+                <i class="fas fa-trash-alt"></i> Wastage
+              </button>
+              <button class="btn btn-outline btn-sm inv-action-btn inv-edit-btn" 
+                      style="padding:5px 9px; font-size:12px; color:#c9a227; border-color:rgba(201,162,39,0.45); background:rgba(201,162,39,0.06); border-radius:8px;" 
+                      onclick="openEditInventoryModal(${i.id})" 
+                      title="Edit Item Details" 
+                      aria-label="Edit ${Utils.escapeHtml(i.name)}">
+                <i class="fas fa-pen"></i>
+              </button>
+            ` : ''}
+            ${isAdmin ? `
+              <button class="btn btn-outline btn-sm inv-action-btn inv-delete-btn" 
+                      style="padding:5px 9px; font-size:12px; color:var(--danger, #ef4444); border-color:rgba(239,68,68,0.4); background:rgba(239,68,68,0.06); border-radius:8px;" 
+                      onclick="deleteInventoryItem(${i.id}, ${Utils.jsArg(i.name)})" 
+                      title="Delete Item" 
+                      aria-label="Delete ${Utils.escapeHtml(i.name)}">
+                <i class="fas fa-trash"></i>
+              </button>
+            ` : ''}
           </div>
         </td>
       </tr>
@@ -798,7 +1199,7 @@ function openBulkDeleteModal() {
         <strong style="color:var(--text-main);">${Utils.escapeHtml(item.name)}</strong>
         <span style="color:var(--text-muted); font-size:11px; margin-left:6px;">(${Utils.escapeHtml(item.category || 'Kitchen')})</span>
       </div>
-      <span style="font-weight:700; color:var(--text-muted); font-size:11px;">${Number(item.quantity)} ${Utils.escapeHtml(item.unit)}</span>
+      <span style="font-weight:700; color:var(--text-muted); font-size:11px;">${Number(item.quantity)}</span>
     </div>
   `).join('');
 
@@ -1263,6 +1664,9 @@ async function submitImportMasterlist(category) {
 function openUrgentRestockModal() {
   if (!cachedAnalytics || !cachedAnalytics.urgent_restock) return;
   const list = cachedAnalytics.urgent_restock;
+  const currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
+  const userRole = (currentUser && currentUser.role ? currentUser.role : (typeof Auth !== 'undefined' ? Auth.getRole() : '')).toLowerCase();
+  const isAdmin = userRole === 'admin' || userRole === 'branch_admin' || userRole === 'super_admin' || userRole.includes('admin') || window.location.pathname.includes('/admin');
 
   Utils.openModal('<i class="fas fa-chart-line" style="color:var(--accent); margin-right:8px;"></i> Automated Inventory Analysis & Health Audit', `
     <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; margin-bottom:18px;">
@@ -1298,11 +1702,11 @@ function openUrgentRestockModal() {
             <tr>
               <td style="padding:8px 12px;"><strong>${Utils.escapeHtml(u.name)}</strong></td>
               <td style="padding:8px 12px; color:var(--text-muted);">${Utils.escapeHtml(u.category)}</td>
-              <td style="padding:8px 12px; color:${u.quantity <= 0 ? '#ef4444' : '#f97316'}; font-weight:700;">${Utils.escapeHtml(u.quantity)} ${Utils.escapeHtml(u.unit)}</td>
-              <td style="padding:8px 12px;">${Utils.escapeHtml(u.min_stock)} ${Utils.escapeHtml(u.unit)}</td>
-              <td style="padding:8px 12px; color:#ef4444; font-weight:700;">-${Utils.escapeHtml(u.deficit)} ${Utils.escapeHtml(u.unit)}</td>
+              <td style="padding:8px 12px; color:${u.quantity <= 0 ? '#ef4444' : '#f97316'}; font-weight:700;">${Utils.escapeHtml(u.quantity)}</td>
+              <td style="padding:8px 12px;">${Utils.escapeHtml(u.min_stock)}</td>
+              <td style="padding:8px 12px; color:#ef4444; font-weight:700;">-${Utils.escapeHtml(u.deficit)}</td>
               <td style="padding:8px 12px; text-align:right;">
-                <button class="btn btn-primary btn-sm" style="padding:2px 8px; font-size:11px;" onclick="openStockAdjustModal(${u.id}, ${Utils.jsArg(u.name)}, ${u.quantity})">Restock</button>
+                ${isAdmin ? `<button class="btn btn-primary btn-sm" style="padding:2px 8px; font-size:11px;" onclick="openEditInventoryModal(${u.id})">Edit Stock</button>` : `<span style="font-size:11px; color:var(--text-muted);">Admin Only</span>`}
               </td>
             </tr>
           `).join('')}
@@ -1313,73 +1717,157 @@ function openUrgentRestockModal() {
 }
 
 function openAddInventoryModal() {
-  Utils.openModal("Add Custom Stock Item", `
-    <form id="form-add-inv" onsubmit="event.preventDefault(); submitAddInventory();">
-      <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Item Name <span style="color:var(--danger);">*</span></label>
-        <input id="inv-name" class="input-field" required placeholder="e.g. Special Chili Garlic Oil" style="width:100%;">
+  const depts = [
+    "Kitchen", "Street Foods", "Coffee Bar", "Beverages", "Packaging",
+    "Cleaning Supplies", "Office Supplies and Equipments", "SAMGYUPSAL",
+    "KITCHEN UTENSILS & EQUIPMENT", "FURNITURE & FIXTURES"
+  ];
+
+  Utils.openModal(`
+    <div style="display:flex; align-items:center; gap:10px;">
+      <div style="width:38px; height:38px; border-radius:10px; background:rgba(201,162,39,0.15); color:#c9a227; display:flex; align-items:center; justify-content:center; font-size:18px;">
+        <i class="fas fa-boxes-stacked"></i>
       </div>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
-        <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Department / Category <span style="color:var(--danger);">*</span></label>
-          <select id="inv-cat" class="input-field" style="width:100%;">
-            <option value="Kitchen" selected>Kitchen</option>
-            <option value="Street Foods">Street Foods</option>
-            <option value="Coffee Bar">Coffee Bar</option>
-            <option value="Beverages">Beverages</option>
-            <option value="Packaging">Packaging</option>
-            <option value="Cleaning Supplies">Cleaning Supplies</option>
-            <option value="Office Supplies and Equipments">Office Supplies & Equipments</option>
-            <option value="SAMGYUPSAL">SAMGYUPSAL</option>
-            <option value="KITCHEN UTENSILS & EQUIPMENT">Kitchen Utensils & Equipment</option>
-            <option value="FURNITURE & FIXTURES">Furniture & Fixtures</option>
-          </select>
+      <div>
+        <h3 style="font-size:17px; font-weight:800; margin:0; color:var(--text-main);">Add Inventory Item</h3>
+        <p style="font-size:12px; color:var(--text-muted); margin:2px 0 0 0;">Add new stock item details, pricing, and initial inventory quantity.</p>
+      </div>
+    </div>
+  `, `
+    <form id="form-add-inv" onsubmit="event.preventDefault(); submitAddInventory();" style="display:flex; flex-direction:column; gap:18px;">
+      
+      <!-- SECTION A: PRODUCT INFORMATION -->
+      <div style="background:#fafafa; border:1px solid #e4e4e7; border-radius:12px; padding:16px;">
+        <div style="font-weight:700; font-size:12.5px; color:#18181b; margin-bottom:12px; display:flex; align-items:center; gap:6px; text-transform:uppercase; letter-spacing:0.4px;">
+          <i class="fas fa-tag" style="color:#c9a227;"></i> Product Information
         </div>
-        <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Product Code <span style="font-weight:400; font-size:11px;">(links to POS)</span></label>
-          <select id="inv-sku" class="input-field" style="width:100%;">
-            <option value="">— None (no auto-deduction) —</option>
-            ${(cachedProducts || []).filter(p => p.is_active !== false && p.is_active !== 0).sort((a,b) => a.name.localeCompare(b.name)).map(p => `<option value="${Utils.escapeHtml(p.sku)}">${Utils.escapeHtml(p.name)} (${Utils.escapeHtml(p.sku)})</option>`).join('')}
-          </select>
-          <div style="font-size:10.5px; color:var(--text-muted); margin-top:4px;"><i class="fas fa-info-circle"></i> Links this stock item to a POS product for automatic deduction on sale.</div>
+        
+        <div class="input-group" style="margin-bottom:12px;">
+          <label style="font-size:12px; font-weight:700; color:var(--text-main); display:block; margin-bottom:5px;">
+            Item Name <span style="color:var(--danger, #ef4444);">*</span>
+          </label>
+          <input id="inv-name" class="input-field" required placeholder="Enter inventory item name (e.g. Cooking Oil, Fishballs, Rice)" style="width:100%; height:40px; font-size:13.5px; font-weight:600; border-radius:10px; border:1px solid #d4d4d8; background:#fff; padding:0 12px;">
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+          <div class="input-group">
+            <label style="font-size:12px; font-weight:700; color:var(--text-main); display:block; margin-bottom:5px;">
+              Department / Category <span style="color:var(--danger, #ef4444);">*</span>
+            </label>
+            <select id="inv-cat" class="input-field" style="width:100%; height:40px; font-size:13.5px; font-weight:600; border-radius:10px; border:1px solid #d4d4d8; background:#fff; padding:0 10px;">
+              ${depts.map(d => `<option value="${Utils.escapeHtml(d)}">${Utils.escapeHtml(d)}</option>`).join('')}
+            </select>
+          </div>
+
+          <div class="input-group">
+            <label style="font-size:12px; font-weight:700; color:var(--text-main); display:block; margin-bottom:5px;">
+              Product Code (POS Link) <span style="font-weight:400; font-size:11px; color:var(--text-muted);">(Optional)</span>
+            </label>
+            <select id="inv-sku" class="input-field" style="width:100%; height:40px; font-size:13px; font-weight:500; border-radius:10px; border:1px solid #d4d4d8; background:#fff; padding:0 10px;">
+              <option value="">— None (No POS link) —</option>
+              ${(cachedProducts || []).filter(p => p.is_active !== false && p.is_active !== 0).sort((a,b) => a.name.localeCompare(b.name)).map(p => `<option value="${Utils.escapeHtml(p.sku)}">${Utils.escapeHtml(p.name)} (${Utils.escapeHtml(p.sku)})</option>`).join('')}
+            </select>
+            <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">
+              <i class="fas fa-info-circle" style="color:#3b82f6;"></i> Automatically deduct inventory when the linked POS product is sold.
+            </div>
+          </div>
         </div>
       </div>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
-        <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Opening Quantity <span style="color:var(--danger);">*</span></label>
-          <input type="number" step="0.01" id="inv-qty" class="input-field" required value="0" style="width:100%;">
+
+      <!-- SECTION B: INVENTORY DETAILS -->
+      <div style="background:#fafafa; border:1px solid #e4e4e7; border-radius:12px; padding:16px;">
+        <div style="font-weight:700; font-size:12.5px; color:#18181b; margin-bottom:12px; display:flex; align-items:center; gap:6px; text-transform:uppercase; letter-spacing:0.4px;">
+          <i class="fas fa-cubes" style="color:#3b82f6;"></i> Inventory Stock Details
         </div>
-        <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Unit of Measure <span style="color:var(--danger);">*</span></label>
-          <input id="inv-unit" class="input-field" required placeholder="kg, L, pcs, packs, cans" style="width:100%;">
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
+          <div class="input-group">
+            <label style="font-size:12px; font-weight:700; color:var(--text-main); display:block; margin-bottom:5px;">
+              Current Stock <span style="color:var(--danger, #ef4444);">*</span>
+            </label>
+            <input type="number" step="any" min="0" id="inv-qty" class="input-field" required value="0" placeholder="0" style="width:100%; height:40px; font-size:14px; font-weight:700; border-radius:10px; border:1px solid #d4d4d8; background:#fff; padding:0 12px; color:var(--text-main);">
+            <div style="font-size:11px; color:var(--text-muted); margin-top:3px;">Initial stock quantity on hand.</div>
+          </div>
+
+
+
+          <div class="input-group">
+            <label style="font-size:12px; font-weight:700; color:var(--text-main); display:block; margin-bottom:5px;">
+              Minimum Stock Alert <span style="color:var(--danger, #ef4444);">*</span>
+            </label>
+            <input type="number" step="any" min="0" id="inv-min" class="input-field" required value="1" placeholder="1" style="width:100%; height:40px; font-size:14px; font-weight:700; border-radius:10px; border:1px solid #d4d4d8; background:#fff; padding:0 12px; color:#f97316;">
+            <div style="font-size:11px; color:var(--text-muted); margin-top:3px;">Low-stock warning threshold.</div>
+          </div>
         </div>
       </div>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
-        <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Unit Price / Cost (₱) <span style="color:var(--danger);">*</span></label>
-          <input type="number" step="0.01" min="0" id="inv-price" class="input-field" required value="50.00" placeholder="0.00" style="width:100%;">
+
+      <!-- SECTION C: PRICING INFORMATION -->
+      <div style="background:#fefce8; border:1px solid #fef08a; border-radius:12px; padding:16px;">
+        <div style="font-weight:700; font-size:12.5px; color:#854d0e; margin-bottom:10px; display:flex; align-items:center; gap:6px; text-transform:uppercase; letter-spacing:0.4px;">
+          <i class="fas fa-coins" style="color:#ca8a04;"></i> Pricing Information
         </div>
-        <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Min Stock Threshold <span style="color:var(--danger);">*</span></label>
-          <input type="number" step="0.01" id="inv-min" class="input-field" required value="5" style="width:100%;">
+
+        <div class="input-group" style="max-width:320px;">
+          <label style="font-size:12px; font-weight:700; color:#854d0e; display:block; margin-bottom:5px;">
+            Unit Price / Cost (₱) <span style="color:var(--danger, #ef4444);">*</span>
+          </label>
+          <div style="display:flex; align-items:center; position:relative;">
+            <span style="position:absolute; left:12px; font-size:15px; font-weight:800; color:#ca8a04;">₱</span>
+            <input type="number" step="0.01" min="0" id="inv-price" class="input-field" required value="50.00" placeholder="0.00" style="width:100%; height:42px; font-size:15px; font-weight:800; color:#854d0e; border-radius:10px; border:1.5px solid #fde047; background:#fff; padding-left:30px; padding-right:12px;">
+          </div>
+          <div style="font-size:11px; color:#a16207; margin-top:3px;">Base unit acquisition or menu supply cost.</div>
         </div>
       </div>
     </form>
-  `, `<button class="btn btn-primary" onclick="submitAddInventory()"><i class="fas fa-save"></i> Save Stock Item</button>`);
+  `, `
+    <div style="display:flex; justify-content:flex-end; gap:10px; width:100%;">
+      <button type="button" class="btn btn-outline" onclick="Utils.closeModal()" style="padding:9px 20px; font-weight:600; border-radius:10px;">
+        Cancel
+      </button>
+      <button type="submit" form="form-add-inv" class="btn btn-primary" id="btn-save-add-inv" style="padding:9px 24px; font-weight:700; background:#18181b; border-color:#18181b; border-radius:10px; display:inline-flex; align-items:center; gap:8px;">
+        <i class="fas fa-plus" style="color:#c9a227;"></i> Add Stock Item
+      </button>
+    </div>
+  `, "modal-responsive modal-lg");
 }
 
 async function submitAddInventory() {
-  const name = document.getElementById("inv-name").value.trim();
-  const category = document.getElementById("inv-cat").value.trim();
-  const sku = document.getElementById("inv-sku").value.trim();
-  const quantity = parseFloat(document.getElementById("inv-qty").value) || 0;
-  const unit = document.getElementById("inv-unit").value.trim();
-  const unit_price = parseFloat(document.getElementById("inv-price")?.value) || 0;
-  const min_stock = parseFloat(document.getElementById("inv-min").value) || 0;
+  const saveBtn = document.getElementById("btn-save-add-inv");
+  const origHtml = saveBtn ? saveBtn.innerHTML : "";
 
-  if (!name || !unit) {
-    Utils.showToast("Please fill in required item name and unit", "danger");
+  const nameInput = document.getElementById("inv-name");
+  const name = nameInput ? nameInput.value.trim() : "";
+  const category = document.getElementById("inv-cat") ? document.getElementById("inv-cat").value.trim() : "Kitchen";
+  const sku = document.getElementById("inv-sku") ? document.getElementById("inv-sku").value.trim() : "";
+  const qtyInput = document.getElementById("inv-qty");
+  const quantity = qtyInput ? (parseFloat(qtyInput.value) || 0) : 0;
+  const unit = "pcs";
+  const priceInput = document.getElementById("inv-price");
+  const unit_price = priceInput ? (parseFloat(priceInput.value) || 0) : 0;
+  const minInput = document.getElementById("inv-min");
+  const min_stock = minInput ? (parseFloat(minInput.value) || 0) : 0;
+
+  if (!name) {
+    Utils.showToast("Please enter an item name.", "danger");
+    if (nameInput) nameInput.focus();
     return;
+  }
+
+  if (quantity < 0) {
+    Utils.showToast("Current stock quantity cannot be negative.", "danger");
+    if (qtyInput) qtyInput.focus();
+    return;
+  }
+
+  if (unit_price < 0) {
+    Utils.showToast("Unit price cannot be negative.", "danger");
+    if (priceInput) priceInput.focus();
+    return;
+  }
+
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Adding Item...`;
   }
 
   try {
@@ -1388,10 +1876,10 @@ async function submitAddInventory() {
       body: JSON.stringify({ name, category, sku: sku || null, quantity, unit, unit_price, min_stock })
     });
     if (!res.ok) {
-      const err = await res.json();
+      const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || "Failed to create item.");
     }
-    Utils.showToast("Stock item created successfully", "success");
+    Utils.showToast("Stock item created successfully!", "success");
     Utils.closeModal();
     cachedProfitLossData = null;
     if (getActiveViewName() === "profit_loss" && typeof renderProfitLoss === "function") {
@@ -1401,7 +1889,90 @@ async function submitAddInventory() {
     }
   } catch (err) {
     Utils.showToast(err.message, "danger");
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = origHtml;
+    }
   }
+}
+
+function toggleEditInvSkuMenu(e) {
+  if (e) {
+    if (typeof e.preventDefault === 'function') e.preventDefault();
+    if (typeof e.stopPropagation === 'function') e.stopPropagation();
+  }
+  const menu = document.getElementById("edit-inv-sku-menu");
+  if (!menu) return;
+  const isHidden = menu.style.display === "none" || !menu.style.display;
+  menu.style.display = isHidden ? "block" : "none";
+}
+
+function clearEditInvSkus() {
+  const chks = document.querySelectorAll(".edit-sku-chk");
+  chks.forEach(c => { c.checked = false; });
+  updateEditInvSkuSummary();
+}
+
+function uncheckEditInvSku(skuVal) {
+  const chks = Array.from(document.querySelectorAll(".edit-sku-chk"));
+  const target = chks.find(c => String(c.value).trim().toUpperCase() === String(skuVal).trim().toUpperCase());
+  if (target) {
+    target.checked = false;
+  }
+  updateEditInvSkuSummary();
+}
+
+function updateEditInvSkuSummary() {
+  const chks = Array.from(document.querySelectorAll(".edit-sku-chk:checked"));
+  const selectedSkus = chks.map(c => c.value.trim()).filter(Boolean);
+  const hiddenInput = document.getElementById("edit-inv-sku");
+  const labelEl = document.getElementById("edit-inv-sku-label");
+  const countEl = document.getElementById("edit-inv-sku-count");
+  const tagsEl = document.getElementById("edit-inv-sku-tags");
+
+  const skuStr = selectedSkus.join(", ");
+  if (hiddenInput) hiddenInput.value = skuStr;
+
+  if (labelEl) {
+    if (selectedSkus.length === 0) {
+      labelEl.textContent = "— None (no auto-deduction) —";
+      labelEl.style.color = "var(--text-muted)";
+    } else {
+      labelEl.textContent = `${selectedSkus.length} product(s) selected: ${skuStr}`;
+      labelEl.style.color = "var(--text-main)";
+    }
+  }
+
+  if (countEl) {
+    countEl.textContent = selectedSkus.length ? `${selectedSkus.length} selected` : "";
+  }
+
+  if (tagsEl) {
+    tagsEl.innerHTML = selectedSkus.map(sku => {
+      return `
+        <span class="badge" style="background:rgba(201,162,39,0.12); color:#92400e; border:1px solid rgba(201,162,39,0.3); font-size:11px; font-weight:700; font-family:monospace; padding:3px 8px; border-radius:12px; display:inline-flex; align-items:center; gap:6px;">
+          ${Utils.escapeHtml(sku)}
+          <i class="fas fa-times" style="cursor:pointer; color:#b45309; font-size:10px;" onclick="uncheckEditInvSku(${Utils.jsArg(sku)})" title="Remove ${Utils.escapeHtml(sku)}"></i>
+        </span>
+      `;
+    }).join("");
+  }
+}
+
+window.toggleEditInvSkuMenu = toggleEditInvSkuMenu;
+window.clearEditInvSkus = clearEditInvSkus;
+window.uncheckEditInvSku = uncheckEditInvSku;
+window.updateEditInvSkuSummary = updateEditInvSkuSummary;
+
+// Close sku menu when clicking outside modal/dropdown
+if (typeof document !== 'undefined') {
+  document.addEventListener('click', function(e) {
+    const wrapper = document.getElementById('edit-inv-sku-wrapper');
+    const menu = document.getElementById('edit-inv-sku-menu');
+    if (menu && wrapper && !wrapper.contains(e.target)) {
+      menu.style.display = 'none';
+    }
+  });
 }
 
 function openEditInventoryModal(itemId) {
@@ -1411,6 +1982,10 @@ function openEditInventoryModal(itemId) {
     return;
   }
 
+  const currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
+  const userRole = (currentUser && currentUser.role ? currentUser.role : (typeof Auth !== 'undefined' ? Auth.getRole() : '')).toLowerCase();
+  const isAdmin = userRole === 'admin' || userRole === 'branch_admin' || userRole === 'super_admin' || userRole.includes('admin') || window.location.pathname.includes('/admin');
+
   const depts = [
     "Kitchen", "Street Foods", "Coffee Bar", "Beverages", "Packaging",
     "Cleaning Supplies", "Office Supplies and Equipments", "Monthly Bills",
@@ -1418,6 +1993,10 @@ function openEditInventoryModal(itemId) {
   ];
   const itemCategory = item.category || "Kitchen";
   const hasCustomDept = !depts.some(d => d.toLowerCase() === itemCategory.toLowerCase());
+
+  // Parse existing linked SKUs (supports single or multiple comma-separated SKUs)
+  const currentSkus = (item.sku || "").split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
+  const activeProds = (cachedProducts || []).filter(p => p.is_active !== false && p.is_active !== 0 && p.sku).sort((a,b) => (a.name || '').localeCompare(b.name || ''));
 
   Utils.openModal(`
     <i class="fas fa-pen-to-square" style="color:#c9a227; margin-right:8px;"></i> Edit Inventory Item
@@ -1435,35 +2014,63 @@ function openEditInventoryModal(itemId) {
             ${hasCustomDept ? `<option value="${Utils.escapeHtml(itemCategory)}" selected>${Utils.escapeHtml(itemCategory)}</option>` : ''}
           </select>
         </div>
-        <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Product Code <span style="font-weight:400; font-size:11px; color:var(--text-muted);">(links to POS)</span></label>
-          <select id="edit-inv-sku" class="input-field" style="width:100%;">
-            <option value="">— None (no auto-deduction) —</option>
-            ${(cachedProducts || []).filter(p => p.is_active !== false && p.is_active !== 0).sort((a,b) => a.name.localeCompare(b.name)).map(p => `<option value="${Utils.escapeHtml(p.sku)}" ${(item.sku && item.sku.toUpperCase() === String(p.sku).toUpperCase()) ? 'selected' : ''}>${Utils.escapeHtml(p.name)} (${Utils.escapeHtml(p.sku)})</option>`).join('')}
-          </select>
-          <div style="font-size:10.5px; color:var(--text-muted); margin-top:4px;"><i class="fas fa-info-circle"></i> Select a product to automatically deduct this item's stock when that product is sold at POS.</div>
+        <div class="input-group" style="position:relative;">
+          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+            <span>Product Code <span style="font-weight:400; font-size:11px; color:var(--text-muted);">(links to POS)</span></span>
+            <span id="edit-inv-sku-count" style="font-size:11px; font-weight:700; color:#c9a227;"></span>
+          </label>
+          <div id="edit-inv-sku-wrapper" style="position:relative; width:100%;">
+            <button type="button" id="edit-inv-sku-btn" onclick="toggleEditInvSkuMenu(event)" class="input-field" style="width:100%; min-height:40px; text-align:left; display:flex; justify-content:space-between; align-items:center; cursor:pointer; background:#fff; padding:6px 12px; border:1px solid #d4d4d8; border-radius:8px;">
+              <span id="edit-inv-sku-label" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12.5px; color:var(--text-main); font-weight:500;">
+                ${currentSkus.length ? `${currentSkus.length} product(s) selected: ${currentSkus.join(', ')}` : '— None (no auto-deduction) —'}
+              </span>
+              <i class="fas fa-chevron-down" style="font-size:11px; color:#a1a1aa; flex-shrink:0; margin-left:6px;"></i>
+            </button>
+            <div id="edit-inv-sku-menu" style="display:none; position:absolute; top:calc(100% + 4px); left:0; right:0; z-index:1060; background:#ffffff; border:1px solid #d4d4d8; border-radius:10px; box-shadow:0 10px 25px rgba(0,0,0,0.15); max-height:220px; overflow-y:auto; padding:8px;">
+              <div style="padding-bottom:6px; margin-bottom:6px; border-bottom:1px solid #f4f4f5; display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:11px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Multiple Select</span>
+                <button type="button" onclick="clearEditInvSkus()" style="background:none; border:none; color:#ef4444; font-size:11px; font-weight:600; cursor:pointer; padding:2px 4px;">Clear All</button>
+              </div>
+              <div id="edit-inv-sku-list" style="display:flex; flex-direction:column; gap:4px;">
+                ${activeProds.map(p => {
+                  const pSku = String(p.sku || '').trim();
+                  const isChecked = currentSkus.includes(pSku.toUpperCase());
+                  return `
+                    <label style="display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:12.5px; user-select:none; transition:background 0.15s ease;" onmouseover="this.style.background='#f4f4f5'" onmouseout="this.style.background='transparent'">
+                      <input type="checkbox" class="edit-sku-chk" value="${Utils.escapeHtml(pSku)}" ${isChecked ? 'checked' : ''} onchange="updateEditInvSkuSummary()" style="width:16px; height:16px; accent-color:#c9a227; cursor:pointer;">
+                      <span style="flex:1; color:var(--text-main);">
+                        <strong>${Utils.escapeHtml(p.name)}</strong>
+                        <span style="font-family:monospace; color:#c9a227; font-weight:700; font-size:11px; margin-left:4px;">(${Utils.escapeHtml(pSku)})</span>
+                      </span>
+                    </label>
+                  `;
+                }).join('')}
+                ${!activeProds.length ? '<div style="font-size:12px; color:var(--text-muted); padding:8px; text-align:center;">No active products with POS codes found.</div>' : ''}
+              </div>
+            </div>
+          </div>
+          <!-- Selected product tags list -->
+          <div id="edit-inv-sku-tags" style="display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;"></div>
+          <!-- Hidden input storing comma-separated SKUs -->
+          <input type="hidden" id="edit-inv-sku" value="${Utils.escapeHtml(item.sku || '')}">
+          <div style="font-size:10.5px; color:var(--text-muted); margin-top:4px;"><i class="fas fa-info-circle"></i> Select multiple products to automatically deduct this item's stock when any of those products are sold at POS.</div>
         </div>
       </div>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
-        <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Current Stock Quantity <span style="color:var(--danger);">*</span></label>
-          <input type="number" step="any" min="0" id="edit-inv-qty" class="input-field" required value="${Number(item.quantity) || 0}" style="width:100%;">
+
+      ${isAdmin ? `
+        <div class="input-group" style="margin-top:12px;">
+          <label style="display:block; font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--text-muted); margin-bottom:4px;">Current Stock Quantity (${Utils.escapeHtml(item.unit || 'pcs')})</label>
+          <input type="number" step="any" min="0" id="edit-inv-qty" class="input-field" value="${Number(item.quantity) || 0}" style="width:100%;">
         </div>
-        <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Unit of Measure <span style="color:var(--danger);">*</span></label>
-          <input id="edit-inv-unit" class="input-field" required value="${Utils.escapeHtml(item.unit)}" placeholder="kg, L, pcs, packs, cans" style="width:100%;">
-        </div>
+      ` : ''}
+
+      <!-- Hidden inputs for Min Stock Threshold, Unit Price / Cost, and (non-Admin) Current Stock -->
+      <div style="display:none;">
+        ${!isAdmin ? `<input type="number" step="any" min="0" id="edit-inv-qty" class="input-field" value="${Number(item.quantity) || 0}">` : ''}
+        <input type="number" step="any" min="0" id="edit-inv-min" class="input-field" value="${Number(item.min_stock) || 0}">
+        <input type="number" step="0.01" min="0" id="edit-inv-price" class="input-field" value="${Number(item.unit_price) || 0}">
       </div>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
-        <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Unit Price / Cost (₱) <span style="color:var(--danger);">*</span></label>
-          <input type="number" step="0.01" min="0" id="edit-inv-price" class="input-field" required value="${Number(item.unit_price) || 0}" placeholder="0.00" style="width:100%;">
-        </div>
-        <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Min Stock Threshold <span style="color:var(--danger);">*</span></label>
-          <input type="number" step="any" min="0" id="edit-inv-min" class="input-field" required value="${Number(item.min_stock) || 0}" style="width:100%;">
-        </div>
-      </div>
+
       <div id="edit-inv-error" style="display:none; color:#ef4444; font-size:12px; background:rgba(239,68,68,0.08); border-radius:6px; padding:8px 12px; margin-top:8px;"></div>
       <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
         <button type="button" class="btn btn-outline" onclick="Utils.closeModal()">Cancel</button>
@@ -1473,6 +2080,10 @@ function openEditInventoryModal(itemId) {
       </div>
     </form>
   `);
+
+  setTimeout(() => {
+    updateEditInvSkuSummary();
+  }, 10);
 }
 
 async function submitEditInventory(itemId) {
@@ -1480,18 +2091,19 @@ async function submitEditInventory(itemId) {
   const category = document.getElementById("edit-inv-cat")?.value.trim();
   const sku = document.getElementById("edit-inv-sku")?.value.trim();
   const qtyInput = document.getElementById("edit-inv-qty")?.value;
-  const unit = document.getElementById("edit-inv-unit")?.value.trim();
+  const existingItem = (cachedInventory || []).find(i => Number(i.id) === Number(itemId));
+  const unit = existingItem ? (existingItem.unit || "pcs") : "pcs";
   const priceInput = document.getElementById("edit-inv-price")?.value;
   const minInput = document.getElementById("edit-inv-min")?.value;
   const errBox = document.getElementById("edit-inv-error");
   const saveBtn = document.getElementById("btn-save-edit-inv");
 
-  if (!name || !unit) {
+  if (!name) {
     if (errBox) {
-      errBox.textContent = "Please fill in required item name and unit of measure.";
+      errBox.textContent = "Please fill in required item name.";
       errBox.style.display = "block";
     }
-    Utils.showToast("Please fill in required item name and unit", "warning");
+    Utils.showToast("Please enter an item name", "warning");
     return;
   }
 
@@ -6128,48 +6740,739 @@ async function submitAddStaff() {
 // ─────────────────────────────────────────────────────────────────────────────
 // 8. AUDIT LOGS
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. SUPERADMIN ACTIVITY LOGS & AUDIT TRAIL
+// ─────────────────────────────────────────────────────────────────────────────
+window._superadminLogsState = window._superadminLogsState || {
+  search: "",
+  role: "ALL",
+  activity_type: "ALL",
+  status: "ALL",
+  date_range: "today",
+  start_date: "",
+  end_date: "",
+  page: 1,
+  limit: 20,
+  total: 0,
+  total_pages: 1,
+  items: [],
+  summary: {}
+};
+
 async function renderLogs(c) {
   c = c || document.getElementById("view-container");
   if (!c) return;
-  let logs = [];
-  try {
-    const res = await Auth.fetch("/api/v1/activity-logs?limit=50");
-    if (res.ok) logs = await res.json();
-  } catch(e) {}
+
+  // 1. Strict Role Authorization: SUPERADMIN ONLY
+  const currentUser = (typeof Auth !== "undefined" && Auth.getUser) ? Auth.getUser() : null;
+  const userRole = (currentUser && currentUser.role ? currentUser.role : "").toLowerCase();
+  const isSuperAdmin = userRole === "super_admin" || userRole === "superadmin";
+
+  if (!isSuperAdmin) {
+    c.innerHTML = `
+      <div class="section-card" style="padding:48px 24px; text-align:center; max-width:540px; margin:40px auto; border:1px solid rgba(239,68,68,0.3);">
+        <div style="width:64px; height:64px; border-radius:50%; background:rgba(239,68,68,0.1); color:#ef4444; display:flex; align-items:center; justify-content:center; font-size:28px; margin:0 auto 18px;">
+          <i class="fas fa-shield-halved"></i>
+        </div>
+        <h2 style="font-size:20px; font-weight:800; margin:0 0 10px; color:#18181b;">Restricted Superadmin Access</h2>
+        <p style="font-size:13px; color:var(--text-muted, #71717a); margin:0 0 24px; line-height:1.5;">
+          The Activity Logs and System Audit Trail module is accessible exclusively to the <strong>SUPERADMIN</strong> account.
+        </p>
+        <button class="btn btn-primary" onclick="renderView('dashboard')" style="background:#c9a227; border:none; padding:10px 22px; font-weight:700;">
+          <i class="fas fa-home" style="margin-right:6px;"></i> Return to Dashboard
+        </button>
+      </div>
+    `;
+    return;
+  }
+
+  // 2. Render Page Frame
+  const st = window._superadminLogsState;
+  const manilaDateNow = new Date().toLocaleString("en-PH", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true
+  });
 
   c.innerHTML = `
-    <div class="section-card">
-      <div class="section-head">
-        <h2>Branch Activity Audit Trail</h2>
-        <span style="font-size:13px; color:var(--text-muted);">${Utils.escapeHtml(logs.length)} logged actions</span>
+    <div style="width:100%; max-width:100%;">
+      <!-- Header Bar -->
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+        <div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div style="width:38px; height:38px; border-radius:10px; background:linear-gradient(135deg, rgba(201,162,39,0.18), rgba(201,162,39,0.06)); display:flex; align-items:center; justify-content:center; font-size:18px; color:#c9a227; border:1px solid rgba(201,162,39,0.3);">
+              <i class="fas fa-shield-halved"></i>
+            </div>
+            <div>
+              <h1 style="font-size:20px; font-weight:800; margin:0; color:#18181b;">Superadmin Activity Logs &amp; Audit Trail</h1>
+              <p style="font-size:12px; color:var(--text-muted, #71717a); margin:2px 0 0 0;">
+                Comprehensive system-wide audit records &bull; Timezone: <strong>Asia/Manila (UTC+08:00)</strong>
+              </p>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <button class="btn btn-outline btn-sm" onclick="exportSuperadminLogsCsv()" style="display:inline-flex; align-items:center; gap:6px; font-weight:700; border-color:#10b981; color:#059669;">
+            <i class="fas fa-file-excel"></i> Export CSV
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="fetchAndRenderSuperadminLogs()" style="display:inline-flex; align-items:center; gap:6px;">
+            <i class="fas fa-rotate"></i> Refresh
+          </button>
+        </div>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Timestamp</th>
-              <th>Performed By</th>
-              <th>Role</th>
-              <th>Action</th>
-              <th>Details</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${logs.length ? logs.map(l => `
-              <tr>
-                <td style="color:var(--text-muted); font-size:13px;">${l.created_at ? new Date(l.created_at).toLocaleString() : '—'}</td>
-                <td><strong style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(l.performed_by)}</strong></td>
-                <td><span class="badge badge-info" style="font-size:11px; font-weight:700;">${Utils.escapeHtml(l.role || 'Staff')}</span></td>
-                <td><strong style="font-size:13px;">${Utils.escapeHtml(l.action)}</strong></td>
-                <td style="color:var(--text-muted); font-size:13px;">${Utils.escapeHtml(l.details || '—')}</td>
+
+      <!-- 4 Summary Cards -->
+      <div class="stats-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:14px; margin-bottom:20px;">
+        <!-- Card 1: Total Activities Today -->
+        <div class="stat-card" style="padding:16px; border-radius:12px; background:#ffffff; border:1px solid rgba(205,190,150,0.35); box-shadow:0 4px 15px rgba(0,0,0,0.02);">
+          <div style="display:flex; align-items:center; gap:12px;">
+            <div style="width:42px; height:42px; border-radius:10px; background:rgba(201,162,39,0.12); color:#c9a227; display:flex; align-items:center; justify-content:center; font-size:18px;">
+              <i class="fas fa-list-check"></i>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a; letter-spacing:0.4px;">Total Activities Today</div>
+              <div id="metric-activities-today" style="font-size:22px; font-weight:800; color:#18181b; line-height:1.2;">0</div>
+              <div style="font-size:11px; color:#10b981; margin-top:2px;"><i class="fas fa-calendar-day"></i> Philippine calendar day</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card 2: Total Login Sessions Today -->
+        <div class="stat-card" style="padding:16px; border-radius:12px; background:#ffffff; border:1px solid rgba(205,190,150,0.35); box-shadow:0 4px 15px rgba(0,0,0,0.02);">
+          <div style="display:flex; align-items:center; gap:12px;">
+            <div style="width:42px; height:42px; border-radius:10px; background:rgba(16,185,129,0.12); color:#10b981; display:flex; align-items:center; justify-content:center; font-size:18px;">
+              <i class="fas fa-right-to-bracket"></i>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a; letter-spacing:0.4px;">Total Login Sessions Today</div>
+              <div id="metric-logins-today" style="font-size:22px; font-weight:800; color:#10b981; line-height:1.2;">0</div>
+              <div style="font-size:11px; color:#71717a; margin-top:2px;">Staff accounts authenticated</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card 3: Currently Active Users -->
+        <div class="stat-card" style="padding:16px; border-radius:12px; background:#ffffff; border:1px solid rgba(205,190,150,0.35); box-shadow:0 4px 15px rgba(0,0,0,0.02);">
+          <div style="display:flex; align-items:center; gap:12px;">
+            <div style="width:42px; height:42px; border-radius:10px; background:rgba(59,130,246,0.12); color:#3b82f6; display:flex; align-items:center; justify-content:center; font-size:18px;">
+              <i class="fas fa-users"></i>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a; letter-spacing:0.4px;">Currently Active Users</div>
+              <div id="metric-active-users" style="font-size:22px; font-weight:800; color:#3b82f6; line-height:1.2;">0</div>
+              <div style="font-size:11px; color:#71717a; margin-top:2px;">Distinct staff sessions active</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card 4: Total Failed Login Attempts Today -->
+        <div class="stat-card" style="padding:16px; border-radius:12px; background:#ffffff; border:1px solid rgba(205,190,150,0.35); box-shadow:0 4px 15px rgba(0,0,0,0.02);">
+          <div style="display:flex; align-items:center; gap:12px;">
+            <div style="width:42px; height:42px; border-radius:10px; background:rgba(239,68,68,0.12); color:#ef4444; display:flex; align-items:center; justify-content:center; font-size:18px;">
+              <i class="fas fa-user-xmark"></i>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a; letter-spacing:0.4px;">Total Failed Login Attempts</div>
+              <div id="metric-failed-logins" style="font-size:22px; font-weight:800; color:#ef4444; line-height:1.2;">0</div>
+              <div style="font-size:11px; color:#ef4444; margin-top:2px;"><i class="fas fa-shield"></i> Security audit monitor</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filter Controls Card -->
+      <div class="section-card" style="padding:16px 20px; margin-bottom:18px; border:1px solid rgba(205,190,150,0.35); border-radius:12px; background:#ffffff;">
+        <!-- Date Quick Pills -->
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; padding-bottom:12px; border-bottom:1px solid rgba(205,190,150,0.25); margin-bottom:14px;">
+          <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+            <span style="font-size:11.5px; font-weight:800; text-transform:uppercase; color:#71717a; margin-right:4px;">
+              <i class="fas fa-calendar-alt"></i> Date:
+            </span>
+            <button type="button" class="btn btn-sm ${st.date_range === 'today' ? 'btn-primary' : 'btn-outline'}" onclick="setSuperadminDateRange('today')" style="padding:4px 12px; font-size:11.5px; border-radius:20px;">Today</button>
+            <button type="button" class="btn btn-sm ${st.date_range === 'yesterday' ? 'btn-primary' : 'btn-outline'}" onclick="setSuperadminDateRange('yesterday')" style="padding:4px 12px; font-size:11.5px; border-radius:20px;">Yesterday</button>
+            <button type="button" class="btn btn-sm ${st.date_range === 'last_7_days' ? 'btn-primary' : 'btn-outline'}" onclick="setSuperadminDateRange('last_7_days')" style="padding:4px 12px; font-size:11.5px; border-radius:20px;">Last 7 Days</button>
+            <button type="button" class="btn btn-sm ${st.date_range === 'last_30_days' ? 'btn-primary' : 'btn-outline'}" onclick="setSuperadminDateRange('last_30_days')" style="padding:4px 12px; font-size:11.5px; border-radius:20px;">Last 30 Days</button>
+            <button type="button" class="btn btn-sm ${st.date_range === 'all' ? 'btn-primary' : 'btn-outline'}" onclick="setSuperadminDateRange('all')" style="padding:4px 12px; font-size:11.5px; border-radius:20px;">All Activities</button>
+            <button type="button" class="btn btn-sm ${st.date_range === 'custom' ? 'btn-primary' : 'btn-outline'}" onclick="setSuperadminDateRange('custom')" style="padding:4px 12px; font-size:11.5px; border-radius:20px;">Custom Range</button>
+          </div>
+          <div style="font-size:11px; color:#71717a;">
+            Philippine Time: <strong id="live-manila-clock">${manilaDateNow}</strong>
+          </div>
+        </div>
+
+        <!-- Custom Date Range Pickers (conditional) -->
+        <div id="superadmin-custom-dates-bar" style="display:${st.date_range === 'custom' ? 'flex' : 'none'}; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap; background:#fafafa; padding:10px 14px; border-radius:8px; border:1px solid #e4e4e7;">
+          <div style="display:flex; align-items:center; gap:6px;">
+            <label style="font-size:11.5px; font-weight:700; color:#52525b;">Start Date:</label>
+            <input type="date" id="superadmin-start-date" value="${st.start_date || ''}" style="padding:4px 8px; font-size:12px; border:1px solid #d4d4d8; border-radius:6px;">
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <label style="font-size:11.5px; font-weight:700; color:#52525b;">End Date:</label>
+            <input type="date" id="superadmin-end-date" value="${st.end_date || ''}" style="padding:4px 8px; font-size:12px; border:1px solid #d4d4d8; border-radius:6px;">
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" onclick="applySuperadminCustomDates()" style="padding:5px 14px; font-size:12px;">Apply Filter</button>
+        </div>
+
+        <!-- Search & Filter Dropdowns Grid -->
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)) 100px; gap:10px; align-items:center;">
+          <!-- Search Input -->
+          <div style="position:relative; grid-column:span 1;">
+            <i class="fas fa-search" style="position:absolute; left:10px; top:11px; color:#a1a1aa; font-size:12px;"></i>
+            <input type="text" id="superadmin-search" placeholder="Search employee, username, IP, action…" value="${Utils.escapeHtml(st.search)}" oninput="debounceSuperadminSearch()" style="width:100%; padding:7px 10px 7px 30px; font-size:12px; border:1px solid #d4d4d8; border-radius:8px; outline:none; box-sizing:border-box;">
+          </div>
+
+          <!-- Role Filter -->
+          <div>
+            <select id="superadmin-filter-role" onchange="updateSuperadminFilter('role', this.value)" style="width:100%; padding:7px 10px; font-size:12px; border:1px solid #d4d4d8; border-radius:8px; background:#ffffff;">
+              <option value="ALL" ${st.role === 'ALL' ? 'selected' : ''}>All Roles</option>
+              <option value="ADMIN" ${st.role === 'ADMIN' ? 'selected' : ''}>Admin</option>
+              <option value="MANAGER" ${st.role === 'MANAGER' ? 'selected' : ''}>Manager</option>
+              <option value="CASHIER" ${st.role === 'CASHIER' ? 'selected' : ''}>Cashier</option>
+              <option value="INVENTORY" ${st.role === 'INVENTORY' ? 'selected' : ''}>Inventory Staff</option>
+              <option value="KITCHEN" ${st.role === 'KITCHEN' ? 'selected' : ''}>Kitchen Staff</option>
+            </select>
+          </div>
+
+          <!-- Activity Type Filter -->
+          <div>
+            <select id="superadmin-filter-activity" onchange="updateSuperadminFilter('activity_type', this.value)" style="width:100%; padding:7px 10px; font-size:12px; border:1px solid #d4d4d8; border-radius:8px; background:#ffffff;">
+              <option value="ALL" ${st.activity_type === 'ALL' ? 'selected' : ''}>All Activity Types</option>
+              <option value="Login" ${st.activity_type === 'Login' ? 'selected' : ''}>Successful Login</option>
+              <option value="Logout" ${st.activity_type === 'Logout' ? 'selected' : ''}>Successful Logout</option>
+              <option value="Failed" ${st.activity_type === 'Failed' ? 'selected' : ''}>Failed Login Attempt</option>
+              <option value="Order" ${st.activity_type === 'Order' ? 'selected' : ''}>POS &amp; Orders</option>
+              <option value="Payment" ${st.activity_type === 'Payment' ? 'selected' : ''}>Payment Processing</option>
+              <option value="Stock" ${st.activity_type === 'Stock' ? 'selected' : ''}>Inventory &amp; Stock</option>
+              <option value="User" ${st.activity_type === 'User' ? 'selected' : ''}>User Account Management</option>
+              <option value="Password" ${st.activity_type === 'Password' ? 'selected' : ''}>Password Reset</option>
+              <option value="Expense" ${st.activity_type === 'Expense' ? 'selected' : ''}>Expense Management</option>
+            </select>
+          </div>
+
+          <!-- Status Filter -->
+          <div>
+            <select id="superadmin-filter-status" onchange="updateSuperadminFilter('status', this.value)" style="width:100%; padding:7px 10px; font-size:12px; border:1px solid #d4d4d8; border-radius:8px; background:#ffffff;">
+              <option value="ALL" ${st.status === 'ALL' ? 'selected' : ''}>All Statuses</option>
+              <option value="SUCCESS" ${st.status === 'SUCCESS' ? 'selected' : ''}>Success</option>
+              <option value="FAILED" ${st.status === 'FAILED' ? 'selected' : ''}>Failed</option>
+              <option value="INFO" ${st.status === 'INFO' ? 'selected' : ''}>Info</option>
+              <option value="WARNING" ${st.status === 'WARNING' ? 'selected' : ''}>Warning</option>
+            </select>
+          </div>
+
+          <!-- Reset Button -->
+          <div>
+            <button type="button" class="btn btn-outline btn-sm" onclick="resetSuperadminFilters()" style="width:100%; padding:7px 10px; font-size:12px; border-color:#d4d4d8; color:#71717a;" title="Clear all filters">
+              <i class="fas fa-rotate-left"></i> Reset
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main Activity Table Card -->
+      <div class="section-card" style="border:1px solid rgba(205,190,150,0.35); border-radius:12px; overflow:hidden; background:#ffffff; box-shadow:0 4px 15px rgba(0,0,0,0.02);">
+        <div class="section-head" style="padding:14px 20px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(205,190,150,0.25);">
+          <div>
+            <h2 style="font-size:15px; font-weight:800; margin:0; color:#18181b;">Audit Trail Log Records</h2>
+            <div id="superadmin-log-count-meta" style="font-size:11.5px; color:var(--text-muted, #71717a); margin-top:2px;">Loading entries...</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:11.5px; color:#71717a;">Rows:</span>
+            <select id="superadmin-limit-select" onchange="changeSuperadminLimit(this.value)" style="padding:4px 8px; font-size:11.5px; border:1px solid #d4d4d8; border-radius:6px;">
+              <option value="15" ${st.limit === 15 ? 'selected' : ''}>15</option>
+              <option value="25" ${st.limit === 25 ? 'selected' : ''}>25</option>
+              <option value="50" ${st.limit === 50 ? 'selected' : ''}>50</option>
+              <option value="100" ${st.limit === 100 ? 'selected' : ''}>100</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-wrap" style="overflow-x:auto;">
+          <table style="width:100%; border-collapse:collapse; font-size:12px; text-align:left;">
+            <thead>
+              <tr style="background:#fafafa; border-bottom:1px solid #e4e4e7;">
+                <th style="padding:10px 14px; font-weight:700; color:#52525b; white-space:nowrap;">Date</th>
+                <th style="padding:10px 14px; font-weight:700; color:#52525b; white-space:nowrap;">Time (PST)</th>
+                <th style="padding:10px 14px; font-weight:700; color:#52525b; white-space:nowrap;">Account Name</th>
+                <th style="padding:10px 14px; font-weight:700; color:#52525b; white-space:nowrap;">Username</th>
+                <th style="padding:10px 14px; font-weight:700; color:#52525b; white-space:nowrap;">Role</th>
+                <th style="padding:10px 14px; font-weight:700; color:#52525b; white-space:nowrap;">Activity</th>
+                <th style="padding:10px 14px; font-weight:700; color:#52525b; min-width:200px;">Description</th>
+                <th style="padding:10px 14px; font-weight:700; color:#52525b; white-space:nowrap;">IP Address</th>
+                <th style="padding:10px 14px; font-weight:700; color:#52525b; white-space:nowrap;">Status</th>
+                <th style="padding:10px 14px; font-weight:700; color:#52525b; text-align:center; white-space:nowrap;">Inspect</th>
               </tr>
-            `).join('') : '<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-muted);">No activity logs found for this branch.</td></tr>'}
-          </tbody>
-        </table>
+            </thead>
+            <tbody id="superadmin-logs-tbody">
+              <tr>
+                <td colspan="10" style="text-align:center; padding:40px; color:#71717a;">
+                  <i class="fas fa-spinner fa-spin" style="margin-right:8px; color:#c9a227;"></i> Loading audit trail records...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Pagination Controls -->
+        <div id="superadmin-pagination-container" style="padding:12px 20px; border-top:1px solid #e4e4e7; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; font-size:12px;">
+          <div id="superadmin-pagination-info" style="color:#71717a;">Showing 0 to 0 of 0 entries</div>
+          <div id="superadmin-pagination-buttons" style="display:flex; gap:6px;"></div>
+        </div>
       </div>
     </div>
   `;
+
+  // 3. Fetch data from backend
+  await fetchAndRenderSuperadminLogs();
 }
+
+// ── Color Badge Helper ──
+function getSuperadminActivityBadge(activityType, status) {
+  const act = (activityType || "").toLowerCase();
+  const st = (status || "").toUpperCase();
+
+  if (st === "FAILED" || act.includes("failed") || act.includes("cancel") || act.includes("deactivat") || act.includes("delete")) {
+    return { bg: "rgba(239,68,68,0.12)", color: "#dc2626", border: "rgba(239,68,68,0.3)", icon: "fa-circle-xmark" };
+  }
+  if (act.includes("login") || act.includes("order") || act.includes("payment") || act.includes("receipt") || act.includes("activat")) {
+    return { bg: "rgba(16,185,129,0.12)", color: "#059669", border: "rgba(16,185,129,0.3)", icon: "fa-circle-check" };
+  }
+  if (act.includes("stock") || act.includes("inventory") || act.includes("supplier") || act.includes("refund")) {
+    return { bg: "rgba(249,115,22,0.12)", color: "#ea580c", border: "rgba(249,115,22,0.3)", icon: "fa-boxes-stacked" };
+  }
+  if (act.includes("logout") || act.includes("expire")) {
+    return { bg: "rgba(113,113,122,0.12)", color: "#52525b", border: "rgba(113,113,122,0.3)", icon: "fa-right-from-bracket" };
+  }
+  // Default Info / Blue
+  return { bg: "rgba(59,130,246,0.12)", color: "#2563eb", border: "rgba(59,130,246,0.3)", icon: "fa-info-circle" };
+}
+
+function getSuperadminRoleBadge(role) {
+  const r = (role || "").toUpperCase();
+  if (r.includes("ADMIN")) return { bg: "#c9a227", color: "#ffffff" };
+  if (r.includes("MANAGER")) return { bg: "#3b82f6", color: "#ffffff" };
+  if (r.includes("CASHIER")) return { bg: "#10b981", color: "#ffffff" };
+  if (r.includes("INVENTORY")) return { bg: "#f97316", color: "#ffffff" };
+  if (r.includes("KITCHEN")) return { bg: "#8b5cf6", color: "#ffffff" };
+  return { bg: "#71717a", color: "#ffffff" };
+}
+
+// ── Fetch & Render Activity Logs ──
+async function fetchAndRenderSuperadminLogs() {
+  const tbody = document.getElementById("superadmin-logs-tbody");
+  if (!tbody) return;
+
+  tbody.innerHTML = `
+    <tr>
+      <td colspan="10" style="text-align:center; padding:36px; color:#71717a;">
+        <i class="fas fa-spinner fa-spin" style="margin-right:8px; color:#c9a227;"></i> Querying audit trail...
+      </td>
+    </tr>
+  `;
+
+  const st = window._superadminLogsState;
+  const offset = (st.page - 1) * st.limit;
+
+  const params = new URLSearchParams();
+  params.append("limit", st.limit);
+  params.append("offset", offset);
+  if (st.search) params.append("search", st.search.trim());
+  if (st.role && st.role !== "ALL") params.append("role", st.role);
+  if (st.activity_type && st.activity_type !== "ALL") params.append("activity_type", st.activity_type);
+  if (st.status && st.status !== "ALL") params.append("status", st.status);
+  if (st.date_range && st.date_range !== "all") params.append("date_range", st.date_range);
+  if (st.date_range === "custom") {
+    if (st.start_date) params.append("start_date", st.start_date);
+    if (st.end_date) params.append("end_date", st.end_date);
+  }
+
+  try {
+    const res = await Auth.fetch(`/api/v1/activity-logs?${params.toString()}`);
+    if (!res.ok) throw new Error("Failed to load activity logs from server.");
+    const data = await res.json();
+
+    st.items = data.items || [];
+    st.total = data.total || 0;
+    st.total_pages = data.total_pages || 1;
+    st.summary = data.summary || {};
+
+    // 1. Update Metrics Cards
+    const actTodayEl = document.getElementById("metric-activities-today");
+    const loginsTodayEl = document.getElementById("metric-logins-today");
+    const activeUsersEl = document.getElementById("metric-active-users");
+    const failedLoginsEl = document.getElementById("metric-failed-logins");
+
+    if (actTodayEl) actTodayEl.textContent = Number(st.summary.total_activities_today || 0).toLocaleString();
+    if (loginsTodayEl) loginsTodayEl.textContent = Number(st.summary.total_logins_today || 0).toLocaleString();
+    if (activeUsersEl) activeUsersEl.textContent = Number(st.summary.active_users || 0).toLocaleString();
+    if (failedLoginsEl) failedLoginsEl.textContent = Number(st.summary.failed_logins_today || 0).toLocaleString();
+
+    // 2. Update Count Subtitle
+    const metaCount = document.getElementById("superadmin-log-count-meta");
+    if (metaCount) {
+      metaCount.textContent = `${st.total.toLocaleString()} total logged events matching current filters`;
+    }
+
+    // 3. Render Table Rows
+    if (!st.items || st.items.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="10" style="text-align:center; padding:45px 20px; color:#71717a;">
+            <div style="font-size:32px; color:#d4d4d8; margin-bottom:10px;"><i class="fas fa-folder-open"></i></div>
+            <div style="font-size:14px; font-weight:700; color:#18181b;">No Activity Records Found</div>
+            <div style="font-size:12px; margin-top:4px;">No activities recorded matching the selected filter criteria.</div>
+          </td>
+        </tr>
+      `;
+      renderSuperadminPagination();
+      return;
+    }
+
+    tbody.innerHTML = st.items.map((log, idx) => {
+      const actBadge = getSuperadminActivityBadge(log.activity_type, log.status);
+      const roleBadge = getSuperadminRoleBadge(log.role);
+      const isFailed = (log.status || "").toUpperCase() === "FAILED";
+
+      return `
+        <tr style="border-bottom:1px solid #f4f4f5; background:${idx % 2 === 0 ? '#ffffff' : '#fafafa'}; cursor:pointer;" onclick="openSuperadminLogModal(${log.id})" title="Click to inspect activity details">
+          <!-- 1. Date -->
+          <td style="padding:10px 14px; font-weight:600; color:#18181b; white-space:nowrap;">
+            ${Utils.escapeHtml(log.ph_date || '—')}
+          </td>
+          <!-- 2. Time -->
+          <td style="padding:10px 14px; color:#52525b; font-variant-numeric:tabular-nums; white-space:nowrap; font-weight:500;">
+            ${Utils.escapeHtml(log.ph_time || '—')}
+          </td>
+          <!-- 3. Account Name -->
+          <td style="padding:10px 14px; font-weight:700; color:#18181b; white-space:nowrap;">
+            ${Utils.escapeHtml(log.full_name || log.username || 'System')}
+          </td>
+          <!-- 4. Username / Email -->
+          <td style="padding:10px 14px; color:#71717a; font-family:monospace; font-size:11.5px; white-space:nowrap;">
+            ${Utils.escapeHtml(log.username || '—')}
+          </td>
+          <!-- 5. Role -->
+          <td style="padding:10px 14px; white-space:nowrap;">
+            <span style="display:inline-block; padding:3px 8px; border-radius:4px; font-size:10px; font-weight:800; background:${roleBadge.bg}; color:${roleBadge.color}; letter-spacing:0.4px;">
+              ${Utils.escapeHtml(log.role || 'STAFF')}
+            </span>
+          </td>
+          <!-- 6. Activity -->
+          <td style="padding:10px 14px; white-space:nowrap;">
+            <span style="display:inline-flex; align-items:center; gap:5px; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:700; background:${actBadge.bg}; color:${actBadge.color}; border:1px solid ${actBadge.border};">
+              <i class="fas ${actBadge.icon}"></i> ${Utils.escapeHtml(log.activity_type || log.action || 'Activity')}
+            </span>
+          </td>
+          <!-- 7. Description -->
+          <td style="padding:10px 14px; color:#27272a; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${Utils.escapeHtml(log.description || log.details || '')}">
+            ${Utils.escapeHtml(log.description || log.details || '—')}
+          </td>
+          <!-- 8. IP Address -->
+          <td style="padding:10px 14px; color:#71717a; font-family:monospace; font-size:11px; white-space:nowrap;">
+            ${Utils.escapeHtml(log.ip_address || '—')}
+          </td>
+          <!-- 9. Status -->
+          <td style="padding:10px 14px; white-space:nowrap;">
+            <span style="display:inline-block; padding:2px 7px; border-radius:999px; font-size:10.5px; font-weight:800; ${isFailed ? 'background:rgba(239,68,68,0.12); color:#dc2626; border:1px solid rgba(239,68,68,0.3);' : 'background:rgba(16,185,129,0.12); color:#059669; border:1px solid rgba(16,185,129,0.3);'}">
+              ${Utils.escapeHtml(log.status || 'SUCCESS')}
+            </span>
+          </td>
+          <!-- 10. Inspect Button -->
+          <td style="padding:10px 14px; text-align:center; white-space:nowrap;" onclick="event.stopPropagation();">
+            <button type="button" class="btn btn-outline btn-sm" onclick="openSuperadminLogModal(${log.id})" style="padding:3px 8px; font-size:11px; border-color:#d4d4d8; color:#18181b;" title="Inspect full audit record">
+              <i class="fas fa-eye" style="color:#c9a227;"></i> Details
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    renderSuperadminPagination();
+  } catch (err) {
+    console.error("Superadmin logs fetch error:", err);
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="10" style="text-align:center; padding:35px; color:#ef4444;">
+          <i class="fas fa-triangle-exclamation" style="margin-right:6px;"></i> Failed to retrieve audit logs from server.
+        </td>
+      </tr>
+    `;
+  }
+}
+
+// ── Pagination Controls ──
+function renderSuperadminPagination() {
+  const st = window._superadminLogsState;
+  const infoEl = document.getElementById("superadmin-pagination-info");
+  const btnsEl = document.getElementById("superadmin-pagination-buttons");
+  if (!infoEl || !btnsEl) return;
+
+  const startEntry = st.total === 0 ? 0 : (st.page - 1) * st.limit + 1;
+  const endEntry = Math.min(st.page * st.limit, st.total);
+  infoEl.textContent = `Showing ${startEntry.toLocaleString()} to ${endEntry.toLocaleString()} of ${st.total.toLocaleString()} records`;
+
+  let html = `
+    <button type="button" class="btn btn-outline btn-sm" onclick="changeSuperadminPage(${st.page - 1})" ${st.page <= 1 ? 'disabled style="opacity:0.5;"' : ''}>
+      <i class="fas fa-chevron-left"></i> Prev
+    </button>
+  `;
+
+  const totalPages = Math.max(1, st.total_pages);
+  let pStart = Math.max(1, st.page - 2);
+  let pEnd = Math.min(totalPages, pStart + 4);
+  if (pEnd - pStart < 4) pStart = Math.max(1, pEnd - 4);
+
+  for (let p = pStart; p <= pEnd; p++) {
+    html += `
+      <button type="button" class="btn btn-sm ${p === st.page ? 'btn-primary' : 'btn-outline'}" onclick="changeSuperadminPage(${p})" style="min-width:32px; padding:4px 8px;">
+        ${p}
+      </button>
+    `;
+  }
+
+  html += `
+    <button type="button" class="btn btn-outline btn-sm" onclick="changeSuperadminPage(${st.page + 1})" ${st.page >= totalPages ? 'disabled style="opacity:0.5;"' : ''}>
+      Next <i class="fas fa-chevron-right"></i>
+    </button>
+  `;
+
+  btnsEl.innerHTML = html;
+}
+
+function changeSuperadminPage(p) {
+  const st = window._superadminLogsState;
+  if (p < 1 || p > st.total_pages || p === st.page) return;
+  st.page = p;
+  fetchAndRenderSuperadminLogs();
+}
+
+function changeSuperadminLimit(lim) {
+  const st = window._superadminLogsState;
+  st.limit = Number(lim) || 20;
+  st.page = 1;
+  fetchAndRenderSuperadminLogs();
+}
+
+// ── Filter Triggers ──
+let _superadminSearchTimer = null;
+function debounceSuperadminSearch() {
+  clearTimeout(_superadminSearchTimer);
+  _superadminSearchTimer = setTimeout(() => {
+    const input = document.getElementById("superadmin-search");
+    window._superadminLogsState.search = input ? input.value : "";
+    window._superadminLogsState.page = 1;
+    fetchAndRenderSuperadminLogs();
+  }, 350);
+}
+
+function updateSuperadminFilter(key, val) {
+  window._superadminLogsState[key] = val;
+  window._superadminLogsState.page = 1;
+  fetchAndRenderSuperadminLogs();
+}
+
+function setSuperadminDateRange(rangeKey) {
+  window._superadminLogsState.date_range = rangeKey;
+  window._superadminLogsState.page = 1;
+
+  const customBar = document.getElementById("superadmin-custom-dates-bar");
+  if (customBar) customBar.style.display = rangeKey === "custom" ? "flex" : "none";
+
+  // Re-render view to highlight active date pill
+  renderLogs();
+}
+
+function applySuperadminCustomDates() {
+  const startEl = document.getElementById("superadmin-start-date");
+  const endEl = document.getElementById("superadmin-end-date");
+  window._superadminLogsState.start_date = startEl ? startEl.value : "";
+  window._superadminLogsState.end_date = endEl ? endEl.value : "";
+  window._superadminLogsState.page = 1;
+  fetchAndRenderSuperadminLogs();
+}
+
+function resetSuperadminFilters() {
+  window._superadminLogsState = {
+    search: "",
+    role: "ALL",
+    activity_type: "ALL",
+    status: "ALL",
+    date_range: "today",
+    start_date: "",
+    end_date: "",
+    page: 1,
+    limit: 20,
+    total: 0,
+    total_pages: 1,
+    items: [],
+    summary: {}
+  };
+  renderLogs();
+}
+
+// ── Detail Inspection Modal ──
+function openSuperadminLogModal(logId) {
+  const log = (window._superadminLogsState.items || []).find(l => l.id === logId);
+  if (!log) {
+    Utils.showToast("Activity record details not found.", "warning");
+    return;
+  }
+
+  const actBadge = getSuperadminActivityBadge(log.activity_type, log.status);
+  const roleBadge = getSuperadminRoleBadge(log.role);
+  const isFailed = (log.status || "").toUpperCase() === "FAILED";
+
+  let metaFormatted = "None recorded";
+  if (log.metadata_json) {
+    try {
+      const parsed = typeof log.metadata_json === "string" ? JSON.parse(log.metadata_json) : log.metadata_json;
+      metaFormatted = `<pre style="margin:0; background:#f4f4f5; padding:10px; border-radius:6px; font-size:11px; font-family:monospace; max-height:160px; overflow-y:auto; color:#18181b;">${Utils.escapeHtml(JSON.stringify(parsed, null, 2))}</pre>`;
+    } catch (e) {
+      metaFormatted = `<code style="font-size:11px;">${Utils.escapeHtml(log.metadata_json)}</code>`;
+    }
+  }
+
+  const modalBody = `
+    <div style="font-size:13px; color:#18181b; line-height:1.5;">
+      <!-- Top Summary Header -->
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; padding-bottom:14px; border-bottom:1px solid #e4e4e7; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+        <div>
+          <span style="display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:6px; font-size:12px; font-weight:700; background:${actBadge.bg}; color:${actBadge.color}; border:1px solid ${actBadge.border}; margin-bottom:6px;">
+            <i class="fas ${actBadge.icon}"></i> ${Utils.escapeHtml(log.activity_type || log.action || 'Activity')}
+          </span>
+          <h3 style="font-size:16px; font-weight:800; margin:0; color:#18181b;">
+            Log Record #${log.id}
+          </h3>
+        </div>
+        <div style="text-align:right;">
+          <span style="display:inline-block; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:800; ${isFailed ? 'background:rgba(239,68,68,0.12); color:#dc2626; border:1px solid rgba(239,68,68,0.3);' : 'background:rgba(16,185,129,0.12); color:#059669; border:1px solid rgba(16,185,129,0.3);'}">
+            ${Utils.escapeHtml(log.status || 'SUCCESS')}
+          </span>
+          <div style="font-size:11px; color:#71717a; margin-top:4px;">Audit Trail ID: ${log.id}</div>
+        </div>
+      </div>
+
+      <!-- Description Banner -->
+      <div style="background:#fafafa; border:1px solid #e4e4e7; border-radius:8px; padding:12px 14px; margin-bottom:18px;">
+        <span style="display:block; font-size:10.5px; font-weight:700; text-transform:uppercase; color:#71717a; margin-bottom:3px;">Activity Description</span>
+        <div style="font-size:13.5px; font-weight:600; color:#18181b;">${Utils.escapeHtml(log.description || log.details || 'No description recorded')}</div>
+      </div>
+
+      <!-- Key Details Grid -->
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:18px;">
+        <!-- Left: Account Details -->
+        <div style="border:1px solid #e4e4e7; border-radius:8px; padding:12px; background:#ffffff;">
+          <h5 style="margin:0 0 10px 0; font-size:11.5px; font-weight:800; text-transform:uppercase; color:#71717a; border-bottom:1px solid #f4f4f5; padding-bottom:4px;">
+            <i class="fas fa-user-circle" style="color:#c9a227;"></i> Account Identity
+          </h5>
+          <table style="width:100%; font-size:12px; border-collapse:collapse;">
+            <tr>
+              <td style="padding:4px 0; color:#71717a;">Employee Name:</td>
+              <td style="padding:4px 0; text-align:right; font-weight:700; color:#18181b;">${Utils.escapeHtml(log.full_name || '—')}</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 0; color:#71717a;">Username / Email:</td>
+              <td style="padding:4px 0; text-align:right; font-family:monospace; color:#18181b;">${Utils.escapeHtml(log.username || '—')}</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 0; color:#71717a;">Account Role:</td>
+              <td style="padding:4px 0; text-align:right;">
+                <span style="display:inline-block; padding:2px 7px; border-radius:4px; font-size:10px; font-weight:800; background:${roleBadge.bg}; color:${roleBadge.color};">
+                  ${Utils.escapeHtml(log.role || 'STAFF')}
+                </span>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:4px 0; color:#71717a;">User ID:</td>
+              <td style="padding:4px 0; text-align:right; font-family:monospace;">${log.user_id ? `#${log.user_id}` : '—'}</td>
+            </tr>
+          </table>
+        </div>
+
+        <!-- Right: Environment & Security Details -->
+        <div style="border:1px solid #e4e4e7; border-radius:8px; padding:12px; background:#ffffff;">
+          <h5 style="margin:0 0 10px 0; font-size:11.5px; font-weight:800; text-transform:uppercase; color:#71717a; border-bottom:1px solid #f4f4f5; padding-bottom:4px;">
+            <i class="fas fa-network-wired" style="color:#3b82f6;"></i> Security &amp; Network
+          </h5>
+          <table style="width:100%; font-size:12px; border-collapse:collapse;">
+            <tr>
+              <td style="padding:4px 0; color:#71717a;">Philippine Date:</td>
+              <td style="padding:4px 0; text-align:right; font-weight:600;">${Utils.escapeHtml(log.ph_date || '—')}</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 0; color:#71717a;">Philippine Time:</td>
+              <td style="padding:4px 0; text-align:right; font-weight:600; font-variant-numeric:tabular-nums;">${Utils.escapeHtml(log.ph_time || '—')}</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 0; color:#71717a;">IP Address:</td>
+              <td style="padding:4px 0; text-align:right; font-family:monospace; font-weight:700;">${Utils.escapeHtml(log.ip_address || '—')}</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 0; color:#71717a;">Session ID:</td>
+              <td style="padding:4px 0; text-align:right; font-family:monospace; font-size:11px; max-width:140px; overflow:hidden; text-overflow:ellipsis;">${Utils.escapeHtml(log.session_id ? log.session_id.substring(0, 12) + '…' : '—')}</td>
+            </tr>
+          </table>
+        </div>
+      </div>
+
+      <!-- Device & Browser User Agent -->
+      <div style="margin-bottom:16px;">
+        <span style="display:block; font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a; margin-bottom:4px;">Device / Browser User Agent</span>
+        <div style="background:#f4f4f5; border:1px solid #e4e4e7; border-radius:6px; padding:8px 12px; font-size:11px; font-family:monospace; color:#52525b; word-break:break-all;">
+          ${Utils.escapeHtml(log.user_agent || 'Not captured')}
+        </div>
+      </div>
+
+      <!-- Additional Metadata -->
+      <div>
+        <span style="display:block; font-size:11px; font-weight:700; text-transform:uppercase; color:#71717a; margin-bottom:4px;">Additional Log Context &amp; Metadata</span>
+        ${metaFormatted}
+      </div>
+    </div>
+  `;
+
+  const modalTitle = `<i class="fas fa-shield-halved" style="color:#c9a227; margin-right:8px;"></i> Activity Log Audit Record #${log.id}`;
+  const modalFooter = `
+    <button type="button" class="btn btn-outline" onclick="Utils.closeModal()" style="padding:8px 18px; font-size:13px;">Close</button>
+  `;
+
+  Utils.openModal(modalTitle, modalBody, modalFooter, "modal-md");
+}
+
+// ── Export CSV ──
+function exportSuperadminLogsCsv() {
+  const st = window._superadminLogsState;
+  const params = new URLSearchParams();
+  if (st.search) params.append("search", st.search.trim());
+  if (st.role && st.role !== "ALL") params.append("role", st.role);
+  if (st.activity_type && st.activity_type !== "ALL") params.append("activity_type", st.activity_type);
+  if (st.status && st.status !== "ALL") params.append("status", st.status);
+  if (st.date_range && st.date_range !== "all") params.append("date_range", st.date_range);
+  if (st.date_range === "custom") {
+    if (st.start_date) params.append("start_date", st.start_date);
+    if (st.end_date) params.append("end_date", st.end_date);
+  }
+
+  window.open(`/api/v1/activity-logs/export?${params.toString()}`, "_blank");
+}
+
+window.renderLogs = renderLogs;
+window.fetchAndRenderSuperadminLogs = fetchAndRenderSuperadminLogs;
+window.changeSuperadminPage = changeSuperadminPage;
+window.changeSuperadminLimit = changeSuperadminLimit;
+window.debounceSuperadminSearch = debounceSuperadminSearch;
+window.updateSuperadminFilter = updateSuperadminFilter;
+window.setSuperadminDateRange = setSuperadminDateRange;
+window.applySuperadminCustomDates = applySuperadminCustomDates;
+window.resetSuperadminFilters = resetSuperadminFilters;
+window.openSuperadminLogModal = openSuperadminLogModal;
+window.exportSuperadminLogsCsv = exportSuperadminLogsCsv;
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 9. REPORTS & ANALYTICS
@@ -6216,9 +7519,14 @@ async function renderReports(c) {
     <div class="section-card">
       <div class="section-head">
         <h2>Sales Performance Report</h2>
-        <button class="btn btn-outline btn-sm" onclick="Utils.exportCSV('Sales_Report', ${JSON.stringify(transactions).replace(/"/g, '&quot;')})">
-          <i class="fas fa-download"></i> Export CSV
-        </button>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-outline btn-sm" onclick="openFinancialPrintPreviewModal()" title="Open formal print preview of financial statement">
+            <i class="fas fa-eye" style="color:#c9a227;"></i> Print Preview
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="Utils.exportCSV('Sales_Report', ${JSON.stringify(transactions).replace(/"/g, '&quot;')})">
+            <i class="fas fa-download"></i> Export CSV
+          </button>
+        </div>
       </div>
       <div style="padding:20px 24px;">
         <p style="color:var(--text-muted); font-size:13px;">Real-time sales breakdown extracted from transaction ledger.</p>
@@ -6785,17 +8093,19 @@ let cachedProfitLossData = null;
 window._currentPlPeriod = window._currentPlPeriod || 'today';
 window._currentPlStartDate = window._currentPlStartDate || '';
 window._currentPlEndDate = window._currentPlEndDate || '';
-window._currentPlTab = window._currentPlTab || 'orders';
+window._currentPlTab = window._currentPlTab || 'overview';
+window._currentExpenseFilter = window._currentExpenseFilter || 'all';
+window._currentExpenseCatFilter = window._currentExpenseCatFilter || 'all';
 
 async function renderProfitLoss(c, requestedPeriod = null, customStart = null, customEnd = null) {
-  if (!c) c = document.getElementById("view-container");
+  if (!c) c = document.getElementById("view-container") || document.getElementById("content-area");
   if (!c) return;
 
   if (requestedPeriod !== null) window._currentPlPeriod = requestedPeriod;
   if (customStart !== null) window._currentPlStartDate = customStart;
   if (customEnd !== null) window._currentPlEndDate = customEnd;
 
-  const activePeriod = window._currentPlPeriod || 'today';
+  const activePeriod = window._currentPlPeriod || 'all';
   const startDate = window._currentPlStartDate || '';
   const endDate = window._currentPlEndDate || '';
 
@@ -6806,11 +8116,18 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
   }
 
   let data = {
-    period: { name: "Today" },
-    revenue: { total_orders_revenue: 0, today_orders_revenue: 0, cash_sales: 0, non_cash_sales: 0, total_orders_count: 0 },
-    inventory: { total_inventory_valuation: 0, total_items_count: 0, cost_of_goods_sold: 0, cogs_status: "complete", is_cogs_complete: true },
+    period: { name: "All Time" },
+    revenue: { gross_sales: 0, discounts: 0, refunds: 0, net_sales: 0, total_orders_revenue: 0, cash_sales: 0, non_cash_sales: 0, total_orders_count: 0 },
+    cogs: { cost_of_goods_sold: 0, is_cogs_complete: true, cogs_status: "complete", missing_cost_items: [] },
+    expenses: { total_operating_expenses: 0, unpaid_pending_expenses: 0, by_category: {}, expenses_count: 0 },
+    inventory: { total_inventory_valuation: 0, total_items_count: 0, cost_of_goods_sold: 0, is_cogs_complete: true, items: [] },
+    cash_custody: {
+      cashier_drawer: { active_cash: 0, cash_sales_in_drawer: 0, open_shifts_count: 0 },
+      manager_safe: { balance: 0, total_cashout_income: 0, transferred_to_admin: 0, expenses_paid: 0 },
+      admin_safe: { balance: 0, total_remittances_received: 0, expenses_paid: 0 }
+    },
     cashout: { total_cashout_income: 0, today_cashout_income: 0, active_drawer_cash: 0, history: [] },
-    profit_loss: { gross_profit: 0, operating_expenses: 0, net_profit: 0, profit_margin_percent: 0, profit_margin_display: "0.00%", net_cash_income: 0, is_profitable: true },
+    profit_loss: { gross_sales: 0, net_sales: 0, cogs: 0, gross_profit: 0, operating_expenses: 0, net_profit: 0, profit_margin_percent: 0, profit_margin_display: "0.00%", is_profitable: true },
     metrics: {},
     reconciliation: { is_fully_reconciled: true, status: "RECONCILED", checks: [] },
     tables: { sales_orders: [], expenses: [], incoming_transfers: [], inventory_valuation: [] }
@@ -6818,106 +8135,136 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
 
   try {
     const res = await Auth.fetch(queryUrl);
-    if (!res.ok) throw new Error("Failed to load profit and loss data from server.");
+    if (!res.ok) throw new Error("Failed to load financial data from server.");
     data = await res.json();
     cachedProfitLossData = data;
   } catch (err) {
     console.error("Profit Loss load error:", err);
-    if (cachedProfitLossData) data = cachedProfitLossData;
+    if (typeof cachedProfitLossData !== 'undefined' && cachedProfitLossData) data = cachedProfitLossData;
   }
 
   const rev = data.revenue || {};
+  const cogsData = data.cogs || {};
+  const expData = data.expenses || {};
   const inv = data.inventory || {};
-  const csh = data.cashout || {};
+  const custody = data.cash_custody || {};
   const pl = data.profit_loss || {};
   const metrics = data.metrics || {};
   const recon = data.reconciliation || {};
   const tables = data.tables || {};
-  const history = csh.history || [];
+  const history = (data.cashout && data.cashout.history) ? data.cashout.history : [];
   const periodInfo = data.period || {};
 
   const currentUser = typeof Auth !== 'undefined' ? Auth.getUser() : null;
   const userRole = (currentUser && currentUser.role ? currentUser.role : (typeof Auth !== 'undefined' ? Auth.getRole() : '')).toLowerCase();
   const isAdmin = userRole.includes('admin') || window.location.pathname.includes('/admin') || window.location.pathname.includes('/dashboard');
+  const canManageExpenses = isAdmin || userRole.includes('manager');
 
-  // Authoritative metric values
-  const grossSalesVal = metrics['1_gross_sales'] !== undefined ? metrics['1_gross_sales'] : (rev.today_orders_revenue || 0);
-  const netSalesVal = metrics['2_net_sales'] !== undefined ? metrics['2_net_sales'] : (rev.today_orders_revenue || 0);
-  const discountsVal = metrics['5_discounts'] || 0;
-  const cogsVal = metrics['6_cost_of_goods_sold'] !== undefined ? metrics['6_cost_of_goods_sold'] : (inv.cost_of_goods_sold || 0);
-  const isCogsComplete = inv.is_cogs_complete !== undefined ? inv.is_cogs_complete : true;
-  const inventoryValuationVal = inv.total_inventory_valuation || 0;
-  const totalOrdersRevenueVal = rev.total_orders_revenue || 0;
-  const grossProfitVal = totalOrdersRevenueVal - inventoryValuationVal;
-  const operatingExpensesVal = pl.operating_expenses || 0;
-  const netProfitVal = totalOrdersRevenueVal - inventoryValuationVal;
+  // Core 8 Authoritative KPI Metric Values
+  const grossSalesVal = metrics['1_gross_sales'] !== undefined ? metrics['1_gross_sales'] : (rev.gross_sales || rev.today_orders_revenue || 0);
+  const netSalesVal = metrics['2_net_sales'] !== undefined ? metrics['2_net_sales'] : (rev.net_sales || rev.today_orders_revenue || 0);
+  const discountsVal = metrics['5_discounts'] !== undefined ? metrics['5_discounts'] : (rev.discounts || 0);
+  const refundsVal = metrics['5_refunds'] !== undefined ? metrics['5_refunds'] : (rev.refunds || 0);
+  const cogsVal = metrics['6_cost_of_goods_sold'] !== undefined ? metrics['6_cost_of_goods_sold'] : (cogsData.cost_of_goods_sold || inv.cost_of_goods_sold || 0);
+  const isCogsComplete = cogsData.is_cogs_complete !== undefined ? cogsData.is_cogs_complete : (inv.is_cogs_complete !== undefined ? inv.is_cogs_complete : true);
+  const grossProfitVal = metrics['7_gross_profit'] !== undefined ? metrics['7_gross_profit'] : (pl.gross_profit || (netSalesVal - cogsVal));
+  const operatingExpensesVal = metrics['8_operating_expenses'] !== undefined ? metrics['8_operating_expenses'] : (pl.operating_expenses || expData.total_operating_expenses || 0);
+  const netProfitVal = metrics['9_net_operating_profit'] !== undefined ? metrics['9_net_operating_profit'] : (pl.net_profit || (grossProfitVal - operatingExpensesVal));
   const isProfitable = netProfitVal >= 0;
-  const profitMarginPct = totalOrdersRevenueVal > 0 ? ((netProfitVal / totalOrdersRevenueVal) * 100) : (inventoryValuationVal > 0 ? -100 : 0);
-  const profitMarginDisplay = (profitMarginPct > 0 ? '+' : '') + profitMarginPct.toFixed(2) + '%';
+  const profitMarginDisplay = metrics['10_profit_margin_display'] || pl.profit_margin_display || ((netSalesVal > 0 ? ((netProfitVal / netSalesVal) * 100).toFixed(2) + '%' : '0.00%'));
   const cashCollectionsVal = metrics['3_cash_collections'] !== undefined ? metrics['3_cash_collections'] : (rev.cash_sales || 0);
   const digitalCollectionsVal = metrics['4_digital_collections'] !== undefined ? metrics['4_digital_collections'] : (rev.non_cash_sales || 0);
-  const activeDrawerCashVal = csh.active_drawer_cash || 0;
-  const adminIncomingTransfersVal = csh.admin_transfer_income !== undefined ? csh.admin_transfer_income : (csh.total_transferred_to_admin ?? 0);
-  const managerSafeBalanceVal = csh.manager_safe_cash !== undefined ? csh.manager_safe_cash : Math.max(0, (csh.total_cashout_income || 0) - (csh.total_transferred_to_admin || 0));
+  const inventoryValuationVal = metrics['11_current_inventory_valuation'] !== undefined ? metrics['11_current_inventory_valuation'] : (inv.total_inventory_valuation || 0);
+  const activeDrawerCashVal = metrics['12_current_cash_drawer_balances'] !== undefined ? metrics['12_current_cash_drawer_balances'] : (custody.cashier_drawer ? custody.cashier_drawer.active_cash : (data.cashout?.active_drawer_cash || 0));
+  const managerSafeBalanceVal = custody.manager_safe ? custody.manager_safe.balance : (data.cashout?.manager_safe_cash || 0);
+  const adminSafeBalanceVal = custody.admin_safe ? custody.admin_safe.balance : (data.cashout?.admin_transfer_income || 0);
   const isReconciled = recon.is_fully_reconciled !== undefined ? recon.is_fully_reconciled : true;
+  const checks = recon.checks || [];
+
+  const currentTab = window._currentPlTab || 'overview';
 
   c.innerHTML = `
-    <style id="profit-loss-view-styles">
-      .pl-dashboard-container {
+    <style id="financial-system-styles">
+      .fin-container {
         width: 100%;
         max-width: 100%;
         box-sizing: border-box;
       }
-
-      /* Top Toolbar */
-      .pl-toolbar {
+      
+      /* Top Header Toolbar */
+      .fin-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 18px;
+        margin-bottom: 20px;
         flex-wrap: wrap;
         gap: 14px;
       }
-
-      .pl-toolbar-title-wrap h2 {
-        font-size: 21px;
+      .fin-header-title h2 {
+        font-size: clamp(18px, 2vw, 24px);
         font-weight: 800;
         color: var(--text-main, #18181b);
         margin: 0;
         display: flex;
         align-items: center;
         gap: 10px;
-        line-height: 1.2;
+        letter-spacing: -0.3px;
+        line-height: 1.25;
       }
-
-      .pl-toolbar-title-wrap p {
+      .fin-header-title p {
         font-size: 13px;
         color: var(--text-muted, #71717a);
         margin: 4px 0 0 0;
         line-height: 1.4;
       }
-
-      .pl-toolbar-actions {
+      .fin-header-actions {
         display: flex;
         gap: 10px;
         align-items: center;
         flex-wrap: wrap;
       }
-
-      .pl-toolbar-actions .btn {
+      .fin-btn {
         display: inline-flex;
         align-items: center;
+        justify-content: center;
         gap: 8px;
-        font-weight: 700;
+        height: 38px;
+        padding: 0 16px;
         border-radius: 10px;
-        padding: 8px 16px;
-        height: 40px;
+        font-size: 13px;
+        font-weight: 700;
         cursor: pointer;
-        transition: all 0.2s ease;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        text-decoration: none;
+        white-space: nowrap;
+        border: 1px solid transparent;
+        touch-action: manipulation;
+      }
+      .fin-btn:active {
+        transform: scale(0.97);
+      }
+      .fin-btn-gold {
+        background: #18181b;
+        color: #d4af37;
+        border-color: #d4af37;
+        box-shadow: 0 2px 8px rgba(212, 175, 55, 0.15);
+      }
+      .fin-btn-gold:hover {
+        background: #27272a;
+        box-shadow: 0 4px 14px rgba(212, 175, 55, 0.25);
+      }
+      .fin-btn-outline {
+        background: var(--card-bg, #ffffff);
+        color: var(--text-main, #18181b);
+        border-color: rgba(205, 190, 150, 0.4);
+      }
+      .fin-btn-outline:hover {
+        border-color: #c9a227;
+        background: rgba(201, 162, 39, 0.05);
       }
 
       /* Date Filter Bar */
-      .pl-filter-bar {
+      .fin-filter-bar {
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -6930,15 +8277,15 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
         flex-wrap: wrap;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
       }
-
-      .pl-filter-pills {
+      .fin-filter-pills {
         display: flex;
         align-items: center;
         gap: 6px;
         flex-wrap: wrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
       }
-
-      .pl-pill {
+      .fin-pill {
         padding: 6px 14px;
         border-radius: 999px;
         font-size: 12.5px;
@@ -6948,28 +8295,23 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
         background: transparent;
         color: var(--text-muted, #71717a);
         transition: all 0.2s ease;
+        white-space: nowrap;
+        touch-action: manipulation;
       }
-
-      .pl-pill:hover {
-        border-color: #c9a227;
-        color: var(--text-main, #18181b);
-      }
-
-      .pl-pill.active {
+      .fin-pill:hover { border-color: #c9a227; color: var(--text-main, #18181b); }
+      .fin-pill.active {
         background: #18181b;
         color: #d4af37;
         border-color: #d4af37;
         box-shadow: 0 2px 8px rgba(212, 175, 55, 0.2);
       }
-
-      .pl-custom-range-wrap {
+      .fin-custom-range {
         display: flex;
         align-items: center;
         gap: 8px;
         flex-wrap: wrap;
       }
-
-      .pl-custom-range-wrap input {
+      .fin-custom-range input {
         padding: 6px 10px;
         border-radius: 8px;
         border: 1px solid var(--border-color, #e2e8f0);
@@ -6978,64 +8320,78 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
         color: var(--text-main, #18181b);
       }
 
-      /* Reconciliation Banner */
-      .pl-recon-banner {
+      /* Navigation Tabs Bar */
+      .fin-nav-tabs {
         display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 12px 18px;
-        border-radius: 12px;
-        margin-bottom: 20px;
-        gap: 12px;
-        flex-wrap: wrap;
-      }
-
-      .pl-recon-banner.pass {
-        background: rgba(16, 185, 129, 0.08);
-        border: 1px solid rgba(16, 185, 129, 0.3);
-        color: #065f46;
-      }
-
-      .pl-recon-banner.attention {
-        background: rgba(245, 158, 11, 0.08);
-        border: 1px solid rgba(245, 158, 11, 0.35);
-        color: #92400e;
-      }
-
-      .pl-recon-left {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        font-size: 13px;
-        font-weight: 600;
-      }
-
-      .pl-recon-left strong {
-        font-weight: 800;
-        letter-spacing: 0.3px;
-      }
-
-      /* 6 Metric KPI Cards Grid for Admin */
-      .pl-admin-grid-8 {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 16px;
+        gap: 4px;
+        border-bottom: 2px solid rgba(205, 190, 150, 0.25);
         margin-bottom: 24px;
-        width: 100%;
-        box-sizing: border-box;
+        overflow-x: auto;
+        padding-bottom: 2px;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
+      }
+      .fin-nav-tabs::-webkit-scrollbar {
+        height: 4px;
+      }
+      .fin-nav-tabs::-webkit-scrollbar-thumb {
+        background: rgba(201, 162, 39, 0.2);
+        border-radius: 4px;
+      }
+      .fin-nav-tab {
+        padding: 10px 16px;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+        background: transparent;
+        border: none;
+        border-bottom: 3px solid transparent;
+        color: var(--text-muted, #71717a);
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition: all 0.2s ease;
+        white-space: nowrap;
+        border-radius: 8px 8px 0 0;
+        touch-action: manipulation;
+      }
+      .fin-nav-tab:hover {
+        color: #c9a227;
+        background: rgba(201, 162, 39, 0.05);
+      }
+      .fin-nav-tab.active {
+        color: #18181b;
+        border-bottom-color: #c9a227;
+        background: rgba(201, 162, 39, 0.08);
       }
 
-      /* 4 KPI Summary Cards for Manager */
-      .pl-stats-grid {
+      /* 8 Metric KPI Cards Grid */
+      .fin-kpi-grid {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
         gap: 16px;
         margin-bottom: 24px;
-        width: 100%;
+      }
+      @media (max-width: 1200px) { .fin-kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+      @media (max-width: 600px) { .fin-kpi-grid { grid-template-columns: 1fr; } }
+
+      .fin-card {
+        background: var(--card-bg, #ffffff);
+        border: 1px solid rgba(205, 190, 150, 0.35);
+        border-radius: 16px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
         box-sizing: border-box;
+        transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+      .fin-card:hover {
+        border-color: rgba(201, 162, 39, 0.55);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
       }
 
-      .pl-stat-card {
+      .fin-stat-card {
         background: var(--card-bg, #ffffff);
         border: 1px solid rgba(205, 190, 150, 0.35);
         border-radius: 16px;
@@ -7044,18 +8400,20 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
         align-items: center;
         gap: 14px;
         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03);
-        transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.2s ease;
+        transition: all 0.2s ease;
         min-width: 0;
-        box-sizing: border-box;
+        cursor: pointer;
+        touch-action: manipulation;
       }
-
-      .pl-stat-card:hover {
+      .fin-stat-card:hover {
         transform: translateY(-2px);
-        box-shadow: 0 10px 24px rgba(180, 140, 50, 0.12);
+        box-shadow: 0 8px 22px rgba(180, 140, 50, 0.12);
         border-color: rgba(201, 162, 39, 0.55);
       }
-
-      .pl-stat-icon {
+      .fin-stat-card:active {
+        transform: scale(0.98);
+      }
+      .fin-stat-icon {
         width: 46px;
         height: 46px;
         border-radius: 12px;
@@ -7065,116 +8423,150 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
         font-size: 18px;
         flex-shrink: 0;
       }
+      .fin-stat-icon.gold { background: rgba(201, 162, 39, 0.12); color: #c9a227; }
+      .fin-stat-icon.green { background: rgba(16, 185, 129, 0.12); color: #10b981; }
+      .fin-stat-icon.red { background: rgba(239, 68, 68, 0.12); color: #ef4444; }
+      .fin-stat-icon.orange { background: rgba(249, 115, 22, 0.12); color: #f97316; }
+      .fin-stat-icon.cyan { background: rgba(6, 182, 212, 0.12); color: #06b6d4; }
+      .fin-stat-icon.purple { background: rgba(99, 102, 241, 0.12); color: #6366f1; }
 
-      .pl-stat-icon.gold { background: rgba(201, 162, 39, 0.12); color: #c9a227; }
-      .pl-stat-icon.green { background: rgba(16, 185, 129, 0.12); color: #10b981; }
-      .pl-stat-icon.red { background: rgba(239, 68, 68, 0.12); color: #ef4444; }
-      .pl-stat-icon.purple { background: rgba(99, 102, 241, 0.12); color: #6366f1; }
-      .pl-stat-icon.cyan { background: rgba(6, 182, 212, 0.12); color: #06b6d4; }
-      .pl-stat-icon.orange { background: rgba(249, 115, 22, 0.12); color: #f97316; }
-
-      .pl-stat-info {
-        min-width: 0;
-        flex: 1;
-        overflow: hidden;
-      }
-
-      .pl-stat-info h3 {
+      .fin-stat-info { min-width: 0; flex: 1; overflow: hidden; }
+      .fin-stat-info h3 {
         font-size: 11px;
         font-weight: 700;
         text-transform: uppercase;
         letter-spacing: 0.5px;
         color: var(--text-muted, #71717a);
         margin: 0 0 4px 0;
-        line-height: 1.2;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
-
-      .pl-stat-count {
-        font-size: clamp(17px, 1.35vw, 22px);
+      .fin-stat-count {
+        font-size: clamp(17px, 1.4vw, 22px);
         font-weight: 800;
         line-height: 1.2;
         margin-bottom: 4px;
+        font-variant-numeric: tabular-nums;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        font-variant-numeric: tabular-nums;
       }
-
-      .pl-stat-trend {
+      .fin-stat-trend {
         font-size: 11px;
         font-weight: 600;
-        line-height: 1.2;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        color: var(--text-muted, #71717a);
         display: flex;
         align-items: center;
         gap: 5px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
-      /* Dual Statements */
-      .pl-dual-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 20px;
-        margin-bottom: 24px;
-        width: 100%;
-        align-items: stretch;
-        box-sizing: border-box;
-      }
-
-      .pl-card {
-        background: var(--card-bg, #ffffff);
+      /* Statement Table Layout */
+      .fin-statement-box {
+        background: #ffffff;
         border: 1px solid rgba(205, 190, 150, 0.35);
         border-radius: 16px;
+        padding: clamp(16px, 2.5vw, 26px);
+        margin-bottom: 24px;
         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03);
-        overflow: hidden;
-        display: flex;
-        flex-direction: column;
-        height: 100%;
         box-sizing: border-box;
-        transition: border-color 0.2s ease, box-shadow 0.2s ease;
       }
-
-      .pl-card:hover {
-        border-color: rgba(201, 162, 39, 0.45);
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+      .fin-stmt-section {
+        margin-bottom: 22px;
       }
-
-      .pl-card-header {
-        padding: 16px 20px;
-        border-bottom: 1px solid rgba(205, 190, 150, 0.25);
+      .fin-stmt-title {
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+        color: #18181b;
+        border-bottom: 2px solid rgba(205, 190, 150, 0.4);
+        padding-bottom: 8px;
+        margin-bottom: 12px;
         display: flex;
         justify-content: space-between;
         align-items: center;
         flex-wrap: wrap;
-        gap: 10px;
-        background: rgba(0, 0, 0, 0.01);
-      }
-
-      .pl-card-header-left h2 {
-        font-size: 16px;
-        font-weight: 700;
-        color: var(--text-main, #18181b);
-        margin: 0;
-        display: flex;
-        align-items: center;
         gap: 8px;
-        line-height: 1.2;
       }
+      .fin-stmt-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px dashed rgba(205, 190, 150, 0.2);
+        font-size: 13.5px;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .fin-stmt-row.sub { padding-left: 18px; color: var(--text-muted, #71717a); font-size: 13px; }
+      .fin-stmt-row.total {
+        font-weight: 800;
+        border-bottom: 1px solid rgba(205, 190, 150, 0.6);
+        border-top: 1px solid rgba(205, 190, 150, 0.6);
+        margin-top: 6px;
+        padding: 10px 0;
+      }
+      .fin-stmt-highlight {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 14px 18px;
+        border-radius: 12px;
+        margin-top: 12px;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .fin-stmt-highlight.green { background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.3); }
+      .fin-stmt-highlight.red { background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.3); }
 
-      .pl-card-header-left span {
-        font-size: 12px;
+      /* Custody 3-Column Grid */
+      .fin-custody-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+        margin-bottom: 24px;
+      }
+      @media (max-width: 992px) { .fin-custody-grid { grid-template-columns: 1fr; } }
+
+      /* Table styles */
+      .fin-table-wrap {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        border-radius: 12px;
+        border: 1px solid rgba(205, 190, 150, 0.2);
+      }
+      .fin-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+        min-width: 650px;
+      }
+      .fin-table th {
+        background: rgba(0, 0, 0, 0.02);
+        padding: 12px 14px;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
         color: var(--text-muted, #71717a);
-        display: block;
-        margin-top: 3px;
-        line-height: 1.35;
+        border-bottom: 1px solid rgba(205, 190, 150, 0.3);
+        text-align: left;
       }
+      .fin-table td {
+        padding: 12px 14px;
+        border-bottom: 1px solid rgba(205, 190, 150, 0.16);
+        color: var(--text-main, #18181b);
+        vertical-align: middle;
+      }
+      .fin-table tr:hover td { background: rgba(201, 162, 39, 0.03); }
 
-      .pl-badge {
+      /* Status Badges */
+      .fin-badge {
         display: inline-flex;
         align-items: center;
         gap: 5px;
@@ -7182,831 +8574,958 @@ async function renderProfitLoss(c, requestedPeriod = null, customStart = null, c
         font-weight: 700;
         padding: 4px 10px;
         border-radius: 999px;
+        text-transform: uppercase;
         letter-spacing: 0.4px;
-        text-transform: uppercase;
-        flex-shrink: 0;
-      }
-
-      .pl-badge-success { background: rgba(16, 185, 129, 0.12); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.25); }
-      .pl-badge-danger { background: rgba(239, 68, 68, 0.12); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.25); }
-      .pl-badge-warning { background: rgba(245, 158, 11, 0.12); color: #d97706; border: 1px solid rgba(245, 158, 11, 0.25); }
-      .pl-badge-info { background: rgba(2, 132, 199, 0.12); color: #0284c7; border: 1px solid rgba(2, 132, 199, 0.25); }
-      .pl-badge-gold { background: rgba(201, 162, 39, 0.12); color: #c9a227; border: 1px solid rgba(201, 162, 39, 0.25); }
-
-      .pl-card-body {
-        padding: 16px 20px;
-        display: flex;
-        flex-direction: column;
-        flex: 1;
-        box-sizing: border-box;
-      }
-
-      .pl-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 10px 0;
-        border-bottom: 1px solid rgba(205, 190, 150, 0.16);
-        gap: 12px;
-      }
-
-      .pl-sub-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 7px 0 7px 18px;
-        font-size: 12.5px;
-        color: var(--text-muted, #71717a);
-        border-bottom: 1px dashed rgba(205, 190, 150, 0.16);
-        gap: 12px;
-      }
-
-      .pl-row-label {
-        font-size: 13px;
-        font-weight: 600;
-        color: var(--text-main, #18181b);
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        min-width: 0;
-      }
-
-      .pl-row-value {
-        font-size: 14px;
-        font-weight: 700;
-        font-variant-numeric: tabular-nums;
-        white-space: nowrap;
-        text-align: right;
-      }
-
-      .pl-highlight-box {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 14px 18px;
-        border-radius: 12px;
-        margin-top: 14px;
-        margin-bottom: 14px;
-        gap: 12px;
-        flex-wrap: wrap;
-        box-sizing: border-box;
-      }
-
-      .pl-highlight-box.green { background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.28); }
-      .pl-highlight-box.red { background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.28); }
-
-      .pl-highlight-label {
-        font-size: 12.5px;
-        font-weight: 800;
-        letter-spacing: 0.5px;
-        text-transform: uppercase;
-        color: var(--text-main, #18181b);
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-
-      .pl-highlight-value {
-        font-size: clamp(18px, 1.7vw, 22px);
-        font-weight: 900;
-        font-variant-numeric: tabular-nums;
         white-space: nowrap;
       }
+      .fin-badge-green { background: rgba(16, 185, 129, 0.12); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.25); }
+      .fin-badge-red { background: rgba(239, 68, 68, 0.12); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.25); }
+      .fin-badge-gold { background: rgba(201, 162, 39, 0.12); color: #c9a227; border: 1px solid rgba(201, 162, 39, 0.25); }
+      .fin-badge-blue { background: rgba(59, 130, 246, 0.12); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.25); }
+      .fin-badge-orange { background: rgba(249, 115, 22, 0.12); color: #f97316; border: 1px solid rgba(249, 115, 22, 0.25); }
+      .fin-badge-gray { background: rgba(113, 113, 122, 0.12); color: #71717a; border: 1px solid rgba(113, 113, 122, 0.25); }
 
-      .pl-card-footer {
-        border-top: 1px solid rgba(205, 190, 150, 0.22);
-        padding: 12px 18px;
-        background: rgba(0, 0, 0, 0.015);
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 10px;
-        font-size: 11.5px;
-        color: var(--text-muted, #71717a);
-        flex-wrap: wrap;
-        margin-top: auto;
-      }
-
-      .pl-card-footer strong {
-        color: var(--text-main, #18181b);
-        font-weight: 700;
-      }
-
-      /* Tabbed Table Container */
-      .pl-tabs-container {
-        display: flex;
-        gap: 8px;
-        border-bottom: 2px solid rgba(205, 190, 150, 0.25);
-        padding-bottom: 0px;
-        margin-bottom: 16px;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-      }
-
-      .pl-tab-btn {
-        padding: 10px 18px;
-        font-size: 13px;
-        font-weight: 700;
-        color: var(--text-muted, #71717a);
-        background: transparent;
-        border: none;
-        border-bottom: 3px solid transparent;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        white-space: nowrap;
-        transition: all 0.2s ease;
-      }
-
-      .pl-tab-btn:hover {
-        color: var(--text-main, #18181b);
-      }
-
-      .pl-tab-btn.active {
-        color: #d4af37;
-        border-bottom-color: #d4af37;
-      }
-
-      .pl-table-wrap {
-        width: 100%;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-      }
-
-      .pl-table {
-        width: 100%;
-        border-collapse: collapse;
-        min-width: 680px;
-        text-align: left;
-      }
-
-      .pl-table th {
-        padding: 12px 16px;
-        font-size: 11px;
-        font-weight: 700;
-        color: var(--text-muted, #71717a);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        border-bottom: 1px solid rgba(205, 190, 150, 0.25);
-        background: rgba(0, 0, 0, 0.02);
-        white-space: nowrap;
-      }
-
-      .pl-table td {
-        padding: 13px 16px;
-        border-bottom: 1px solid rgba(205, 190, 150, 0.15);
-        font-size: 13px;
-        vertical-align: middle;
-      }
-
-      .pl-table tbody tr:hover {
-        background: rgba(201, 162, 39, 0.035);
-      }
-
-      .pl-empty-state {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        padding: 40px 20px;
-        text-align: center;
-      }
-
-      .pl-empty-icon {
-        width: 56px;
-        height: 56px;
-        border-radius: 50%;
-        background: rgba(201, 162, 39, 0.1);
-        color: #c9a227;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 22px;
-        margin-bottom: 14px;
-      }
-
-      .pl-transfer-btn {
-        width: 100%;
-        height: 44px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-        font-size: 13.5px;
-        font-weight: 700;
-        border-radius: 12px;
-        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-        color: #ffffff;
-        border: none;
-        box-shadow: 0 4px 14px rgba(16, 185, 129, 0.25);
-        cursor: pointer;
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-      }
-
-      .pl-transfer-btn:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 6px 18px rgba(16, 185, 129, 0.35);
-        filter: brightness(1.05);
-      }
-
-      @media (max-width: 1199px) {
-        .pl-admin-grid-8 { grid-template-columns: repeat(2, 1fr); gap: 14px; }
-        .pl-stats-grid { grid-template-columns: repeat(2, 1fr); gap: 14px; }
-        .pl-dual-grid { grid-template-columns: 1fr; gap: 18px; }
-      }
-
-      @media (max-width: 767px) {
-        .pl-toolbar { flex-direction: column; align-items: stretch; gap: 12px; }
-        .pl-filter-bar { flex-direction: column; align-items: stretch; }
-        .pl-admin-grid-8 { grid-template-columns: 1fr; gap: 10px; }
-        .pl-stats-grid { grid-template-columns: 1fr; gap: 10px; }
+      /* Responsive Rules */
+      @media (max-width: 768px) {
+        .fin-header {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 12px;
+        }
+        .fin-header-actions {
+          width: 100%;
+          justify-content: stretch;
+        }
+        .fin-header-actions .fin-btn {
+          flex: 1 1 auto;
+          text-align: center;
+        }
+        .fin-filter-bar {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 10px;
+        }
+        .fin-custom-range {
+          width: 100%;
+        }
+        .fin-custom-range input {
+          flex: 1 1 120px;
+        }
       }
     </style>
 
-    <div class="pl-dashboard-container">
-      <!-- Top Toolbar -->
-      <div class="pl-toolbar fade-up">
-        <div class="pl-toolbar-title-wrap">
-          <h2>
-            <i class="fas fa-scale-balanced" style="color:#10b981;"></i> Profit Loss and Income
-          </h2>
-          <p>
-            ${isAdmin ? 'Centralized financial oversight: sales revenue, COGS, operating expenses, cash drawer balances, and manager transfers' : 'Live financial ledger: orders sales revenue, inventory price valuation, manager cashier transfers, and operating profit'}
-          </p>
+    <div class="fin-container fade-up">
+      <!-- 1. Header Toolbar -->
+      <div class="fin-header">
+        <div class="fin-header-title">
+          <h2><i class="fas fa-file-invoice-dollar" style="color:#c9a227;"></i> Financial Management &amp; P&amp;L System</h2>
+          <p>Authoritative financial intelligence, P&amp;L accounting, operating expense controls, and multi-tier safe custody</p>
         </div>
-        <div class="pl-toolbar-actions">
-          ${isAdmin ? `
-            <button class="btn btn-primary" onclick="openAddExpenseModal()" style="background:#18181b; color:#d4af37; border:1px solid #d4af37;">
-              <i class="fas fa-plus"></i> Record Expense
-            </button>
-          ` : `
-            <button class="btn btn-primary" onclick="openAddCashMovementModal(null, 'admin')">
-              <i class="fas fa-paper-plane"></i> Transfer to Admin
-            </button>
-          `}
-          <button class="btn btn-outline btn-sm" onclick="renderProfitLoss()" title="Refresh Financials">
-            <i class="fas fa-sync-alt"></i> Live Refresh
-          </button>
-        </div>
-      </div>
-
-      ${isAdmin ? `
-      <!-- Date Filter Bar (Admin Only) -->
-      <div class="pl-filter-bar fade-up">
-        <div class="pl-filter-pills">
-          <button class="pl-pill ${activePeriod === 'today' ? 'active' : ''}" onclick="renderProfitLoss(null, 'today')">Today</button>
-          <button class="pl-pill ${activePeriod === 'yesterday' ? 'active' : ''}" onclick="renderProfitLoss(null, 'yesterday')">Yesterday</button>
-          <button class="pl-pill ${activePeriod === 'this_week' ? 'active' : ''}" onclick="renderProfitLoss(null, 'this_week')">This Week</button>
-          <button class="pl-pill ${activePeriod === 'this_month' ? 'active' : ''}" onclick="renderProfitLoss(null, 'this_month')">This Month</button>
-          <button class="pl-pill ${activePeriod === 'this_year' ? 'active' : ''}" onclick="renderProfitLoss(null, 'this_year')">This Year</button>
-          <button class="pl-pill ${activePeriod === 'all' ? 'active' : ''}" onclick="renderProfitLoss(null, 'all')">All Time</button>
-          <button class="pl-pill ${activePeriod === 'custom' ? 'active' : ''}" onclick="document.getElementById('pl-custom-range-inputs').style.display = 'flex'; this.classList.add('active');">Custom Range</button>
-        </div>
-
-        <div id="pl-custom-range-inputs" class="pl-custom-range-wrap" style="display:${activePeriod === 'custom' ? 'flex' : 'none'};">
-          <input type="date" id="pl-start-date-input" value="${startDate ? startDate.substring(0, 10) : ''}">
-          <span style="font-size:12px; color:var(--text-muted);">to</span>
-          <input type="date" id="pl-end-date-input" value="${endDate ? endDate.substring(0, 10) : ''}">
-          <button class="btn btn-outline btn-sm" onclick="const s = document.getElementById('pl-start-date-input').value; const e = document.getElementById('pl-end-date-input').value; renderProfitLoss(null, 'custom', s, e);" style="height:32px; padding:4px 10px;">Apply</button>
-        </div>
-      </div>
-
-      <!-- Financial Reconciliation Banner (Admin Only) -->
-      <div class="pl-recon-banner ${isReconciled ? 'pass' : 'attention'} fade-up">
-        <div class="pl-recon-left">
-          <i class="fas ${isReconciled ? 'fa-circle-check' : 'fa-triangle-exclamation'}" style="font-size:18px;"></i>
-          <span>
-            <strong>${isReconciled ? 'FINANCIAL SYSTEM FULLY RECONCILED' : 'FINANCIAL RECONCILIATION NOTICE'}:</strong>
-            ${isReconciled ? 'All completed orders match payment allocations, inventory costs verified, and transfer balances intact.' : (recon.checks ? recon.checks.find(c => c.status !== 'PASS')?.message || 'Discrepancies flagged for review.' : 'Discrepancies flagged for review.')}
-          </span>
-        </div>
-        <button class="btn btn-outline btn-sm" onclick="switchPlTab('reconciliation')" style="height:30px; font-size:11.5px; padding:2px 10px; border-radius:8px;">
-          View Audit Details <i class="fas fa-arrow-right" style="margin-left:4px;"></i>
-        </button>
-      </div>
-
-      <!-- 6 Summary Cards for Centralized Admin Oversight -->
-      <div class="pl-admin-grid-8 fade-up delay-1">
-        <!-- 1. Gross Sales -->
-        <div class="pl-stat-card">
-          <div class="pl-stat-icon gold"><i class="fas fa-coins"></i></div>
-          <div class="pl-stat-info">
-            <h3>Gross Sales (Orders)</h3>
-            <div class="pl-stat-count" style="color:#c9a227;">${Utils.formatCurrency(grossSalesVal)}</div>
-            <div class="pl-stat-trend" style="color:var(--text-muted);"><i class="fas fa-receipt"></i> Net: <strong>${Utils.formatCurrency(netSalesVal)}</strong> (Disc: -${Utils.formatCurrency(discountsVal)})</div>
-          </div>
-        </div>
-
-        <!-- 2. COGS -->
-        <div class="pl-stat-card">
-          <div class="pl-stat-icon orange"><i class="fas fa-warehouse"></i></div>
-          <div class="pl-stat-info">
-            <h3>Cost of Goods Sold</h3>
-            <div class="pl-stat-count" style="color:#f97316;">${Utils.formatCurrency(cogsVal)}</div>
-            <div class="pl-stat-trend">
-              <span class="pl-badge ${isCogsComplete ? 'pl-badge-success' : 'pl-badge-warning'}" style="font-size:10px; padding:2px 6px;">
-                <i class="fas ${isCogsComplete ? 'fa-check' : 'fa-exclamation-triangle'}"></i> ${isCogsComplete ? 'VERIFIED' : 'INCOMPLETE COST DATA'}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <!-- 3. Operating Expenses -->
-        <div class="pl-stat-card">
-          <div class="pl-stat-icon red"><i class="fas fa-file-invoice-dollar"></i></div>
-          <div class="pl-stat-info">
-            <h3>Operating Expenses</h3>
-            <div class="pl-stat-count" style="color:#ef4444;">${Utils.formatCurrency(operatingExpensesVal)}</div>
-            <div class="pl-stat-trend" style="color:var(--text-muted);"><i class="fas fa-list"></i> Across ${(tables.expenses || []).length} recorded expense(s)</div>
-          </div>
-        </div>
-
-        <!-- 4. Net Operating Profit / Loss -->
-        <div class="pl-stat-card">
-          <div class="pl-stat-icon ${isProfitable ? 'green' : 'red'}">
-            <i class="fas ${isProfitable ? 'fa-chart-line' : 'fa-chart-line-down'}"></i>
-          </div>
-          <div class="pl-stat-info">
-            <h3>Net Operating Profit</h3>
-            <div class="pl-stat-count" style="color:${isProfitable ? '#10b981' : '#ef4444'};">${Utils.formatCurrency(netProfitVal)}</div>
-            <div class="pl-stat-trend" style="color:${isProfitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${Utils.escapeHtml(profitMarginDisplay)} margin</div>
-          </div>
-        </div>
-
-        <!-- 5. Cash Collections -->
-        <div class="pl-stat-card">
-          <div class="pl-stat-icon green"><i class="fas fa-money-bill-wave"></i></div>
-          <div class="pl-stat-info">
-            <h3>Cash Collections</h3>
-            <div class="pl-stat-count" style="color:#10b981;">${Utils.formatCurrency(cashCollectionsVal)}</div>
-            <div class="pl-stat-trend" style="color:var(--text-muted);"><i class="fas fa-cash-register"></i> Physical drawer cash collected</div>
-          </div>
-        </div>
-
-        <!-- 6. Inventory Stock Valuation (Total Valuation) -->
-        <div class="pl-stat-card" style="cursor:pointer;" onclick="switchPlTab('inventory')" title="Click to view full inventory stock valuation breakdown">
-          <div class="pl-stat-icon cyan"><i class="fas fa-boxes-stacked"></i></div>
-          <div class="pl-stat-info">
-            <h3>Total Inventory Valuation</h3>
-            <div class="pl-stat-count" style="color:#06b6d4;">${Utils.formatCurrency(inventoryValuationVal)}</div>
-            <div class="pl-stat-trend" style="color:#06b6d4;"><i class="fas fa-tags"></i> ${Utils.escapeHtml(inv.total_items_count || 0)} items at cost (View Details <i class="fas fa-arrow-right" style="font-size:10px;"></i>)</div>
-          </div>
-        </div>
-      </div>
-      ` : `
-      <!-- 4 KPI Summary Cards for Manager (Preserved Exactly) -->
-      <div class="pl-stats-grid fade-up delay-1">
-        <div class="pl-stat-card">
-          <div class="pl-stat-icon gold"><i class="fas fa-coins"></i></div>
-          <div class="pl-stat-info">
-            <h3>Total Orders Revenue</h3>
-            <div class="pl-stat-count" style="color:#c9a227;">${Utils.formatCurrency(rev.total_orders_revenue || 0)}</div>
-            <div class="pl-stat-trend" style="color:${(rev.total_orders_revenue || 0) > 0 ? 'var(--success, #10b981)' : '#f59e0b'};">
-              <i class="fas ${(rev.total_orders_revenue || 0) > 0 ? 'fa-vault' : 'fa-clock'}"></i>
-              ${(rev.total_orders_revenue || 0) > 0 ? Utils.escapeHtml((rev.transferred_orders_count || 0)) + ' transferred order(s) saved' : 'Awaiting manager transfer to income'}
-            </div>
-          </div>
-        </div>
-
-        <div class="pl-stat-card">
-          <div class="pl-stat-icon ${isProfitable ? 'green' : 'red'}">
-            <i class="fas ${isProfitable ? 'fa-chart-line' : 'fa-chart-line-down'}"></i>
-          </div>
-          <div class="pl-stat-info">
-            <h3>Net Operating Profit</h3>
-            <div class="pl-stat-count" style="color:${isProfitable ? '#10b981' : '#ef4444'};">${Utils.formatCurrency(netProfitVal)}</div>
-            <div class="pl-stat-trend" style="color:${isProfitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${Utils.escapeHtml(profitMarginDisplay)} profit margin</div>
-          </div>
-        </div>
-
-        <div class="pl-stat-card">
-          <div class="pl-stat-icon green"><i class="fas ${isAdmin ? 'fa-inbox' : 'fa-vault'}"></i></div>
-          <div class="pl-stat-info">
-            <h3>${isAdmin ? 'Income Received from Manager' : 'Manager Safe Income'}</h3>
-            <div class="pl-stat-count" style="color:#10b981;">${Utils.formatCurrency(isAdmin ? adminIncomingTransfersVal : managerSafeBalanceVal)}</div>
-            <div class="pl-stat-trend" style="color:#10b981;"><i class="fas ${isAdmin ? 'fa-shield-halved' : 'fa-vault'}"></i> ${isAdmin ? 'Secured in admin safe' : 'Manager safe balance (after transfers to Admin)'}</div>
-          </div>
-        </div>
-
-        <div class="pl-stat-card" style="cursor:pointer;" onclick="switchPlTab('inventory')" title="Click to view full inventory stock valuation breakdown">
-          <div class="pl-stat-icon purple"><i class="fas fa-boxes-stacked"></i></div>
-          <div class="pl-stat-info">
-            <h3>Total Inventory Valuation</h3>
-            <div class="pl-stat-count" style="color:#6366f1;">${Utils.formatCurrency(inventoryValuationVal)}</div>
-            <div class="pl-stat-trend" style="color:#6366f1;"><i class="fas fa-tags"></i> Total Valuation across ${Utils.escapeHtml(inv.total_items_count || 0)} items (View Details <i class="fas fa-arrow-right" style="font-size:10px;"></i>)</div>
-          </div>
-        </div>
-      </div>
-      `}
-
-      <!-- Dual Analysis Statements -->
-      <div class="pl-dual-grid fade-up delay-2">
-        <!-- P&L Statement Card (Left Panel) -->
-        <div class="pl-card">
-          <div class="pl-card-header">
-            <div class="pl-card-header-left">
-              <h2><i class="fas fa-file-invoice-dollar" style="color:#10b981;"></i> Profit & Loss Statement (P&L)</h2>
-              <span>Real-time revenue versus total valuation of inventory</span>
-            </div>
-            <span class="pl-badge ${isProfitable ? 'pl-badge-success' : 'pl-badge-danger'}">
-              <i class="fas ${isProfitable ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down'}"></i>
-              ${isProfitable ? 'PROFITABLE' : 'OPERATING LOSS'}
-            </span>
-          </div>
-
-          <div class="pl-card-body">
-            <!-- Total Orders Revenue -->
-            <div class="pl-row">
-              <span class="pl-row-label">
-                <i class="fas fa-plus" style="color:#10b981; font-size:11px;"></i> Total Orders Revenue:
-              </span>
-              <strong class="pl-row-value" style="color:#10b981;">+${Utils.formatCurrency(rev.total_orders_revenue || 0)}</strong>
-            </div>
-
-            <!-- Subrow: Cash Sales -->
-            <div class="pl-sub-row">
-              <span>↳ Cash Sales (Drawer):</span>
-              <span class="pl-row-value" style="color:var(--text-main);">${Utils.formatCurrency(rev.cash_sales || 0)}</span>
-            </div>
-
-            <!-- Subrow: Non-Cash Sales -->
-            <div class="pl-sub-row">
-              <span>↳ Non-Cash Sales (GCash / Card):</span>
-              <span class="pl-row-value" style="color:var(--text-main);">${Utils.formatCurrency(rev.non_cash_sales || 0)}</span>
-            </div>
-
-            <!-- Inventory Total Valuation -->
-            <div class="pl-row" style="cursor:pointer;" onclick="switchPlTab('inventory')" title="Click to view itemized inventory stock valuation ledger">
-              <span class="pl-row-label">
-                <i class="fas fa-minus" style="color:#ef4444; font-size:11px;"></i> Inventory Total Valuation:
-              </span>
-              <strong class="pl-row-value" style="color:#ef4444;">-${Utils.formatCurrency(inventoryValuationVal)}</strong>
-            </div>
-
-            <!-- Subrow: Inventory Items Count -->
-            <div class="pl-sub-row" style="cursor:pointer;" onclick="switchPlTab('inventory')">
-              <span>↳ Across ${Utils.escapeHtml(inv.total_items_count || 0)} inventory item(s) at unit price:</span>
-              <span class="pl-row-value" style="color:#06b6d4; font-weight:600;">View Stock Valuation →</span>
-            </div>
-
-            <!-- Net Operating Profit / Loss Highlight Box -->
-            <div class="pl-highlight-box ${isProfitable ? 'green' : 'red'}">
-              <span class="pl-highlight-label">
-                <i class="fas ${isProfitable ? 'fa-chart-pie' : 'fa-triangle-exclamation'}" style="color:${isProfitable ? '#10b981' : '#ef4444'};"></i>
-                NET OPERATING PROFIT / LOSS:
-              </span>
-              <span class="pl-highlight-value" style="color:${isProfitable ? '#10b981' : '#ef4444'};">
-                ${Utils.formatCurrency(netProfitVal)}
-              </span>
-            </div>
-          </div>
-
-          <div class="pl-card-footer">
-            <span>Profit Margin: <strong>${Utils.escapeHtml(profitMarginDisplay)}</strong></span>
-            <span>Today's Sales Revenue: <strong>${Utils.formatCurrency(rev.today_orders_revenue || 0)}</strong></span>
-          </div>
-        </div>
-
-        <!-- Safe Custody & Cashout Card (Right Panel) -->
-        <div class="pl-card">
-          <div class="pl-card-header">
-            <div class="pl-card-header-left">
-              <h2><i class="fas ${isAdmin ? 'fa-inbox' : 'fa-vault'}" style="color:#10b981;"></i> ${isAdmin ? 'Income Received from Manager' : 'Manager Safe Income'}</h2>
-              <span>${isAdmin ? 'Internal remittances received from store managers secured in admin safe' : 'Manager safe balance from cashier drawer transfers vs active cashier drawer float'}</span>
-            </div>
-            <span class="pl-badge pl-badge-success">
-              <i class="fas ${isAdmin ? 'fa-shield-halved' : 'fa-vault'}"></i> ${isAdmin ? 'ADMIN SAFE' : 'STORE SAFE'}
-            </span>
-          </div>
-
-          <div class="pl-card-body">
-            <!-- Total Transfer Income -->
-            <div class="pl-row">
-              <span class="pl-row-label">
-                <i class="fas ${isAdmin ? 'fa-inbox' : 'fa-vault'}" style="color:#10b981; font-size:12px;"></i>
-                ${isAdmin ? 'Total Income Received from Manager:' : 'Total Manager Safe Income:'}
-              </span>
-              <strong class="pl-row-value" style="color:#10b981;">${Utils.formatCurrency(isAdmin ? adminIncomingTransfersVal : managerSafeBalanceVal)}</strong>
-            </div>
-
-            <div class="pl-sub-row">
-              <span>↳ ${isAdmin ? "Today's Transfer Remittance:" : "Today's Cashier Transfers into Safe:"}</span>
-              <span class="pl-row-value" style="color:var(--text-main);">${Utils.formatCurrency(isAdmin ? (csh.today_transferred_to_admin || 0) : (csh.today_cashout_income || 0))}</span>
-            </div>
-
-            ${!isAdmin && (csh.total_transferred_to_admin || 0) > 0 ? `
-              <div class="pl-sub-row" style="color:#ef4444;">
-                <span>↳ Transferred to Admin:</span>
-                <strong class="pl-row-value" style="color:#ef4444;">-${Utils.formatCurrency(csh.total_transferred_to_admin || 0)}</strong>
-              </div>
-            ` : ''}
-
-            <!-- Active Cash Balance in Cashier Drawers -->
-            <div class="pl-row">
-              <span class="pl-row-label">
-                <i class="fas fa-cash-register" style="color:#c9a227; font-size:12px;"></i> Active Cash in Cashier Drawers:
-              </span>
-              <strong class="pl-row-value" style="color:#c9a227;">${Utils.formatCurrency(activeDrawerCashVal)}</strong>
-            </div>
-
-            <!-- Non-Cash Collections -->
-            <div class="pl-row">
-              <span class="pl-row-label">
-                <i class="fas fa-mobile-screen" style="color:#6366f1; font-size:12px;"></i> Digital Collections (GCash / Maya / Card):
-              </span>
-              <strong class="pl-row-value" style="color:#6366f1;">${Utils.formatCurrency(digitalCollectionsVal)}</strong>
-            </div>
-
-            <!-- Net Realized Cash Highlight Box -->
-            <div class="pl-highlight-box green">
-              <span class="pl-highlight-label">
-                <i class="fas fa-sack-dollar" style="color:#10b981;"></i>
-                TOTAL REALIZED COLLECTIONS & TRANSFERS:
-              </span>
-              <span class="pl-highlight-value" style="color:#10b981;">
-                ${Utils.formatCurrency(isAdmin ? (pl.admin_net_cash_income || 0) : (pl.manager_net_cash_income || 0))}
-              </span>
-            </div>
-
-            ${!isAdmin ? `
-            <div class="pl-action-container" style="margin-top:auto; padding-top:12px;">
-              <button class="pl-transfer-btn" onclick="openAddCashMovementModal(null, 'admin')">
-                <i class="fas fa-paper-plane"></i> Transfer to Admin
-              </button>
-            </div>
-            ` : ''}
-          </div>
-        </div>
-      </div>
-
-      <!-- Tabbed Audit & Traceability Tables Section -->
-      <div class="pl-card fade-up delay-3">
-        <div class="pl-card-header">
-          <div class="pl-card-header-left">
-            <h2><i class="fas fa-list-check" style="color:#10b981;"></i> Traceable Financial Ledgers & Audits</h2>
-            <span>Every summary metric is verified and directly traceable to persisted records</span>
-          </div>
-          ${isAdmin ? `
-          <button class="btn btn-outline btn-sm" onclick="openAddExpenseModal()" style="font-size:11.5px; padding:4px 12px; border-radius:8px;">
+        <div class="fin-header-actions">
+          ${canManageExpenses ? `
+          <button class="fin-btn fin-btn-gold" onclick="openAddExpenseModal()" title="Record a new operational expense">
             <i class="fas fa-plus"></i> New Expense
           </button>
           ` : ''}
+          <button class="fin-btn fin-btn-outline" onclick="exportFinancialReportCsv()" title="Export consolidated report to CSV">
+            <i class="fas fa-file-excel" style="color:#10b981;"></i> Export CSV
+          </button>
+          <button class="fin-btn fin-btn-outline" onclick="openFinancialPrintPreviewModal()" title="Print financial statement">
+            <i class="fas fa-print"></i> Print
+          </button>
+        </div>
+      </div>
+
+      <!-- 2. Date Filter Bar -->
+      <div class="fin-filter-bar">
+        <div class="fin-filter-pills">
+          <span style="font-size:12px; font-weight:800; text-transform:uppercase; color:var(--text-muted); margin-right:6px;">
+            <i class="fas fa-calendar-alt"></i> Period:
+          </span>
+          <button class="fin-pill ${activePeriod === 'today' ? 'active' : ''}" onclick="renderProfitLoss(null, 'today')">Today</button>
+          <button class="fin-pill ${activePeriod === 'yesterday' ? 'active' : ''}" onclick="renderProfitLoss(null, 'yesterday')">Yesterday</button>
+          <button class="fin-pill ${activePeriod === 'this_week' ? 'active' : ''}" onclick="renderProfitLoss(null, 'this_week')">This Week</button>
+          <button class="fin-pill ${activePeriod === 'this_month' ? 'active' : ''}" onclick="renderProfitLoss(null, 'this_month')">This Month</button>
+          <button class="fin-pill ${activePeriod === 'all' ? 'active' : ''}" onclick="renderProfitLoss(null, 'all')">All Time</button>
+          <button class="fin-pill ${activePeriod === 'custom' ? 'active' : ''}" onclick="toggleCustomRangeInputs()">Custom</button>
         </div>
 
-        <div style="padding:14px 20px 0 20px;">
-          <div class="pl-tabs-container">
-            <button class="pl-tab-btn ${window._currentPlTab === 'orders' ? 'active' : ''}" onclick="switchPlTab('orders')">
-              <i class="fas fa-receipt"></i> Completed Orders (${(tables.sales_orders || []).length})
-            </button>
-            <button class="pl-tab-btn ${window._currentPlTab === 'expenses' ? 'active' : ''}" onclick="switchPlTab('expenses')">
-              <i class="fas fa-file-invoice-dollar"></i> Operating Expenses (${(tables.expenses || []).length})
-            </button>
-            <button class="pl-tab-btn ${window._currentPlTab === 'transfers' ? 'active' : ''}" onclick="switchPlTab('transfers')">
-              <i class="fas ${isAdmin ? 'fa-inbox' : 'fa-paper-plane'}"></i> ${isAdmin ? 'Incoming Transfers' : 'Transfer Ledger'} (${Utils.escapeHtml(history.length)})
-            </button>
-            <button class="pl-tab-btn ${window._currentPlTab === 'inventory' ? 'active' : ''}" onclick="switchPlTab('inventory')">
-              <i class="fas fa-boxes-stacked"></i> Stock Valuation (${Utils.escapeHtml(inv.total_items_count || 0)})
-            </button>
-            <button class="pl-tab-btn ${window._currentPlTab === 'reconciliation' ? 'active' : ''}" onclick="switchPlTab('reconciliation')">
-              <i class="fas fa-scale-balanced"></i> Reconciliation Audit (${recon.checks ? recon.checks.length : 0})
-            </button>
+        <div id="fin-custom-inputs" class="fin-custom-range" style="display:${activePeriod === 'custom' ? 'flex' : 'none'};">
+          <input type="date" id="fin-start-date" value="${startDate ? startDate.substring(0, 10) : ''}">
+          <span style="font-size:12px; color:var(--text-muted);">to</span>
+          <input type="date" id="fin-end-date" value="${endDate ? endDate.substring(0, 10) : ''}">
+          <button class="fin-btn fin-btn-outline" onclick="const s = document.getElementById('fin-start-date').value; const e = document.getElementById('fin-end-date').value; renderProfitLoss(null, 'custom', s, e);" style="height:32px; padding:0 12px; font-size:12px;">Apply</button>
+        </div>
+      </div>
+
+      <!-- 3. Navigation Tabs -->
+      <div class="fin-nav-tabs">
+        <button class="fin-nav-tab ${currentTab === 'overview' ? 'active' : ''}" onclick="switchFinTab('overview')">
+          <i class="fas fa-chart-pie"></i> Financial Overview
+        </button>
+        <button class="fin-nav-tab ${currentTab === 'profit_loss' ? 'active' : ''}" onclick="switchFinTab('profit_loss')">
+          <i class="fas fa-file-invoice"></i> Profit &amp; Loss Statement
+        </button>
+        <button class="fin-nav-tab ${currentTab === 'expenses' ? 'active' : ''}" onclick="switchFinTab('expenses')">
+          <i class="fas fa-receipt"></i> Expenses Management (${(tables.expenses || []).length})
+        </button>
+        <button class="fin-nav-tab ${currentTab === 'cash_custody' ? 'active' : ''}" onclick="switchFinTab('cash_custody')">
+          <i class="fas fa-vault"></i> Cash Custody &amp; Safes
+        </button>
+        <button class="fin-nav-tab ${currentTab === 'inventory_valuation' ? 'active' : ''}" onclick="switchFinTab('inventory_valuation')">
+          <i class="fas fa-boxes-stacked"></i> Inventory Asset Valuation
+        </button>
+        <button class="fin-nav-tab ${currentTab === 'transactions' ? 'active' : ''}" onclick="switchFinTab('transactions')">
+          <i class="fas fa-list-check"></i> Transactions Ledger (${(tables.sales_orders || []).length})
+        </button>
+        <button class="fin-nav-tab ${currentTab === 'reconciliation' ? 'active' : ''}" onclick="switchFinTab('reconciliation')">
+          <i class="fas fa-scale-balanced"></i> Reconciliation Audit (${checks.length})
+        </button>
+        <button class="fin-nav-tab ${currentTab === 'reports' ? 'active' : ''}" onclick="switchFinTab('reports')">
+          <i class="fas fa-chart-line"></i> Financial Reports
+        </button>
+      </div>
+
+      <!-- TAB 1: FINANCIAL OVERVIEW (8 KPI Cards) -->
+      <div id="fin-tab-overview" style="display:${currentTab === 'overview' ? 'block' : 'none'};">
+        <div class="fin-kpi-grid">
+          <!-- 1. Gross Sales -->
+          <div class="fin-stat-card" onclick="switchFinTab('transactions')" title="Click to view all completed sales transactions">
+            <div class="fin-stat-icon gold"><i class="fas fa-coins"></i></div>
+            <div class="fin-stat-info">
+              <h3>1. Gross Sales</h3>
+              <div class="fin-stat-count" style="color:#c9a227;">${Utils.formatCurrency(grossSalesVal)}</div>
+              <div class="fin-stat-trend"><i class="fas fa-receipt"></i> ${(rev.total_orders_count || 0)} completed order(s)</div>
+            </div>
+          </div>
+
+          <!-- 2. Net Sales -->
+          <div class="fin-stat-card" onclick="switchFinTab('transactions')" title="Click to view transactions ledger">
+            <div class="fin-stat-icon gold"><i class="fas fa-calculator"></i></div>
+            <div class="fin-stat-info">
+              <h3>2. Net Sales</h3>
+              <div class="fin-stat-count" style="color:#c9a227;">${Utils.formatCurrency(netSalesVal)}</div>
+              <div class="fin-stat-trend">Disc: -${Utils.formatCurrency(discountsVal)} | Ref: -${Utils.formatCurrency(refundsVal)}</div>
+            </div>
+          </div>
+
+          <!-- 3. Total COGS -->
+          <div class="fin-stat-card" onclick="switchFinTab('inventory_valuation')" title="Click to view recipe-based ingredient costs">
+            <div class="fin-stat-icon orange"><i class="fas fa-utensils"></i></div>
+            <div class="fin-stat-info">
+              <h3>3. Cost of Goods Sold</h3>
+              <div class="fin-stat-count" style="color:#f97316;">${Utils.formatCurrency(cogsVal)}</div>
+              <div class="fin-stat-trend">
+                <span class="fin-badge ${isCogsComplete ? 'fin-badge-green' : 'fin-badge-orange'}" style="font-size:10px; padding:2px 6px;">
+                  <i class="fas ${isCogsComplete ? 'fa-check' : 'fa-triangle-exclamation'}"></i> ${isCogsComplete ? 'VERIFIED' : 'PARTIAL DATA'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. Gross Profit -->
+          <div class="fin-stat-card" onclick="switchFinTab('profit_loss')" title="Click to view Profit & Loss statement">
+            <div class="fin-stat-icon ${grossProfitVal >= 0 ? 'green' : 'red'}">
+              <i class="fas ${grossProfitVal >= 0 ? 'fa-chart-line' : 'fa-chart-line-down'}"></i>
+            </div>
+            <div class="fin-stat-info">
+              <h3>4. Gross Profit</h3>
+              <div class="fin-stat-count" style="color:${grossProfitVal >= 0 ? '#10b981' : '#ef4444'};">${Utils.formatCurrency(grossProfitVal)}</div>
+              <div class="fin-stat-trend">Net Sales − Recipe COGS</div>
+            </div>
+          </div>
+
+          <!-- 5. Operating Expenses -->
+          <div class="fin-stat-card" onclick="switchFinTab('expenses')" title="Click to manage operating expenses">
+            <div class="fin-stat-icon red"><i class="fas fa-file-invoice-dollar"></i></div>
+            <div class="fin-stat-info">
+              <h3>5. Operating Expenses</h3>
+              <div class="fin-stat-count" style="color:#ef4444;">${Utils.formatCurrency(operatingExpensesVal)}</div>
+              <div class="fin-stat-trend"><i class="fas fa-list"></i> Across ${(tables.expenses || []).length} paid expense(s)</div>
+            </div>
+          </div>
+
+          <!-- 6. Net Operating Profit -->
+          <div class="fin-stat-card" onclick="switchFinTab('profit_loss')" title="Click to view full Profit & Loss statement">
+            <div class="fin-stat-icon ${isProfitable ? 'green' : 'red'}">
+              <i class="fas ${isProfitable ? 'fa-sack-dollar' : 'fa-arrow-trend-down'}"></i>
+            </div>
+            <div class="fin-stat-info">
+              <h3>6. Net Operating Profit</h3>
+              <div class="fin-stat-count" style="color:${isProfitable ? '#10b981' : '#ef4444'};">${Utils.formatCurrency(netProfitVal)}</div>
+              <div class="fin-stat-trend" style="color:${isProfitable ? '#10b981' : '#ef4444'};"><i class="fas fa-percent"></i> ${Utils.escapeHtml(profitMarginDisplay)} profit margin</div>
+            </div>
+          </div>
+
+          <!-- 7. Cash Collections -->
+          <div class="fin-stat-card" onclick="switchFinTab('cash_custody')" title="Click to view physical drawer and safe custody">
+            <div class="fin-stat-icon green"><i class="fas fa-money-bill-wave"></i></div>
+            <div class="fin-stat-info">
+              <h3>7. Cash Collections</h3>
+              <div class="fin-stat-count" style="color:#10b981;">${Utils.formatCurrency(cashCollectionsVal)}</div>
+              <div class="fin-stat-trend"><i class="fas fa-mobile-screen"></i> Digital: ${Utils.formatCurrency(digitalCollectionsVal)}</div>
+            </div>
+          </div>
+
+          <!-- 8. Inventory Valuation -->
+          <div class="fin-stat-card" onclick="switchFinTab('inventory_valuation')" title="Click to view balance sheet stock asset valuation">
+            <div class="fin-stat-icon cyan"><i class="fas fa-boxes-stacked"></i></div>
+            <div class="fin-stat-info">
+              <h3>8. Inventory Valuation</h3>
+              <div class="fin-stat-count" style="color:#06b6d4;">${Utils.formatCurrency(inventoryValuationVal)}</div>
+              <div class="fin-stat-trend" style="color:#06b6d4;"><i class="fas fa-tags"></i> ${Utils.escapeHtml(inv.total_items_count || 0)} items on hand (Asset)</div>
+            </div>
           </div>
         </div>
 
-        <!-- Tab 1: Orders -->
-        <div id="pl-tab-orders" class="pl-table-wrap" style="display:${window._currentPlTab === 'orders' ? 'block' : 'none'};">
-          <table class="pl-table">
-            <thead>
-              <tr>
-                <th>Order Ref</th>
-                <th>Timestamp</th>
-                <th>Cashier / Staff</th>
-                <th>Gross Total</th>
-                <th>Discount</th>
-                <th>Net Total</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${(tables.sales_orders && tables.sales_orders.length > 0) ? tables.sales_orders.map(o => `
+        <!-- Quick Summary Visual Comparison Bar -->
+        <div class="fin-statement-box">
+          <div class="fin-stmt-title">
+            <span><i class="fas fa-chart-column" style="color:#c9a227;"></i> Revenue &amp; Cost Distribution Breakdown</span>
+            <span style="font-size:12px; font-weight:600; text-transform:none; color:var(--text-muted);">Period: ${Utils.escapeHtml(periodInfo.name || 'Selected')}</span>
+          </div>
+          <div style="margin: 16px 0;">
+            <div style="display:flex; justify-content:space-between; font-size:12.5px; font-weight:700; margin-bottom:8px; flex-wrap:wrap; gap:8px;">
+              <span>Net Sales (100%): ${Utils.formatCurrency(netSalesVal)}</span>
+              <span>COGS (${netSalesVal > 0 ? ((cogsVal / netSalesVal) * 100).toFixed(1) : 0}%): ${Utils.formatCurrency(cogsVal)}</span>
+              <span>Expenses (${netSalesVal > 0 ? ((operatingExpensesVal / netSalesVal) * 100).toFixed(1) : 0}%): ${Utils.formatCurrency(operatingExpensesVal)}</span>
+              <span style="color:${isProfitable ? '#10b981' : '#ef4444'};">Net Profit: ${Utils.formatCurrency(netProfitVal)}</span>
+            </div>
+            <div style="height:18px; border-radius:999px; background:#e2e8f0; overflow:hidden; display:flex;">
+              <div style="background:#f97316; width:${netSalesVal > 0 ? Math.min(100, (cogsVal / netSalesVal) * 100) : 0}%;" title="COGS: ${Utils.formatCurrency(cogsVal)}"></div>
+              <div style="background:#ef4444; width:${netSalesVal > 0 ? Math.min(100, (operatingExpensesVal / netSalesVal) * 100) : 0}%;" title="Operating Expenses: ${Utils.formatCurrency(operatingExpensesVal)}"></div>
+              <div style="background:#10b981; width:${netSalesVal > 0 && netProfitVal > 0 ? Math.min(100, (netProfitVal / netSalesVal) * 100) : 0}%;" title="Net Operating Profit: ${Utils.formatCurrency(netProfitVal)}"></div>
+            </div>
+          </div>
+          <div style="display:flex; gap:18px; flex-wrap:wrap; font-size:12px; color:var(--text-muted); margin-top:12px;">
+            <span><i class="fas fa-square" style="color:#f97316;"></i> Cost of Goods Sold (COGS)</span>
+            <span><i class="fas fa-square" style="color:#ef4444;"></i> Operating Expenses</span>
+            <span><i class="fas fa-square" style="color:#10b981;"></i> Net Operating Profit</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 2: PROFIT & LOSS STATEMENT (Accounting Standard Layout) -->
+      <div id="fin-tab-profit_loss" style="display:${currentTab === 'profit_loss' ? 'block' : 'none'};">
+        <div class="fin-statement-box">
+          <div class="fin-stmt-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+            <div>
+              <span><i class="fas fa-file-invoice" style="color:#c9a227;"></i> GBLESS TRADING OPC — STATEMENT OF PROFIT &amp; LOSS</span>
+              <div style="font-size:12px; font-weight:600; text-transform:none; color:var(--text-muted); margin-top:2px;">Reporting Period: ${Utils.escapeHtml(periodInfo.name || 'All Time')}</div>
+            </div>
+            <button class="fin-btn fin-btn-outline" onclick="openFinancialPrintPreviewModal()" style="font-size:12px; padding:6px 14px;">
+              <i class="fas fa-eye"></i> Print Preview
+            </button>
+          </div>
+
+          <!-- Section A: REVENUE -->
+          <div class="fin-stmt-section">
+            <div class="fin-stmt-title" style="font-size:12px; border-bottom:1px solid rgba(205,190,150,0.3); color:#c9a227;">
+              <span>I. REVENUE</span>
+            </div>
+            <div class="fin-stmt-row">
+              <span>Gross Sales (POS Orders)</span>
+              <strong>${Utils.formatCurrency(grossSalesVal)}</strong>
+            </div>
+            <div class="fin-stmt-row sub">
+              <span>Less: Sales Discounts</span>
+              <span style="color:#ef4444;">-${Utils.formatCurrency(discountsVal)}</span>
+            </div>
+            <div class="fin-stmt-row sub">
+              <span>Less: Sales Refunds &amp; Returns</span>
+              <span style="color:#ef4444;">-${Utils.formatCurrency(refundsVal)}</span>
+            </div>
+            <div class="fin-stmt-row total">
+              <span style="color:#c9a227;">NET SALES REVENUE</span>
+              <strong style="color:#c9a227; font-size:15px;">${Utils.formatCurrency(netSalesVal)}</strong>
+            </div>
+          </div>
+
+          <!-- Section B: COST OF SALES -->
+          <div class="fin-stmt-section">
+            <div class="fin-stmt-title" style="font-size:12px; border-bottom:1px solid rgba(205,190,150,0.3); color:#f97316;">
+              <span>II. COST OF GOODS SOLD (COGS)</span>
+            </div>
+            <div class="fin-stmt-row">
+              <span>Recipe Ingredient &amp; Product Costs Consumed</span>
+              <span>${Utils.formatCurrency(cogsVal)}</span>
+            </div>
+            <div class="fin-stmt-row total">
+              <span style="color:#f97316;">TOTAL COST OF GOODS SOLD</span>
+              <strong style="color:#f97316; font-size:15px;">${Utils.formatCurrency(cogsVal)}</strong>
+            </div>
+          </div>
+
+          <!-- Section C: GROSS PROFIT -->
+          <div class="fin-stmt-highlight green" style="background:${grossProfitVal >= 0 ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)'};">
+            <span style="font-weight:800; font-size:13.5px; text-transform:uppercase; color:${grossProfitVal >= 0 ? '#10b981' : '#ef4444'};">
+              <i class="fas fa-coins"></i> GROSS PROFIT (Net Sales − COGS):
+            </span>
+            <strong style="font-size:17px; color:${grossProfitVal >= 0 ? '#10b981' : '#ef4444'};">
+              ${Utils.formatCurrency(grossProfitVal)}
+            </strong>
+          </div>
+
+          <!-- Section D: OPERATING EXPENSES -->
+          <div class="fin-stmt-section">
+            <div class="fin-stmt-title" style="font-size:12px; border-bottom:1px solid rgba(205,190,150,0.3); color:#ef4444;">
+              <span>III. OPERATING EXPENSES</span>
+            </div>
+            ${Object.keys(expData.by_category || {}).length > 0 ? Object.entries(expData.by_category).map(([cat, amt]) => `
+              <div class="fin-stmt-row sub">
+                <span>${Utils.escapeHtml(cat)}</span>
+                <span>${Utils.formatCurrency(amt)}</span>
+              </div>
+            `).join('') : `
+              <div class="fin-stmt-row sub">
+                <span style="font-style:italic;">No operational expenses recorded in selected period</span>
+                <span>₱0.00</span>
+              </div>
+            `}
+            <div class="fin-stmt-row total">
+              <span style="color:#ef4444;">TOTAL OPERATING EXPENSES</span>
+              <strong style="color:#ef4444; font-size:15px;">${Utils.formatCurrency(operatingExpensesVal)}</strong>
+            </div>
+          </div>
+
+          <!-- Section E: NET OPERATING PROFIT -->
+          <div class="fin-stmt-highlight ${isProfitable ? 'green' : 'red'}" style="margin-top:18px; padding:18px 22px;">
+            <div>
+              <span style="font-weight:900; font-size:15px; text-transform:uppercase; color:${isProfitable ? '#10b981' : '#ef4444'};">
+                <i class="fas ${isProfitable ? 'fa-award' : 'fa-circle-exclamation'}"></i> NET OPERATING PROFIT / LOSS:
+              </span>
+              <div style="font-size:12px; color:var(--text-muted); margin-top:3px;">Gross Profit minus Operating Expenses | Operating Margin: <strong>${Utils.escapeHtml(profitMarginDisplay)}</strong></div>
+            </div>
+            <strong style="font-size:22px; color:${isProfitable ? '#10b981' : '#ef4444'};">
+              ${Utils.formatCurrency(netProfitVal)}
+            </strong>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 3: EXPENSES MANAGEMENT -->
+      <div id="fin-tab-expenses" style="display:${currentTab === 'expenses' ? 'block' : 'none'};">
+        <div class="fin-statement-box">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+            <div class="fin-stmt-title" style="margin-bottom:0; border-bottom:none; padding-bottom:0;">
+              <span><i class="fas fa-receipt" style="color:#ef4444;"></i> Operational Business Expenses</span>
+            </div>
+            ${canManageExpenses ? `
+            <button class="fin-btn fin-btn-gold" onclick="openAddExpenseModal()" title="Record a new expense">
+              <i class="fas fa-plus"></i> Record Expense
+            </button>
+            ` : ''}
+          </div>
+
+          <!-- Expense filters -->
+          <div style="display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; align-items:center;">
+            <select id="fin-exp-status-filter" class="input-field" onchange="filterExpensesTable()" style="max-width:180px; height:36px;">
+              <option value="all">All Statuses</option>
+              <option value="paid">Paid</option>
+              <option value="pending">Pending Approval</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+              <option value="voided">Voided</option>
+            </select>
+            <input type="text" id="fin-exp-search" class="input-field" placeholder="Search expenses by category, vendor, title..." onkeyup="filterExpensesTable()" style="max-width:280px; height:36px;">
+            <span id="fin-exp-count-badge" class="fin-badge fin-badge-gray" style="margin-left:auto;">
+              ${(tables.expenses || []).length} expense(s)
+            </span>
+          </div>
+
+          <div class="fin-table-wrap">
+            <table class="fin-table" id="fin-expenses-table">
+              <thead>
                 <tr>
-                  <td><strong style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(o.order_code)}</strong></td>
-                  <td style="color:var(--text-muted); font-size:12px;">${o.created_at ? new Date(o.created_at).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'}</td>
-                  <td>${Utils.escapeHtml(o.cashier)}</td>
-                  <td style="color:var(--text-main); font-weight:600;">${Utils.formatCurrency(o.gross_amount)}</td>
-                  <td style="color:#ef4444;">${o.discount_amount > 0 ? '-' + Utils.formatCurrency(o.discount_amount) : '₱0.00'}</td>
-                  <td><strong style="color:#10b981; font-weight:800;">${Utils.formatCurrency(o.net_amount)}</strong></td>
-                  <td><span class="pl-badge pl-badge-success">${o.status.toUpperCase()}</span></td>
+                  <th>ID</th>
+                  <th>Date</th>
+                  <th>Category</th>
+                  <th>Title / Description</th>
+                  <th>Vendor</th>
+                  <th>Amount</th>
+                  <th>Method / Source</th>
+                  <th>Status</th>
+                  <th>Recorded By</th>
+                  ${canManageExpenses ? '<th style="text-align:right;">Actions</th>' : ''}
                 </tr>
-              `).join('') : `
-                <tr><td colspan="7" class="text-center" style="padding:30px; color:var(--text-muted);">No completed orders recorded in this date period.</td></tr>
-              `}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                ${(tables.expenses || []).length > 0 ? tables.expenses.map(e => `
+                  <tr data-status="${e.status || 'paid'}" data-text="${(e.category + ' ' + (e.title || '') + ' ' + e.description + ' ' + (e.vendor || '')).toLowerCase()}">
+                    <td>#${e.id}</td>
+                    <td>${e.expense_date ? new Date(e.expense_date).toLocaleDateString('en-PH', { month:'short', day:'numeric', year:'numeric' }) : '—'}</td>
+                    <td><span class="fin-badge fin-badge-gold">${Utils.escapeHtml(e.category)}</span></td>
+                    <td>
+                      <strong>${Utils.escapeHtml(e.title || e.description)}</strong>
+                      ${e.title && e.description ? `<div style="font-size:11px; color:var(--text-muted);">${Utils.escapeHtml(e.description)}</div>` : ''}
+                    </td>
+                    <td>${Utils.escapeHtml(e.vendor || '—')}</td>
+                    <td><strong style="color:#ef4444;">${Utils.formatCurrency(e.amount)}</strong></td>
+                    <td><span class="fin-badge fin-badge-gray">${Utils.escapeHtml(e.payment_method || 'Cash')} (${Utils.escapeHtml(e.payment_source || 'safe')})</span></td>
+                    <td>
+                      <span class="fin-badge ${e.status === 'paid' ? 'fin-badge-green' : (e.status === 'approved' ? 'fin-badge-blue' : (e.status === 'rejected' ? 'fin-badge-red' : (e.status === 'voided' ? 'fin-badge-gray' : 'fin-badge-orange')))}">
+                        ${Utils.escapeHtml((e.status || 'paid').toUpperCase())}
+                      </span>
+                    </td>
+                    <td>${Utils.escapeHtml(e.recorded_by || 'Staff')}</td>
+                    ${canManageExpenses ? `
+                    <td style="text-align:right; white-space:nowrap;">
+                      ${isAdmin && e.status === 'pending' ? `
+                        <button class="fin-btn fin-btn-outline" onclick="approveExpense(${e.id})" title="Approve Expense" style="height:28px; padding:0 8px; color:#10b981; border-color:#10b981;">
+                          <i class="fas fa-check"></i> Approve
+                        </button>
+                        <button class="fin-btn fin-btn-outline" onclick="rejectExpense(${e.id})" title="Reject Expense" style="height:28px; padding:0 8px; color:#ef4444; border-color:#ef4444;">
+                          <i class="fas fa-times"></i> Reject
+                        </button>
+                      ` : ''}
+                      ${isAdmin && e.status === 'approved' ? `
+                        <button class="fin-btn fin-btn-outline" onclick="markExpensePaid(${e.id})" title="Mark as Paid" style="height:28px; padding:0 8px; color:#10b981; border-color:#10b981;">
+                          <i class="fas fa-dollar-sign"></i> Mark Paid
+                        </button>
+                      ` : ''}
+                      ${e.status === 'pending' ? `
+                        <button class="fin-btn fin-btn-outline" onclick="openEditExpenseModal(${e.id})" title="Edit Expense" style="height:28px; padding:0 8px; color:#c9a227; border-color:#c9a227;">
+                          <i class="fas fa-edit"></i>
+                        </button>
+                      ` : ''}
+                      ${isAdmin && e.status !== 'voided' ? `
+                        <button class="fin-btn fin-btn-outline" onclick="voidExpense(${e.id})" title="Void Expense" style="height:28px; padding:0 8px; color:var(--text-muted);">
+                          <i class="fas fa-ban"></i>
+                        </button>
+                      ` : ''}
+                    </td>
+                    ` : ''}
+                  </tr>
+                `).join('') : `
+                  <tr><td colspan="${canManageExpenses ? 10 : 9}" style="text-align:center; padding:30px; color:var(--text-muted);">No expenses recorded in this period.</td></tr>
+                `}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 4: CASH CUSTODY & SAFES (Drawer vs Manager Safe vs Admin Safe) -->
+      <div id="fin-tab-cash_custody" style="display:${currentTab === 'cash_custody' ? 'block' : 'none'};">
+        <div class="fin-custody-grid">
+          <!-- Location 1: Cashier Drawer -->
+          <div class="fin-card">
+            <div style="padding:16px 20px; border-bottom:1px solid rgba(205,190,150,0.3); background:rgba(0,0,0,0.01); display:flex; justify-content:space-between; align-items:center;">
+              <h3 style="margin:0; font-size:15px; font-weight:800; color:#18181b; display:flex; align-items:center; gap:8px;">
+                <i class="fas fa-cash-register" style="color:#c9a227;"></i> 1. Cashier Drawer
+              </h3>
+              <span class="fin-badge fin-badge-gold">DRAWER FLOAT</span>
+            </div>
+            <div style="padding:18px 20px; flex:1; display:flex; flex-direction:column;">
+              <div style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">Active physical cash held across open cashier shifts awaiting end-of-shift drop:</div>
+              <div style="font-size:26px; font-weight:900; color:#c9a227; margin-bottom:14px; font-variant-numeric:tabular-nums;">
+                ${Utils.formatCurrency(activeDrawerCashVal)}
+              </div>
+              <div class="fin-stmt-row" style="font-size:12.5px;">
+                <span>Cash Sales in Drawer:</span>
+                <strong>${Utils.formatCurrency(cashCollectionsVal)}</strong>
+              </div>
+              <div class="fin-stmt-row" style="font-size:12.5px;">
+                <span>Digital Collections (GCash/Maya/Card):</span>
+                <strong>${Utils.formatCurrency(digitalCollectionsVal)}</strong>
+              </div>
+              <div style="margin-top:auto; padding-top:14px;">
+                <button class="fin-btn fin-btn-outline" onclick="goToCashDrawer()" style="width:100%;">
+                  <i class="fas fa-arrow-right"></i> Open Cash Drawer Details
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Location 2: Manager Safe -->
+          <div class="fin-card">
+            <div style="padding:16px 20px; border-bottom:1px solid rgba(205,190,150,0.3); background:rgba(0,0,0,0.01); display:flex; justify-content:space-between; align-items:center;">
+              <h3 style="margin:0; font-size:15px; font-weight:800; color:#18181b; display:flex; align-items:center; gap:8px;">
+                <i class="fas fa-vault" style="color:#10b981;"></i> 2. Manager Safe
+              </h3>
+              <span class="fin-badge fin-badge-green">STORE SAFE</span>
+            </div>
+            <div style="padding:18px 20px; flex:1; display:flex; flex-direction:column;">
+              <div style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">Funds dropped by cashiers into store safe minus remittances transferred to Admin:</div>
+              <div style="font-size:26px; font-weight:900; color:#10b981; margin-bottom:14px; font-variant-numeric:tabular-nums;">
+                ${Utils.formatCurrency(managerSafeBalanceVal)}
+              </div>
+              <div class="fin-stmt-row" style="font-size:12.5px;">
+                <span>Total Cashier Drops In:</span>
+                <strong>${Utils.formatCurrency(custody.manager_safe?.total_cashout_income || data.cashout?.total_cashout_income || 0)}</strong>
+              </div>
+              <div class="fin-stmt-row" style="font-size:12.5px;">
+                <span>Transferred to Admin Safe:</span>
+                <span style="color:#ef4444;">-${Utils.formatCurrency(custody.manager_safe?.transferred_to_admin || data.cashout?.total_transferred_to_admin || 0)}</span>
+              </div>
+              <div style="margin-top:auto; padding-top:14px;">
+                <button class="fin-btn fin-btn-outline" onclick="scrollToLedger()" style="width:100%;">
+                  <i class="fas fa-clock-rotate-left"></i> View Remittance History
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Location 3: Admin Safe -->
+          <div class="fin-card">
+            <div style="padding:16px 20px; border-bottom:1px solid rgba(205,190,150,0.3); background:rgba(0,0,0,0.01); display:flex; justify-content:space-between; align-items:center;">
+              <h3 style="margin:0; font-size:15px; font-weight:800; color:#18181b; display:flex; align-items:center; gap:8px;">
+                <i class="fas fa-shield-halved" style="color:#3b82f6;"></i> 3. Admin Office Safe
+              </h3>
+              <span class="fin-badge fin-badge-blue">CENTRAL VAULT</span>
+            </div>
+            <div style="padding:18px 20px; flex:1; display:flex; flex-direction:column;">
+              <div style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">Secured central company remittances received from store managers:</div>
+              <div style="font-size:26px; font-weight:900; color:#3b82f6; margin-bottom:14px; font-variant-numeric:tabular-nums;">
+                ${Utils.formatCurrency(adminSafeBalanceVal)}
+              </div>
+              <div class="fin-stmt-row" style="font-size:12.5px;">
+                <span>Total Remittances Received:</span>
+                <strong>${Utils.formatCurrency(custody.admin_safe?.total_remittances_received || data.cashout?.admin_transfer_income || 0)}</strong>
+              </div>
+              <div class="fin-stmt-row" style="font-size:12.5px;">
+                <span>Admin Expenses Paid:</span>
+                <span style="color:#ef4444;">-${Utils.formatCurrency(custody.admin_safe?.expenses_paid || 0)}</span>
+              </div>
+              <div style="margin-top:auto; padding-top:14px;">
+                <button class="fin-btn fin-btn-outline" onclick="scrollToLedger()" style="width:100%;">
+                  <i class="fas fa-clock-rotate-left"></i> View Remittance History
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <!-- Tab 2: Expenses -->
-        <div id="pl-tab-expenses" class="pl-table-wrap" style="display:${window._currentPlTab === 'expenses' ? 'block' : 'none'};">
-          <table class="pl-table">
-            <thead>
-              <tr>
-                <th>Expense Date</th>
-                <th>Category</th>
-                <th>Description</th>
-                <th>Payment Method</th>
-                <th>Recorded By</th>
-                <th>Amount</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${(tables.expenses && tables.expenses.length > 0) ? tables.expenses.map(e => `
+        <!-- Transfer Ledger -->
+        <div class="fin-statement-box" id="fin-transfer-ledger">
+          <div class="fin-stmt-title">
+            <span><i class="fas fa-clock-rotate-left" style="color:#c9a227;"></i> Cash Remittance &amp; Safe Transfer Ledger</span>
+            <span style="font-size:12px; font-weight:600; text-transform:none; color:var(--text-muted);">${history.length} movement(s)</span>
+          </div>
+          <div class="fin-table-wrap">
+            <table class="fin-table">
+              <thead>
                 <tr>
-                  <td style="color:var(--text-muted); font-size:12px;">${e.expense_date ? new Date(e.expense_date).toLocaleDateString([], { month:'short', day:'numeric', year:'numeric' }) : '—'}</td>
-                  <td><strong style="color:#c9a227;">${Utils.escapeHtml(e.category)}</strong></td>
-                  <td style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(e.description)}</td>
-                  <td>${Utils.escapeHtml(e.payment_method)}</td>
-                  <td style="color:var(--text-muted);">${Utils.escapeHtml(e.recorded_by)}</td>
-                  <td><strong style="color:#ef4444; font-weight:800;">-${Utils.formatCurrency(e.amount)}</strong></td>
-                  <td><span class="pl-badge ${e.status === 'paid' ? 'pl-badge-success' : 'pl-badge-warning'}">${e.status.toUpperCase()}</span></td>
+                  <th>Transfer Ref</th>
+                  <th>Timestamp</th>
+                  <th>Initiator</th>
+                  <th>Transfer Scope / Reason</th>
+                  <th>Amount</th>
+                  <th>Status</th>
                 </tr>
-              `).join('') : `
-                <tr><td colspan="7" class="text-center" style="padding:30px; color:var(--text-muted);">No operating expenses recorded for this date period. Click "Record Expense" to log business expenses.</td></tr>
-              `}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                ${history.length > 0 ? history.map(h => `
+                  <tr>
+                    <td>#TR-${h.id}</td>
+                    <td>${h.created_at ? new Date(h.created_at).toLocaleString('en-PH', { month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'}</td>
+                    <td><strong>${Utils.escapeHtml(h.cashier || 'Manager')}</strong></td>
+                    <td>${Utils.escapeHtml(h.reason || 'Safe Remittance')}</td>
+                    <td><strong style="color:#10b981;">${Utils.formatCurrency(h.amount)}</strong></td>
+                    <td><span class="fin-badge fin-badge-green"><i class="fas fa-check"></i> CONFIRMED</span></td>
+                  </tr>
+                `).join('') : `
+                  <tr><td colspan="6" style="text-align:center; padding:24px; color:var(--text-muted);">No cash transfer history found.</td></tr>
+                `}
+              </tbody>
+            </table>
+          </div>
         </div>
+      </div>
 
-        <!-- Tab 3: Transfers -->
-        <div id="pl-tab-transfers" class="pl-table-wrap" style="display:${window._currentPlTab === 'transfers' ? 'block' : 'none'};">
-          <table class="pl-table">
-            <thead>
-              <tr>
-                <th>Timestamp</th>
-                <th>${isAdmin ? 'Shift / Remitted By' : 'Shift / Cashier'}</th>
-                <th>${isAdmin ? 'Received Transfer Amount' : 'Cashed Out Amount'}</th>
-                <th>Destination</th>
-                <th>Sender / Source</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${history.length > 0 ? history.map(h => `
+      <!-- TAB 5: INVENTORY ASSET VALUATION -->
+      <div id="fin-tab-inventory_valuation" style="display:${currentTab === 'inventory_valuation' ? 'block' : 'none'};">
+        <div class="fin-statement-box">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
+            <div class="fin-stmt-title" style="margin-bottom:0; border-bottom:none; padding-bottom:0;">
+              <span><i class="fas fa-boxes-stacked" style="color:#06b6d4;"></i> Balance Sheet Inventory Stock Asset Valuation</span>
+            </div>
+            <div style="font-size:18px; font-weight:800; color:#06b6d4;">
+              Total Value: ${Utils.formatCurrency(inventoryValuationVal)}
+            </div>
+          </div>
+          <div style="background:rgba(6, 182, 212, 0.08); border:1px solid rgba(6, 182, 212, 0.3); border-radius:10px; padding:10px 14px; font-size:12.5px; color:#0891b2; margin-bottom:16px;">
+            <i class="fas fa-info-circle"></i> <strong>Accounting Note:</strong> Inventory Valuation represents unsold stock asset on hand. It is preserved on the balance sheet and consumed as <strong>Cost of Goods Sold (COGS)</strong> only when menu products are ordered and prepared.
+          </div>
+
+          <div class="fin-table-wrap">
+            <table class="fin-table">
+              <thead>
                 <tr>
-                  <td style="color:var(--text-muted); font-size:12px;">${h.created_at ? new Date(h.created_at).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'}</td>
-                  <td><strong style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(h.cashier)}</strong><span style="font-size:11px; color:var(--text-muted); display:block;">Shift #${Utils.escapeHtml(h.shift_id)}</span></td>
-                  <td><strong style="color:#10b981; font-size:14px; font-variant-numeric:tabular-nums;">+${Utils.formatCurrency(h.amount)}</strong></td>
-                  <td style="color:var(--text-main); font-size:13px;">${Utils.escapeHtml(isAdmin ? 'Admin Safe' : h.reason)}</td>
-                  <td style="color:var(--text-muted); font-size:12px;">${Utils.escapeHtml(isAdmin ? (h.cashier || 'Store Manager') : (h.cashier || 'Cashier'))}</td>
-                  <td><span class="pl-badge pl-badge-success"><i class="fas fa-check-circle"></i> ${isAdmin ? 'RECEIVED' : 'CASHED OUT'}</span></td>
+                  <th>Item ID</th>
+                  <th>Item Name</th>
+                  <th>Category</th>
+                  <th>Stock on Hand</th>
+                  <th>Unit Cost</th>
+                  <th>Line Valuation</th>
+                  <th>Integrity</th>
                 </tr>
-              `).join('') : `
-                <tr><td colspan="6" class="text-center" style="padding:30px; color:var(--text-muted);">No transfer records logged yet.</td></tr>
-              `}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                ${(inv.items || tables.inventory_valuation || []).length > 0 ? (inv.items || tables.inventory_valuation).map(item => `
+                  <tr>
+                    <td>#${item.id}</td>
+                    <td><strong>${Utils.escapeHtml(item.name)}</strong></td>
+                    <td><span class="fin-badge fin-badge-gray">${Utils.escapeHtml(item.category || 'General')}</span></td>
+                    <td>${item.quantity} ${Utils.escapeHtml(item.unit || '')}</td>
+                    <td>${Utils.formatCurrency(item.unit_price)}</td>
+                    <td><strong style="color:#06b6d4;">${Utils.formatCurrency(item.valuation)}</strong></td>
+                    <td>
+                      <span class="fin-badge ${item.is_negative ? 'fin-badge-red' : 'fin-badge-green'}">
+                        ${item.is_negative ? 'NEGATIVE' : 'HEALTHY'}
+                      </span>
+                    </td>
+                  </tr>
+                `).join('') : `
+                  <tr><td colspan="7" style="text-align:center; padding:24px; color:var(--text-muted);">No inventory items recorded.</td></tr>
+                `}
+              </tbody>
+            </table>
+          </div>
         </div>
+      </div>
 
-        <!-- Tab 4: Inventory Stock Valuation -->
-        <div id="pl-tab-inventory" class="pl-table-wrap" style="display:${window._currentPlTab === 'inventory' ? 'block' : 'none'};">
-          <table class="pl-table">
-            <thead>
-              <tr>
-                <th>Item Name</th>
-                <th>Category</th>
-                <th>Current Stock</th>
-                <th>Unit Cost</th>
-                <th>Total Valuation (at cost)</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${(tables.inventory_valuation && tables.inventory_valuation.length > 0) ? tables.inventory_valuation.map(iv => `
+      <!-- TAB 6: TRANSACTIONS LEDGER -->
+      <div id="fin-tab-transactions" style="display:${currentTab === 'transactions' ? 'block' : 'none'};">
+        <div class="fin-statement-box">
+          <div class="fin-stmt-title">
+            <span><i class="fas fa-list-check" style="color:#c9a227;"></i> POS Sales &amp; Revenue Transactions Ledger</span>
+            <span style="font-size:12px; font-weight:600; text-transform:none; color:var(--text-muted);">${(tables.sales_orders || []).length} order(s) listed</span>
+          </div>
+
+          <div class="fin-table-wrap">
+            <table class="fin-table">
+              <thead>
                 <tr>
-                  <td><strong style="color:var(--text-main);">${Utils.escapeHtml(iv.name)}</strong></td>
-                  <td>${Utils.escapeHtml(iv.category || 'General')}</td>
-                  <td>${Utils.escapeHtml(iv.quantity)} ${Utils.escapeHtml(iv.unit)}</td>
-                  <td>${Utils.formatCurrency(iv.unit_price)}</td>
-                  <td><strong style="color:#06b6d4;">${Utils.formatCurrency(iv.valuation)}</strong></td>
-                  <td><span class="pl-badge ${iv.is_negative ? 'pl-badge-danger' : 'pl-badge-success'}">${iv.is_negative ? 'NEGATIVE STOCK' : 'VALID'}</span></td>
+                  <th>Order Ref</th>
+                  <th>Date &amp; Time</th>
+                  <th>Cashier</th>
+                  <th>Gross Total</th>
+                  <th>Discounts</th>
+                  <th>Net Recognized</th>
+                  <th>Status</th>
                 </tr>
-              `).join('') : `
-                <tr><td colspan="6" class="text-center" style="padding:30px; color:var(--text-muted);">No inventory valuation items found.</td></tr>
-              `}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                ${(tables.sales_orders || []).length > 0 ? tables.sales_orders.map(o => `
+                  <tr>
+                    <td><strong>${Utils.escapeHtml(o.order_code)}</strong></td>
+                    <td>${o.created_at ? new Date(o.created_at).toLocaleString('en-PH', { month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'}</td>
+                    <td>${Utils.escapeHtml(o.cashier || 'Staff')}</td>
+                    <td>${Utils.formatCurrency(o.gross_amount)}</td>
+                    <td style="color:#ef4444;">-${Utils.formatCurrency(o.discount_amount)}</td>
+                    <td><strong style="color:#10b981;">${Utils.formatCurrency(o.net_amount)}</strong></td>
+                    <td><span class="fin-badge fin-badge-green">${Utils.escapeHtml(o.status.toUpperCase())}</span></td>
+                  </tr>
+                `).join('') : `
+                  <tr><td colspan="7" style="text-align:center; padding:24px; color:var(--text-muted);">No completed sales transactions in selected period.</td></tr>
+                `}
+              </tbody>
+            </table>
+          </div>
         </div>
+      </div>
 
-        <!-- Tab 5: Reconciliation Audit -->
-        <div id="pl-tab-reconciliation" class="pl-table-wrap" style="display:${window._currentPlTab === 'reconciliation' ? 'block' : 'none'};">
-          <table class="pl-table">
-            <thead>
-              <tr>
-                <th>Verification Check</th>
-                <th>Audit Status</th>
-                <th>Verification Details & Explanation</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${(recon.checks && recon.checks.length > 0) ? recon.checks.map(rc => `
-                <tr>
-                  <td><strong style="color:var(--text-main); font-size:13.5px;">${Utils.escapeHtml(rc.check)}</strong></td>
-                  <td>
-                    <span class="pl-badge ${rc.status === 'PASS' ? 'pl-badge-success' : 'pl-badge-warning'}">
-                      <i class="fas ${rc.status === 'PASS' ? 'fa-check' : 'fa-exclamation-triangle'}"></i> ${Utils.escapeHtml(rc.status)}
-                    </span>
-                  </td>
-                  <td style="color:var(--text-main); font-size:12.5px; line-height:1.4;">${Utils.escapeHtml(rc.message)}</td>
-                </tr>
-              `).join('') : `
-                <tr><td colspan="3" class="text-center" style="padding:30px; color:var(--text-muted);">All verification checks completed successfully.</td></tr>
-              `}
-            </tbody>
-          </table>
+      <!-- TAB 7: RECONCILIATION AUDIT (10 Checks) -->
+      <div id="fin-tab-reconciliation" style="display:${currentTab === 'reconciliation' ? 'block' : 'none'};">
+        <div class="fin-statement-box">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+            <div class="fin-stmt-title" style="margin-bottom:0; border-bottom:none; padding-bottom:0;">
+              <span><i class="fas fa-scale-balanced" style="color:#10b981;"></i> Automated Financial Reconciliation Audit (10 Core Checks)</span>
+            </div>
+            <span class="fin-badge ${isReconciled ? 'fin-badge-green' : 'fin-badge-orange'}" style="font-size:12px; padding:6px 14px;">
+              <i class="fas ${isReconciled ? 'fa-circle-check' : 'fa-triangle-exclamation'}"></i> ${isReconciled ? 'SYSTEM FULLY RECONCILED' : 'DISCREPANCIES FLAGGED'}
+            </span>
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr; gap:12px;">
+            ${checks.map((chk, idx) => `
+              <div style="display:flex; align-items:flex-start; gap:14px; padding:14px 18px; border-radius:12px; background:${chk.status === 'PASS' ? 'rgba(16, 185, 129, 0.05)' : (chk.status === 'FAILED' ? 'rgba(239, 68, 68, 0.08)' : 'rgba(245, 158, 11, 0.08)')}; border:1px solid ${chk.status === 'PASS' ? 'rgba(16, 185, 129, 0.25)' : (chk.status === 'FAILED' ? 'rgba(239, 68, 68, 0.3)' : 'rgba(245, 158, 11, 0.3)')};">
+                <div style="width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0; background:${chk.status === 'PASS' ? '#10b981' : (chk.status === 'FAILED' ? '#ef4444' : '#f59e0b')}; color:#fff; font-weight:800; font-size:13px;">
+                  ${chk.status === 'PASS' ? '<i class="fas fa-check"></i>' : '<i class="fas fa-exclamation"></i>'}
+                </div>
+                <div style="flex:1;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; flex-wrap:wrap; gap:6px;">
+                    <strong style="font-size:13.5px; color:#18181b;">Check ${idx + 1}: ${Utils.escapeHtml(chk.check)}</strong>
+                    <span class="fin-badge ${chk.status === 'PASS' ? 'fin-badge-green' : (chk.status === 'FAILED' ? 'fin-badge-red' : 'fin-badge-orange')}">${chk.status}</span>
+                  </div>
+                  <div style="font-size:12.5px; color:var(--text-muted);">${Utils.escapeHtml(chk.message)}</div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 8: FINANCIAL REPORTS & EXPORT -->
+      <div id="fin-tab-reports" style="display:${currentTab === 'reports' ? 'block' : 'none'};">
+        <div class="fin-statement-box">
+          <div class="fin-stmt-title">
+            <span><i class="fas fa-print" style="color:#c9a227;"></i> Financial Reports &amp; Audit Exports</span>
+          </div>
+          <p style="font-size:13px; color:var(--text-muted); margin-bottom:20px;">
+            Generate authoritative, exportable reports for accounting, auditing, BIR tax filing, and investor oversight.
+          </p>
+
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:16px;">
+            <div class="fin-card" style="padding:18px;">
+              <h4 style="margin:0 0 6px 0; font-size:14px; font-weight:800;"><i class="fas fa-file-excel" style="color:#10b981;"></i> Consolidated P&amp;L Export</h4>
+              <p style="font-size:12px; color:var(--text-muted); margin:0 0 14px 0;">Complete summary of Sales, COGS, Expenses, and Net Profit for selected period.</p>
+              <button class="fin-btn fin-btn-gold" onclick="exportFinancialReportCsv()" style="width:100%;">
+                <i class="fas fa-download"></i> Download CSV
+              </button>
+            </div>
+
+            <div class="fin-card" style="padding:18px;">
+              <h4 style="margin:0 0 6px 0; font-size:14px; font-weight:800;"><i class="fas fa-file-invoice-dollar" style="color:#ef4444;"></i> Expenses Audit Ledger</h4>
+              <p style="font-size:12px; color:var(--text-muted); margin:0 0 14px 0;">Detailed line items of all operating expenses with categories, vendors, and dates.</p>
+              <button class="fin-btn fin-btn-outline" onclick="exportExpensesCsv()" style="width:100%;">
+                <i class="fas fa-download"></i> Download Expenses CSV
+              </button>
+            </div>
+
+            <div class="fin-card" style="padding:18px;">
+              <h4 style="margin:0 0 6px 0; font-size:14px; font-weight:800;"><i class="fas fa-print" style="color:#3b82f6;"></i> Formal Printable Statement</h4>
+              <p style="font-size:12px; color:var(--text-muted); margin:0 0 14px 0;">Print-ready Profit &amp; Loss Statement formatted for financial meetings and records.</p>
+              <div style="display:flex; flex-direction:column; gap:8px;">
+                <button class="fin-btn fin-btn-outline" onclick="openFinancialPrintPreviewModal()" style="width:100%;">
+                  <i class="fas fa-print"></i> Print Statement
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   `;
 }
 
-window.switchPlTab = function(tabName) {
-  window._currentPlTab = tabName;
-  ['orders', 'expenses', 'transfers', 'inventory', 'reconciliation'].forEach(t => {
-    const el = document.getElementById(`pl-tab-${t}`);
-    if (el) el.style.display = (t === tabName) ? 'block' : 'none';
+// ── Tab Switcher ──
+function switchFinTab(tabKey) {
+  window._currentPlTab = tabKey;
+  ['overview', 'profit_loss', 'expenses', 'cash_custody', 'inventory_valuation', 'transactions', 'reconciliation', 'reports'].forEach(k => {
+    const el = document.getElementById(`fin-tab-${k}`);
+    if (el) el.style.display = (k === tabKey) ? 'block' : 'none';
   });
-  document.querySelectorAll('.pl-tab-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.getAttribute('onclick')?.includes(tabName));
+  document.querySelectorAll('.fin-nav-tab').forEach(b => {
+    b.classList.toggle('active', b.getAttribute('onclick')?.includes(`'${tabKey}'`));
   });
-};
+}
+window.switchFinTab = switchFinTab;
+window.switchPlTab = switchFinTab;
 
-async function openAddExpenseModal() {
-  Utils.openModal("Record Operating Business Expense", `
-    <form id="form-add-expense" onsubmit="event.preventDefault(); submitAddExpense();">
-      <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Expense Category <span style="color:var(--danger);">*</span></label>
-        <select id="exp-category" class="input-field" required style="width:100%;">
-          <option value="Utilities">Utilities (Electricity, Water, Internet)</option>
-          <option value="Rent">Rent & Facility Lease</option>
-          <option value="Salaries">Staff Salaries & Wages</option>
-          <option value="Supplies">Store Supplies & Packaging</option>
-          <option value="Maintenance">Maintenance & Repairs</option>
-          <option value="Transportation">Transportation & Logistics</option>
-          <option value="Marketing">Marketing & Advertising</option>
-          <option value="Other">Other Operating Expense</option>
-        </select>
-      </div>
+// ── Custom Date Range Toggle ──
+function toggleCustomRangeInputs() {
+  const inputs = document.getElementById('fin-custom-inputs');
+  if (inputs) {
+    const isShown = inputs.style.display === 'flex';
+    inputs.style.display = isShown ? 'none' : 'flex';
+  }
+}
+window.toggleCustomRangeInputs = toggleCustomRangeInputs;
 
-      <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Description / Purpose <span style="color:var(--danger);">*</span></label>
-        <input type="text" id="exp-description" class="input-field" required placeholder="e.g. Monthly Meralco Power Bill" style="width:100%;">
-      </div>
+// ── Navigation Shortcuts ──
+function goToCashDrawer() {
+  if (window.location.pathname.includes('/manager') || window.location.pathname.includes('/admin')) {
+    window.location.hash = '#cash-drawer';
+    if (typeof renderCashDrawer === 'function') renderCashDrawer();
+  } else {
+    window.location.href = '/cashier';
+  }
+}
+window.goToCashDrawer = goToCashDrawer;
 
-      <div class="input-group" style="margin-bottom:14px;">
-        <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Amount (₱) <span style="color:var(--danger);">*</span></label>
-        <input type="number" step="0.01" min="0.01" id="exp-amount" class="input-field" required placeholder="0.00" style="width:100%; font-size:20px; font-weight:800; color:#ef4444;">
-      </div>
+function scrollToLedger() {
+  switchFinTab('cash_custody');
+  setTimeout(() => {
+    const el = document.getElementById('fin-transfer-ledger');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 100);
+}
+window.scrollToLedger = scrollToLedger;
 
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
+// ── Expenses Filter ──
+function filterExpensesTable() {
+  const statusFilter = (document.getElementById('fin-exp-status-filter')?.value || 'all').toLowerCase();
+  const search = (document.getElementById('fin-exp-search')?.value || '').toLowerCase().trim();
+  const rows = document.querySelectorAll('#fin-expenses-table tbody tr');
+  let visibleCount = 0;
+
+  rows.forEach(r => {
+    const rowStatus = (r.getAttribute('data-status') || '').toLowerCase();
+    const rowText = (r.getAttribute('data-text') || '').toLowerCase();
+
+    const matchesStatus = (statusFilter === 'all') || (rowStatus === statusFilter);
+    const matchesSearch = !search || rowText.includes(search);
+
+    const show = matchesStatus && matchesSearch;
+    r.style.display = show ? '' : 'none';
+    if (show) visibleCount++;
+  });
+
+  const badge = document.getElementById('fin-exp-count-badge');
+  if (badge) badge.innerText = `${visibleCount} expense(s)`;
+}
+window.filterExpensesTable = filterExpensesTable;
+
+// ── Expense Action Methods ──
+async function approveExpense(id) {
+  if (!confirm(`Are you sure you want to approve Expense #${id}?`)) return;
+  try {
+    const res = await Auth.fetch(`/api/v1/expenses/${id}/approve`, { method: "POST" });
+    if (!res.ok) throw new Error("Failed to approve expense.");
+    Utils.showToast(`Expense #${id} approved successfully!`, "success");
+    renderProfitLoss();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+}
+window.approveExpense = approveExpense;
+
+async function rejectExpense(id) {
+  if (!confirm(`Are you sure you want to reject Expense #${id}?`)) return;
+  try {
+    const res = await Auth.fetch(`/api/v1/expenses/${id}/reject`, { method: "POST" });
+    if (!res.ok) throw new Error("Failed to reject expense.");
+    Utils.showToast(`Expense #${id} rejected.`, "warning");
+    renderProfitLoss();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+}
+window.rejectExpense = rejectExpense;
+
+async function markExpensePaid(id) {
+  const source = prompt("Confirm payment source (manager_safe / admin_safe / drawer / bank):", "manager_safe");
+  if (!source) return;
+  try {
+    const res = await Auth.fetch(`/api/v1/expenses/${id}/mark-paid?payment_source=${encodeURIComponent(source)}`, { method: "POST" });
+    if (!res.ok) throw new Error("Failed to mark expense as paid.");
+    Utils.showToast(`Expense #${id} marked as paid via ${source}!`, "success");
+    renderProfitLoss();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+}
+window.markExpensePaid = markExpensePaid;
+
+async function voidExpense(id) {
+  if (!confirm(`Are you sure you want to void Expense #${id}? This will cancel its recognition.`)) return;
+  try {
+    const res = await Auth.fetch(`/api/v1/expenses/${id}/void`, { method: "POST" });
+    if (!res.ok) throw new Error("Failed to void expense.");
+    Utils.showToast(`Expense #${id} voided.`, "info");
+    renderProfitLoss();
+  } catch (err) {
+    Utils.showToast(err.message, "danger");
+  }
+}
+window.voidExpense = voidExpense;
+
+// ── Add Expense Modal ──
+function openAddExpenseModal() {
+  const title = `<i class="fas fa-file-invoice-dollar" style="color:#c9a227; margin-right:8px;"></i> Record Operating Expense`;
+  const bodyHTML = `
+    <form id="form-add-expense" onsubmit="event.preventDefault(); submitAddExpense();" style="display:flex; flex-direction:column; gap:12px;">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
         <div class="input-group">
-          <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Payment Method</label>
-          <select id="exp-payment-method" class="input-field" style="width:100%;">
-            <option value="Cash">Cash (Safe / Petty Cash)</option>
+          <label style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Category <span style="color:var(--danger, #ef4444);">*</span></label>
+          <select id="exp-category" class="input-field" required style="width:100%; height:38px;">
+            <option value="Utilities">Utilities (Electric, Water)</option>
+            <option value="Salaries and Wages">Salaries and Wages</option>
+            <option value="Rent">Rent &amp; Lease</option>
+            <option value="Kitchen Supplies">Kitchen Supplies</option>
+            <option value="Office Supplies">Office Supplies</option>
+            <option value="Maintenance and Repairs">Maintenance and Repairs</option>
+            <option value="Marketing and Advertising">Marketing and Advertising</option>
+            <option value="Transportation and Fuel">Transportation and Fuel</option>
+            <option value="Internet and Communication">Internet and Communication</option>
+            <option value="Equipment and Assets">Equipment and Assets</option>
+            <option value="Taxes and Government Fees">Taxes and Government Fees</option>
+            <option value="Other Expenses">Other Expenses</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Expense Title</label>
+          <input type="text" id="exp-title" class="input-field" placeholder="e.g. Meralco Electricity Bill" style="width:100%; height:38px;">
+        </div>
+      </div>
+
+      <div class="input-group">
+        <label style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Description / Purpose <span style="color:var(--danger, #ef4444);">*</span></label>
+        <input type="text" id="exp-description" class="input-field" required placeholder="e.g. November 2026 Monthly Power Billing" style="width:100%; height:38px;">
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+        <div class="input-group">
+          <label style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Amount (₱) <span style="color:var(--danger, #ef4444);">*</span></label>
+          <input type="number" step="0.01" min="0.01" id="exp-amount" class="input-field" required placeholder="0.00" style="width:100%; height:38px; font-size:18px; font-weight:800; color:#ef4444;">
+        </div>
+        <div class="input-group">
+          <label style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Vendor / Payee</label>
+          <input type="text" id="exp-vendor" class="input-field" placeholder="e.g. Meralco" style="width:100%; height:38px;">
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+        <div class="input-group">
+          <label style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Payment Method</label>
+          <select id="exp-payment-method" class="input-field" style="width:100%; height:38px;">
+            <option value="Cash">Cash</option>
             <option value="Bank Transfer">Bank Transfer</option>
             <option value="GCash">GCash</option>
+            <option value="Maya">Maya</option>
             <option value="Credit Card">Credit Card</option>
           </select>
         </div>
         <div class="input-group">
-          <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Payment Status</label>
-          <select id="exp-status" class="input-field" style="width:100%;">
-            <option value="paid">Paid / Settled</option>
-            <option value="pending">Pending Approval</option>
+          <label style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Payment Source</label>
+          <select id="exp-payment-source" class="input-field" style="width:100%; height:38px;">
+            <option value="manager_safe">Manager Safe</option>
+            <option value="admin_safe">Admin Safe</option>
+            <option value="drawer">Cashier Drawer</option>
+            <option value="bank">Bank / Digital Account</option>
           </select>
         </div>
       </div>
 
-      <div class="input-group" style="margin-bottom:16px;">
-        <label style="font-size:12px; font-weight:700; text-transform:uppercase; color:var(--text-muted);">Expense Date</label>
-        <input type="date" id="exp-date" class="input-field" value="${new Date().toISOString().substring(0, 10)}" style="width:100%;">
-      </div>
-
-      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
-        <button type="button" class="btn btn-outline" onclick="Utils.closeModal()">Cancel</button>
-        <button type="submit" id="btn-submit-expense" class="btn btn-primary" style="background:#18181b; color:#d4af37; border:1px solid #d4af37;">
-          <i class="fas fa-check"></i> Save Expense
-        </button>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+        <div class="input-group">
+          <label style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Approval Status</label>
+          <select id="exp-status" class="input-field" style="width:100%; height:38px;">
+            <option value="paid">Paid (Immediately settled)</option>
+            <option value="pending">Pending Approval</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Expense Date</label>
+          <input type="date" id="exp-date" class="input-field" value="${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' })}" style="width:100%; height:38px;">
+        </div>
       </div>
     </form>
-  `);
+  `;
+  const footerHTML = `
+    <button type="button" class="fin-btn fin-btn-outline" onclick="Utils.closeModal()">Cancel</button>
+    <button type="button" id="btn-submit-expense" class="fin-btn fin-btn-gold" onclick="submitAddExpense()">
+      <i class="fas fa-check"></i> Save Expense
+    </button>
+  `;
+
+  if (typeof Utils !== 'undefined' && typeof Utils.openModal === 'function') {
+    Utils.openModal(title, bodyHTML, footerHTML, "modal-md");
+  } else if (typeof window.openModal === 'function') {
+    window.openModal(title, bodyHTML, footerHTML);
+  }
 }
 
 async function submitAddExpense() {
   const cat = document.getElementById("exp-category")?.value;
+  const title = document.getElementById("exp-title")?.value;
   const desc = document.getElementById("exp-description")?.value;
+  const vendor = document.getElementById("exp-vendor")?.value;
   const amt = parseFloat(document.getElementById("exp-amount")?.value);
   const method = document.getElementById("exp-payment-method")?.value || "Cash";
+  const source = document.getElementById("exp-payment-source")?.value || "manager_safe";
   const stat = document.getElementById("exp-status")?.value || "paid";
   const dt = document.getElementById("exp-date")?.value;
 
@@ -8023,11 +9542,14 @@ async function submitAddExpense() {
       method: "POST",
       body: JSON.stringify({
         category: cat,
+        title: title || undefined,
         description: desc,
+        vendor: vendor || undefined,
         amount: amt,
         payment_method: method,
+        payment_source: source,
         status: stat,
-        expense_date: dt ? new Date(dt).toISOString() : undefined
+        expense_date: dt ? `${dt}T00:00:00` : undefined
       })
     });
     if (!res.ok) {
@@ -8045,27 +9567,575 @@ async function submitAddExpense() {
   }
 }
 
+// ── Edit Expense Modal ──
+function openEditExpenseModal(id) {
+  if (!cachedProfitLossData || !cachedProfitLossData.tables || !cachedProfitLossData.tables.expenses) return;
+  const exp = cachedProfitLossData.tables.expenses.find(e => e.id === id);
+  if (!exp) return;
+
+  const title = `<i class="fas fa-edit" style="color:#c9a227; margin-right:8px;"></i> Edit Expense #${exp.id}`;
+  const bodyHTML = `
+    <form id="form-edit-expense" onsubmit="event.preventDefault(); submitEditExpense(${exp.id});" style="display:flex; flex-direction:column; gap:12px;">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+        <div class="input-group">
+          <label style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Category</label>
+          <input type="text" id="edit-exp-category" class="input-field" value="${Utils.escapeHtml(exp.category)}" required style="width:100%; height:38px;">
+        </div>
+        <div class="input-group">
+          <label style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Expense Title</label>
+          <input type="text" id="edit-exp-title" class="input-field" value="${Utils.escapeHtml(exp.title || '')}" style="width:100%; height:38px;">
+        </div>
+      </div>
+
+      <div class="input-group">
+        <label style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Description</label>
+        <input type="text" id="edit-exp-desc" class="input-field" value="${Utils.escapeHtml(exp.description)}" required style="width:100%; height:38px;">
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+        <div class="input-group">
+          <label style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Amount (₱)</label>
+          <input type="number" step="0.01" min="0.01" id="edit-exp-amount" class="input-field" value="${exp.amount}" required style="width:100%; height:38px; font-weight:800; color:#ef4444;">
+        </div>
+        <div class="input-group">
+          <label style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--text-muted); display:block; margin-bottom:4px;">Vendor / Payee</label>
+          <input type="text" id="edit-exp-vendor" class="input-field" value="${Utils.escapeHtml(exp.vendor || '')}" style="width:100%; height:38px;">
+        </div>
+      </div>
+    </form>
+  `;
+  const footerHTML = `
+    <button type="button" class="fin-btn fin-btn-outline" onclick="Utils.closeModal()">Cancel</button>
+    <button type="button" id="btn-edit-expense" class="fin-btn fin-btn-gold" onclick="submitEditExpense(${exp.id})">
+      <i class="fas fa-check"></i> Update Expense
+    </button>
+  `;
+
+  if (typeof Utils !== 'undefined' && typeof Utils.openModal === 'function') {
+    Utils.openModal(title, bodyHTML, footerHTML, "modal-md");
+  } else if (typeof window.openModal === 'function') {
+    window.openModal(title, bodyHTML, footerHTML);
+  }
+}
+
+async function submitEditExpense(id) {
+  const cat = document.getElementById("edit-exp-category")?.value;
+  const title = document.getElementById("edit-exp-title")?.value;
+  const desc = document.getElementById("edit-exp-desc")?.value;
+  const vendor = document.getElementById("edit-exp-vendor")?.value;
+  const amt = parseFloat(document.getElementById("edit-exp-amount")?.value);
+
+  if (!cat || !desc || isNaN(amt) || amt <= 0) {
+    Utils.showToast("Please provide valid inputs.", "danger");
+    return;
+  }
+
+  const btn = document.getElementById("btn-edit-expense");
+  if (btn) { btn.disabled = true; btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Updating...`; }
+
+  try {
+    const res = await Auth.fetch(`/api/v1/expenses/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        category: cat,
+        title: title || undefined,
+        description: desc,
+        vendor: vendor || undefined,
+        amount: amt
+      })
+    });
+    if (!res.ok) throw new Error("Failed to update expense.");
+    Utils.showToast(`Expense #${id} updated successfully!`, "success");
+    Utils.closeModal();
+    cachedProfitLossData = null;
+    renderProfitLoss();
+  } catch (e) {
+    Utils.showToast(e.message, "danger");
+    if (btn) { btn.disabled = false; btn.innerHTML = `<i class="fas fa-check"></i> Update Expense`; }
+  }
+}
+window.openEditExpenseModal = openEditExpenseModal;
+window.submitEditExpense = submitEditExpense;
+
+// ── Export CSV Utilities ──
+function exportFinancialReportCsv() {
+  if (!cachedProfitLossData) {
+    Utils.showToast("Loading financial data for export...", "info");
+    return;
+  }
+  const d = cachedProfitLossData;
+  const rev = d.revenue || {};
+  const cogs = d.cogs || {};
+  const pl = d.profit_loss || {};
+  const period = d.period || {};
+
+  csv += `Net Sales Revenue,"${(rev.net_sales || rev.today_orders_revenue || 0).toFixed(2)}"\n`;
+  csv += `Cost of Goods Sold (COGS),"${(cogs.cost_of_goods_sold || d.inventory?.cost_of_goods_sold || 0).toFixed(2)}"\n`;
+  csv += `Gross Profit,"${(pl.gross_profit || 0).toFixed(2)}"\n`;
+  csv += `Operating Expenses,"${(pl.operating_expenses || 0).toFixed(2)}"\n`;
+  csv += `Net Operating Profit,"${(pl.net_profit || 0).toFixed(2)}"\n`;
+  csv += `Profit Margin,"${pl.profit_margin_display || '0.00%'}"\n`;
+  csv += `Cash Collections,"${(rev.cash_sales || 0).toFixed(2)}"\n`;
+  csv += `Digital Collections,"${(rev.non_cash_sales || 0).toFixed(2)}"\n`;
+  csv += `Inventory Stock Valuation,"${(d.inventory?.total_inventory_valuation || 0).toFixed(2)}"\n`;
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `financial_report_${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' })}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  Utils.showToast("Consolidated financial CSV exported successfully!", "success");
+}
+
+function exportExpensesCsv() {
+  if (!cachedProfitLossData || !cachedProfitLossData.tables || !cachedProfitLossData.tables.expenses) {
+    Utils.showToast("No expenses data available to export.", "warning");
+    return;
+  }
+  const expenses = cachedProfitLossData.tables.expenses;
+  let csv = "ID,Date,Category,Title,Description,Vendor,Amount,Payment Method,Payment Source,Status,Recorded By\n";
+  expenses.forEach(e => {
+    csv += `"${e.id}","${e.expense_date || ''}","${e.category || ''}","${(e.title || '').replace(/"/g, '""')}","${(e.description || '').replace(/"/g, '""')}","${(e.vendor || '').replace(/"/g, '""')}","${e.amount}","${e.payment_method || ''}","${e.payment_source || ''}","${e.status || ''}","${e.recorded_by || ''}"\n`;
+  });
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `expenses_ledger_${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' })}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  Utils.showToast("Expenses ledger CSV exported successfully!", "success");
+}
+
+// ── Financial Statement Print Preview Modal & Printing ──
+window.openFinancialPrintPreviewModal = async function() {
+  let d = cachedProfitLossData;
+  if (!d) {
+    try {
+      Utils.showToast("Loading financial statement for preview...", "info");
+      const period = window._currentPlPeriod || 'today';
+      let url = `/api/v1/analytics/profit-loss?period=${encodeURIComponent(period)}`;
+      if (period === 'custom' && window._currentPlStartDate && window._currentPlEndDate) {
+        url += `&start_date=${encodeURIComponent(window._currentPlStartDate)}&end_date=${encodeURIComponent(window._currentPlEndDate)}`;
+      }
+      const res = await Auth.fetch(url);
+      if (res.ok) {
+        d = await res.json();
+        cachedProfitLossData = d;
+      }
+    } catch (e) {
+      console.error("Failed to load financial data for print preview:", e);
+    }
+  }
+
+  if (!d) {
+    Utils.showToast("Unable to load financial statement data. Please try again.", "danger");
+    return;
+  }
+
+  const rev = d.revenue || {};
+  const cogs = d.cogs || {};
+  const pl = d.profit_loss || {};
+  const period = d.period || {};
+  const custody = d.cash_custody || {};
+  const inv = d.inventory || {};
+  let categories = (d.tables && d.tables.category_breakdown) || [];
+  if (!categories || categories.length === 0) {
+    const byCat = (d.expenses && d.expenses.by_category) || {};
+    categories = Object.keys(byCat).map(k => ({
+      category: k,
+      amount: byCat[k],
+      count: ((d.tables && d.tables.expenses) || []).filter(e => e.category === k).length
+    }));
+  }
+  const recon = d.reconciliation || {};
+
+  const grossSales = Number(rev.gross_sales || rev.today_orders_revenue || 0);
+  const discounts = Number(rev.discounts || 0);
+  const refunds = Number(rev.refunds || 0);
+  const netSales = Number(rev.net_sales || (grossSales - discounts - refunds) || 0);
+  const cogsVal = Number(cogs.cost_of_goods_sold || inv.cost_of_goods_sold || 0);
+  const grossProfit = Number(pl.gross_profit || (netSales - cogsVal) || 0);
+  const grossMargin = pl.gross_margin_display || (netSales > 0 ? ((grossProfit / netSales) * 100).toFixed(2) + '%' : '0.00%');
+  const opexVal = Number(pl.operating_expenses || 0);
+  const netProfit = Number(pl.net_profit || (grossProfit - opexVal) || 0);
+  const netMargin = pl.profit_margin_display || (netSales > 0 ? ((netProfit / netSales) * 100).toFixed(2) + '%' : '0.00%');
+  const isProfitable = netProfit >= 0;
+
+  const cashSales = Number(rev.cash_sales || 0);
+  const nonCashSales = Number(rev.non_cash_sales || 0);
+  const invValuation = Number(inv.total_inventory_valuation || 0);
+
+  const drawerBal = Number(custody.cashier_drawer?.expected_balance ?? custody.cashier_drawer?.active_cash ?? custody.active_drawer_cash ?? 0);
+  const managerSafeBal = Number(custody.manager_safe?.balance ?? custody.manager_safe_cash ?? 0);
+  const adminSafeBal = Number(custody.admin_safe?.balance ?? custody.admin_safe_cash ?? 0);
+
+  const currentUser = (typeof Auth !== 'undefined' && Auth.getUser) ? Auth.getUser() : null;
+  const userName = currentUser ? (currentUser.full_name || currentUser.username || 'Staff') : 'Authorized Staff';
+  const userRole = currentUser ? (currentUser.role || 'Admin/Manager').toUpperCase() : 'MANAGEMENT';
+
+  const dateNowPST = new Date().toLocaleString('en-PH', { 
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  });
+
+  const periodName = (period.name || window._currentPlPeriod || 'Today').toUpperCase();
+  const dateRangeStr = (period.start_date && period.end_date) 
+    ? `${period.start_date} to ${period.end_date}` 
+    : (period.start_date || dateNowPST);
+
+  // Build Statement Paper HTML
+  const statementPaperHtml = `
+    <div id="financial-statement-paper" style="background:#ffffff; color:#18181b; padding:28px 32px; border-radius:6px; box-shadow:0 4px 20px rgba(0,0,0,0.08); font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size:13px; line-height:1.5;">
+      
+      <!-- Top Letterhead -->
+      <div style="border-bottom:3px solid #c9a227; padding-bottom:14px; margin-bottom:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+          <div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span style="display:inline-block; width:12px; height:12px; border-radius:50%; background:#c9a227;"></span>
+              <h2 style="font-size:20px; font-weight:900; letter-spacing:0.5px; margin:0; color:#18181b;">GBLESS TRADING OPC</h2>
+            </div>
+            <div style="font-size:13px; font-weight:700; color:#c9a227; margin-top:2px;">BLESSIE FOOD HUB / INBOX RESTOBAR</div>
+            <div style="font-size:11px; color:#71717a; margin-top:2px;">Central POS Financial Accounting &amp; Operating Performance</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="display:inline-block; background:#f4f4f5; border:1px solid #e4e4e7; border-radius:6px; padding:6px 12px; font-size:11px; font-weight:700; color:#18181b;">
+              <span style="color:#71717a;">DOCUMENT:</span> P&amp;L STATEMENT
+            </div>
+            <div style="font-size:11px; color:#71717a; margin-top:4px;">Generated (PST): <strong>${dateNowPST}</strong></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Report Metadata Strip -->
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px; background:#f9fafb; border:1px solid #e5e7eb; border-radius:6px; padding:10px 14px; margin-bottom:18px; font-size:11px;">
+        <div>
+          <span style="color:#6b7280; display:block; text-transform:uppercase; font-size:10px; font-weight:700;">Reporting Period</span>
+          <strong style="color:#111827; font-size:12px;">${periodName}</strong>
+        </div>
+        <div>
+          <span style="color:#6b7280; display:block; text-transform:uppercase; font-size:10px; font-weight:700;">Effective Date / Range</span>
+          <span style="color:#111827; font-weight:600;">${dateRangeStr}</span>
+        </div>
+        <div>
+          <span style="color:#6b7280; display:block; text-transform:uppercase; font-size:10px; font-weight:700;">Audited By</span>
+          <span style="color:#111827; font-weight:600;">${Utils.escapeHtml(userName)} (${userRole})</span>
+        </div>
+        <div>
+          <span style="color:#6b7280; display:block; text-transform:uppercase; font-size:10px; font-weight:700;">System Reconciliation</span>
+          <span style="color:#059669; font-weight:700;"><i class="fas fa-check-circle"></i> ${recon.status === 'PASS' ? 'PASS (10/10 Verified)' : (recon.status || 'Verified')}</span>
+        </div>
+      </div>
+
+      <!-- Part I: Profit & Loss Statement Core Ledger -->
+      <div style="margin-bottom:20px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1.5px solid #18181b; padding-bottom:4px; margin-bottom:8px;">
+          <h4 style="font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; margin:0; color:#18181b;">
+            STATEMENT OF COMPREHENSIVE INCOME &amp; EXPENSES (PHP)
+          </h4>
+          <span style="font-size:11px; color:#71717a;">Accrual Basis</span>
+        </div>
+
+        <table style="width:100%; border-collapse:collapse; font-size:12px;">
+          <!-- REVENUE -->
+          <tr style="background:#fafafa;">
+            <td colspan="2" style="padding:6px 8px; font-weight:800; color:#18181b; font-size:12px;">1. REVENUE / OPERATING SALES</td>
+          </tr>
+          <tr>
+            <td style="padding:5px 8px 5px 20px; color:#374151;">Gross Orders &amp; Menu Sales</td>
+            <td style="padding:5px 8px; text-align:right; font-weight:600; font-family:monospace; color:#18181b;">${Utils.formatCurrency(grossSales)}</td>
+          </tr>
+          <tr>
+            <td style="padding:4px 8px 4px 20px; color:#6b7280;">Less: Authorized Discounts &amp; Promos</td>
+            <td style="padding:4px 8px; text-align:right; font-family:monospace; color:#dc2626;">-${Utils.formatCurrency(discounts)}</td>
+          </tr>
+          <tr>
+            <td style="padding:4px 8px 4px 20px; color:#6b7280;">Less: Customer Returns &amp; Refunds</td>
+            <td style="padding:4px 8px; text-align:right; font-family:monospace; color:#dc2626;">-${Utils.formatCurrency(refunds)}</td>
+          </tr>
+          <tr style="border-top:1px solid #d1d5db; border-bottom:1.5px solid #9ca3af; background:#f3f4f6;">
+            <td style="padding:7px 8px; font-weight:800; color:#111827;">NET RECOGNIZED SALES REVENUE</td>
+            <td style="padding:7px 8px; text-align:right; font-weight:800; font-size:13px; font-family:monospace; color:#111827;">${Utils.formatCurrency(netSales)}</td>
+          </tr>
+
+          <!-- COGS -->
+          <tr><td colspan="2" style="height:8px;"></td></tr>
+          <tr style="background:#fafafa;">
+            <td colspan="2" style="padding:6px 8px; font-weight:800; color:#18181b; font-size:12px;">2. COST OF GOODS SOLD (COGS)</td>
+          </tr>
+          <tr>
+            <td style="padding:5px 8px 5px 20px; color:#374151;">
+              Ingredient Consumption &amp; Recipe Stock Cost
+              <div style="font-size:10px; color:#9ca3af;">(Calculated from actual recipe ingredient quantities and unit costs)</div>
+            </td>
+            <td style="padding:5px 8px; text-align:right; font-family:monospace; color:#dc2626; vertical-align:top;">-${Utils.formatCurrency(cogsVal)}</td>
+          </tr>
+          <tr style="border-top:1px solid #d1d5db; border-bottom:1.5px solid #9ca3af; background:#f3f4f6;">
+            <td style="padding:7px 8px; font-weight:800; color:#111827;">
+              GROSS PROFIT 
+              <span style="font-size:11px; font-weight:600; color:#059669; margin-left:8px;">(Margin: ${grossMargin})</span>
+            </td>
+            <td style="padding:7px 8px; text-align:right; font-weight:800; font-size:13px; font-family:monospace; color:#111827;">${Utils.formatCurrency(grossProfit)}</td>
+          </tr>
+
+          <!-- OPEX -->
+          <tr><td colspan="2" style="height:8px;"></td></tr>
+          <tr style="background:#fafafa;">
+            <td colspan="2" style="padding:6px 8px; font-weight:800; color:#18181b; font-size:12px;">3. OPERATING EXPENSES (OPEX)</td>
+          </tr>
+          ${categories && categories.length ? categories.map(cat => `
+            <tr>
+              <td style="padding:4px 8px 4px 20px; color:#374151;">${Utils.escapeHtml(cat.category || 'General')} (${cat.count || 0} item${cat.count !== 1 ? 's' : ''})</td>
+              <td style="padding:4px 8px; text-align:right; font-family:monospace; color:#4b5563;">-${Utils.formatCurrency(cat.amount || 0)}</td>
+            </tr>
+          `).join('') : `
+            <tr>
+              <td style="padding:4px 8px 4px 20px; color:#9ca3af; font-style:italic;">No recorded operating expenses for this period.</td>
+              <td style="padding:4px 8px; text-align:right; font-family:monospace; color:#4b5563;">₱0.00</td>
+            </tr>
+          `}
+          <tr style="border-top:1px solid #d1d5db; border-bottom:1.5px solid #9ca3af; background:#f3f4f6;">
+            <td style="padding:7px 8px; font-weight:800; color:#111827;">TOTAL OPERATING EXPENSES</td>
+            <td style="padding:7px 8px; text-align:right; font-weight:800; font-size:13px; font-family:monospace; color:#dc2626;">-${Utils.formatCurrency(opexVal)}</td>
+          </tr>
+
+          <!-- NET PROFIT -->
+          <tr><td colspan="2" style="height:12px;"></td></tr>
+          <tr style="background:${isProfitable ? 'rgba(5,150,105,0.08)' : 'rgba(239,68,68,0.08)'}; border:2px solid ${isProfitable ? '#059669' : '#dc2626'};">
+            <td style="padding:10px 12px; font-weight:900; font-size:14px; color:${isProfitable ? '#065f46' : '#991b1b'};">
+              NET OPERATING PROFIT / (LOSS)
+              <div style="font-size:11px; font-weight:600; color:${isProfitable ? '#059669' : '#dc2626'}; margin-top:2px;">
+                Net Margin: <strong>${netMargin}</strong> &bull; Status: <strong>${isProfitable ? 'PROFITABLE' : 'NET OPERATING LOSS'}</strong>
+              </div>
+            </td>
+            <td style="padding:10px 12px; text-align:right; font-weight:900; font-size:16px; font-family:monospace; color:${isProfitable ? '#065f46' : '#991b1b'}; vertical-align:middle;">
+              ${Utils.formatCurrency(netProfit)}
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <!-- Part II: Balance Sheet & Custody Summary (2-Col Grid) -->
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px;">
+        <!-- Left: Cash Collections & Custody -->
+        <div style="border:1px solid #e5e7eb; border-radius:6px; padding:12px; background:#fafafa;">
+          <h5 style="font-size:11px; font-weight:800; text-transform:uppercase; margin:0 0 8px 0; color:#18181b; border-bottom:1px solid #e5e7eb; padding-bottom:4px;">
+            <i class="fas fa-vault" style="color:#c9a227;"></i> Cash Custody &amp; Collections
+          </h5>
+          <table style="width:100%; font-size:11px; border-collapse:collapse;">
+            <tr>
+              <td style="padding:3px 0; color:#6b7280;">Cash at POS Registers:</td>
+              <td style="padding:3px 0; text-align:right; font-weight:600; font-family:monospace;">${Utils.formatCurrency(cashSales)}</td>
+            </tr>
+            <tr>
+              <td style="padding:3px 0; color:#6b7280;">Digital / GCash / Maya:</td>
+              <td style="padding:3px 0; text-align:right; font-weight:600; font-family:monospace;">${Utils.formatCurrency(nonCashSales)}</td>
+            </tr>
+            <tr style="border-top:1px dashed #d1d5db;">
+              <td style="padding:4px 0 2px 0; color:#111827; font-weight:700;">Active Cashier Drawer:</td>
+              <td style="padding:4px 0 2px 0; text-align:right; font-weight:700; font-family:monospace; color:#c9a227;">${Utils.formatCurrency(drawerBal)}</td>
+            </tr>
+            <tr>
+              <td style="padding:2px 0; color:#111827; font-weight:700;">Manager Safe Balance:</td>
+              <td style="padding:2px 0; text-align:right; font-weight:700; font-family:monospace; color:#3b82f6;">${Utils.formatCurrency(managerSafeBal)}</td>
+            </tr>
+            <tr>
+              <td style="padding:2px 0; color:#111827; font-weight:700;">Admin Safe Vault:</td>
+              <td style="padding:2px 0; text-align:right; font-weight:700; font-family:monospace; color:#8b5cf6;">${Utils.formatCurrency(adminSafeBal)}</td>
+            </tr>
+          </table>
+        </div>
+
+        <!-- Right: Inventory Asset Valuation -->
+        <div style="border:1px solid #e5e7eb; border-radius:6px; padding:12px; background:#fafafa;">
+          <h5 style="font-size:11px; font-weight:800; text-transform:uppercase; margin:0 0 8px 0; color:#18181b; border-bottom:1px solid #e5e7eb; padding-bottom:4px;">
+            <i class="fas fa-boxes-stacked" style="color:#059669;"></i> Inventory Asset Balance
+          </h5>
+          <table style="width:100%; font-size:11px; border-collapse:collapse;">
+            <tr>
+              <td style="padding:3px 0; color:#6b7280;">Total Tracked SKUs:</td>
+              <td style="padding:3px 0; text-align:right; font-weight:600;">${inv.total_sku_count || 0} items</td>
+            </tr>
+            <tr>
+              <td style="padding:3px 0; color:#6b7280;">Low / Out of Stock Alert:</td>
+              <td style="padding:3px 0; text-align:right; font-weight:600; color:#eab308;">${(inv.low_stock_count || 0) + (inv.out_of_stock_count || 0)} items</td>
+            </tr>
+            <tr style="border-top:1px dashed #d1d5db;">
+              <td style="padding:4px 0 2px 0; color:#111827; font-weight:700;">Total Stock Valuation:</td>
+              <td style="padding:4px 0 2px 0; text-align:right; font-weight:800; font-size:12px; font-family:monospace; color:#059669;">${Utils.formatCurrency(invValuation)}</td>
+            </tr>
+          </table>
+          <div style="font-size:10px; color:#9ca3af; margin-top:8px; line-height:1.3;">
+            * Inventory is a Balance Sheet balance asset, not an operational deduction.
+          </div>
+        </div>
+      </div>
+
+      <!-- Part III: Signatures & Certification Block -->
+      <div style="border-top:1.5px solid #18181b; padding-top:14px; margin-top:20px;">
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:20px; text-align:center; font-size:11px;">
+          <div>
+            <div style="font-weight:700; color:#6b7280; text-transform:uppercase; margin-bottom:34px;">PREPARED BY</div>
+            <div style="border-top:1px solid #18181b; padding-top:4px; font-weight:700; color:#18181b;">
+              ${Utils.escapeHtml(userName)}
+            </div>
+            <div style="font-size:10px; color:#71717a;">${userRole}</div>
+          </div>
+          <div>
+            <div style="font-weight:700; color:#6b7280; text-transform:uppercase; margin-bottom:34px;">REVIEWED &amp; AUDITED BY</div>
+            <div style="border-top:1px solid #18181b; padding-top:4px; font-weight:700; color:#18181b;">
+              System Auditor / Accountant
+            </div>
+            <div style="font-size:10px; color:#71717a;">Internal Audit</div>
+          </div>
+          <div>
+            <div style="font-weight:700; color:#6b7280; text-transform:uppercase; margin-bottom:34px;">CERTIFIED CORRECT</div>
+            <div style="border-top:1px solid #18181b; padding-top:4px; font-weight:700; color:#18181b;">
+              Management / Admin
+            </div>
+            <div style="font-size:10px; color:#71717a;">Executive Oversight</div>
+          </div>
+        </div>
+        <div style="text-align:center; font-size:10px; color:#9ca3af; margin-top:16px;">
+          GBLESS TRADING OPC &bull; Official Restaurant POS Financial Intelligence Record &bull; Confidential
+        </div>
+      </div>
+    </div>
+  `;
+
+  const modalTitle = `<i class="fas fa-file-invoice" style="color:#c9a227; margin-right:8px;"></i> Formal Financial Statement — Print Preview`;
+
+  const modalFooter = `
+    <div style="display:flex; justify-content:space-between; align-items:center; width:100%; gap:10px; flex-wrap:wrap;">
+      <div style="font-size:12px; color:var(--text-muted);">
+        <i class="fas fa-check-circle" style="color:#059669;"></i> Ready to print standard A4 / Letter format.
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button type="button" class="btn btn-outline" onclick="Utils.closeModal()" style="padding:8px 18px; font-size:13px; font-weight:600;">
+          <i class="fas fa-times"></i> Close Preview
+        </button>
+        <button type="button" class="btn btn-primary" onclick="printFinancialDocument()" style="padding:8px 22px; font-size:13px; font-weight:700; background:linear-gradient(135deg, #c9a227, #987719); border:none; box-shadow:0 4px 12px rgba(201,162,39,0.25);">
+          <i class="fas fa-print"></i> Print Now
+        </button>
+      </div>
+    </div>
+  `;
+
+  Utils.openModal(modalTitle, statementPaperHtml, modalFooter, "modal-xl");
+};
+
+window.printFinancialDocument = function() {
+  const paper = document.getElementById("financial-statement-paper");
+  if (!paper) {
+    window.print();
+    return;
+  }
+
+  // Populate print container for fallback
+  let printEl = document.getElementById("printDocument");
+  if (!printEl) {
+    printEl = document.createElement("div");
+    printEl.id = "printDocument";
+    document.body.appendChild(printEl);
+  }
+  printEl.innerHTML = paper.innerHTML;
+
+  // Create isolated hidden iframe to print cleanly without UI interference
+  let frame = document.getElementById("print-financial-frame");
+  if (frame) {
+    try { document.body.removeChild(frame); } catch (e) {}
+  }
+  frame = document.createElement("iframe");
+  frame.id = "print-financial-frame";
+  frame.style.position = "fixed";
+  frame.style.right = "0";
+  frame.style.bottom = "0";
+  frame.style.width = "0";
+  frame.style.height = "0";
+  frame.style.border = "0";
+  document.body.appendChild(frame);
+
+  const doc = frame.contentWindow.document;
+  doc.open();
+  doc.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>GBLESS TRADING OPC - Financial Statement</title>
+      <style>
+        @page { size: A4 portrait; margin: 10mm 12mm; }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+          color: #18181b;
+          background: #ffffff;
+          margin: 0;
+          padding: 0;
+          font-size: 11pt;
+          line-height: 1.4;
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+        * { box-sizing: border-box; }
+        table { width: 100%; border-collapse: collapse; }
+      </style>
+    </head>
+    <body>
+      ${paper.innerHTML}
+    </body>
+    </html>
+  `);
+  doc.close();
+
+  setTimeout(() => {
+    try {
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+    } catch (err) {
+      console.warn("Iframe print fallback triggered:", err);
+      window.print();
+    }
+  }, 250);
+};
+
+window.exportFinancialReportCsv = exportFinancialReportCsv;
+window.exportExpensesCsv = exportExpensesCsv;
 window.openAddExpenseModal = openAddExpenseModal;
 window.submitAddExpense = submitAddExpense;
-
 window.renderPurchases = renderProfitLoss;
 window.renderProfitLoss = renderProfitLoss;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 12. WASTAGE & SPOILAGE TRACKING
+// 12. WASTAGE & SPOILAGE TRACKING (Connected to Inventory Stock)
 // ─────────────────────────────────────────────────────────────────────────────
-let cachedWastageLogs = (() => {
-  try {
-    const raw = localStorage.getItem("pos_wastage_records");
-    return raw ? JSON.parse(raw) : [];
-  } catch (e) {
-    return [];
-  }
-})();
+let cachedWastageLogs = [];
 
 async function renderWastage(c) {
   c = c || document.getElementById("view-container") || document.getElementById("content-area");
   if (!c) return;
+
+  try {
+    const [wRes, invRes] = await Promise.all([
+      Auth.fetch("/api/v1/inventory/wastage/list"),
+      (!cachedInventory || !cachedInventory.length) ? Auth.fetch("/api/v1/inventory") : Promise.resolve(null)
+    ]);
+    if (wRes && wRes.ok) {
+      cachedWastageLogs = await wRes.json();
+    }
+    if (invRes && invRes.ok) {
+      cachedInventory = await invRes.json();
+    }
+  } catch (e) {}
+
   const totalCost = cachedWastageLogs.reduce((sum, w) => sum + (Number(w.cost) || 0), 0);
 
   c.innerHTML = `
@@ -8090,7 +10160,7 @@ async function renderWastage(c) {
         <div class="stat-icon orange"><i class="fas fa-clock"></i></div>
         <div class="stat-info">
           <h3>Expiration Waste</h3>
-          <div class="stat-count" style="color:#f97316;">${cachedWastageLogs.filter(w => w.reason.includes('Expired') || w.reason.includes('Spoiled')).length}</div>
+          <div class="stat-count" style="color:#f97316;">${cachedWastageLogs.filter(w => (w.reason || '').includes('Expired') || (w.reason || '').includes('Spoiled')).length}</div>
           <div class="stat-trend" style="color:#f97316;">Perishables</div>
         </div>
       </div>
@@ -8098,7 +10168,7 @@ async function renderWastage(c) {
         <div class="stat-icon purple"><i class="fas fa-utensils"></i></div>
         <div class="stat-info">
           <h3>Kitchen Prep Waste</h3>
-          <div class="stat-count" style="color:#9333ea;">${cachedWastageLogs.filter(w => w.reason.includes('Spill') || w.reason.includes('Burnt')).length}</div>
+          <div class="stat-count" style="color:#9333ea;">${cachedWastageLogs.filter(w => (w.reason || '').includes('Spill') || (w.reason || '').includes('Burnt')).length}</div>
           <div class="stat-trend" style="color:#9333ea;">Operational Loss</div>
         </div>
       </div>
@@ -8114,7 +10184,7 @@ async function renderWastage(c) {
     <div class="section-card">
       <div class="section-head">
         <h2>Wastage & Spoilage Incident Logs</h2>
-        <span style="font-size:13px; color:var(--text-muted);">Shrinkage and food loss audit</span>
+        <span style="font-size:13px; color:var(--text-muted);">Shrinkage and food loss audit (auto-deducted from inventory)</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -8153,22 +10223,55 @@ async function renderWastage(c) {
   `;
 }
 
-function openLogWastageModal() {
+function updateWastageModalCalculations() {
+  const sel = document.getElementById("ws-item-id");
+  const unitHintEl = document.getElementById("ws-unit-hint");
+  if (!sel) return;
+
+  const itemId = Number(sel.value);
+  const item = (cachedInventory || []).find(i => Number(i.id) === itemId);
+  if (unitHintEl) {
+    unitHintEl.textContent = item ? `Current Stock: ${Number(item.quantity)} ${item.unit || 'pcs'}` : 'Select an item';
+  }
+}
+
+async function openLogWastageModal(preselectItemId) {
+  if (!cachedInventory || !cachedInventory.length) {
+    try {
+      const res = await Auth.fetch("/api/v1/inventory");
+      if (res.ok) cachedInventory = await res.json();
+    } catch (e) {}
+  }
+
+  const items = (cachedInventory || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  const directItem = preselectItemId ? items.find(i => Number(i.id) === Number(preselectItemId)) : null;
+  const optionsHtml = items.length
+    ? items.map(i => `<option value="${i.id}" ${Number(preselectItemId) === Number(i.id) ? 'selected' : ''}>${Utils.escapeHtml(i.name)} (${Number(i.quantity)} ${Utils.escapeHtml(i.unit || 'pcs')} available)</option>`).join('')
+    : '<option value="">No inventory items available</option>';
+
+  const itemFieldHtml = directItem
+    ? `
+      <input type="hidden" id="ws-item-id" value="${directItem.id}">
+      <input type="text" class="input-field" readonly value="${Utils.escapeHtml(directItem.name)} (${Number(directItem.quantity)} ${Utils.escapeHtml(directItem.unit || 'pcs')} available)" style="width:100%; background:#f4f4f5; font-weight:700; cursor:default;">
+      <div id="ws-unit-hint" style="font-size:11px; color:var(--text-muted); margin-top:4px;">Current Stock: ${Number(directItem.quantity)} ${Utils.escapeHtml(directItem.unit || 'pcs')}</div>
+    `
+    : `
+      <select id="ws-item-id" class="input-field" required style="width:100%;" onchange="updateWastageModalCalculations()">
+        <option value="">-- Select Inventory Item --</option>
+        ${optionsHtml}
+      </select>
+      <div id="ws-unit-hint" style="font-size:11px; color:var(--text-muted); margin-top:4px;"></div>
+    `;
+
   Utils.openModal("Record Spoilage / Wastage", `
     <form id="form-wastage" onsubmit="event.preventDefault(); submitLogWastage();">
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Ingredient / Stock Item <span style="color:var(--danger);">*</span></label>
-        <input id="ws-item" class="input-field" required placeholder="e.g. Beef Patties, Fresh Lettuce" style="width:100%;">
+        ${itemFieldHtml}
       </div>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
-        <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Quantity Lost <span style="color:var(--danger);">*</span></label>
-          <input id="ws-qty" class="input-field" required placeholder="e.g. 2.5 kg or 10 pcs" style="width:100%;">
-        </div>
-        <div class="input-group">
-          <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Estimated Loss Cost (₱) <span style="color:var(--danger);">*</span></label>
-          <input type="number" step="0.01" id="ws-cost" class="input-field" required placeholder="350.00" style="width:100%;">
-        </div>
+      <div class="input-group" style="margin-bottom:14px;">
+        <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Pieces / Quantity Lost <span style="color:var(--danger);">*</span></label>
+        <input type="number" step="any" min="0.01" id="ws-qty" class="input-field" required placeholder="e.g. 2" style="width:100%;">
       </div>
       <div class="input-group" style="margin-bottom:14px;">
         <label style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">Reason for Loss <span style="color:var(--danger);">*</span></label>
@@ -8181,35 +10284,52 @@ function openLogWastageModal() {
         </select>
       </div>
     </form>
-  `, `<button class="btn btn-danger" onclick="submitLogWastage()"><i class="fas fa-trash-alt"></i> Record Wastage</button>`);
+  `, `<button class="btn btn-danger" id="btn-submit-wastage" onclick="submitLogWastage()"><i class="fas fa-trash-alt"></i> Record Wastage</button>`);
 }
 
-function submitLogWastage() {
-  const item = document.getElementById("ws-item")?.value.trim();
-  const qty = document.getElementById("ws-qty")?.value.trim();
-  const cost = parseFloat(document.getElementById("ws-cost")?.value) || 0;
+async function submitLogWastage() {
+  const itemId = Number(document.getElementById("ws-item-id")?.value);
+  const qty = parseFloat(document.getElementById("ws-qty")?.value);
   const reason = document.getElementById("ws-reason")?.value;
-  const currentUser = (typeof Auth !== 'undefined' && Auth.getUser && Auth.getUser()) ? Auth.getUser().username : 'Inventory Staff';
+  const btn = document.getElementById("btn-submit-wastage");
 
-  if (!item || !qty || cost <= 0) {
-    Utils.showToast("Please provide all required wastage report details.", "danger");
+  if (!itemId || isNaN(qty) || qty <= 0) {
+    Utils.showToast("Please select an inventory item and enter a valid quantity lost.", "danger");
     return;
   }
 
-  const newLog = {
-    id: cachedWastageLogs.length + 1,
-    item, qty, reason, cost,
-    logged_by: currentUser,
-    date: new Date().toLocaleString()
-  };
-
-  cachedWastageLogs.unshift(newLog);
+  if (btn) btn.disabled = true;
   try {
-    localStorage.setItem("pos_wastage_records", JSON.stringify(cachedWastageLogs));
-  } catch (e) {}
-  Utils.showToast("Wastage incident logged and stock deducted.", "success");
-  Utils.closeModal();
-  renderWastage();
+    const res = await Auth.fetch(`/api/v1/inventory/${itemId}/wastage`, {
+      method: "POST",
+      body: JSON.stringify({
+        quantity: qty,
+        reason: reason || "Wastage / Spoilage"
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to record wastage.");
+    }
+    const created = await res.json();
+    const cachedItem = (cachedInventory || []).find(i => Number(i.id) === itemId);
+    if (cachedItem && typeof created.new_quantity === "number") {
+      cachedItem.quantity = created.new_quantity;
+    }
+
+    Utils.showToast(`Wastage recorded for ${created.item} (${created.qty}) and deducted from stock.`, "success");
+    Utils.closeModal();
+
+    const active = typeof getActiveViewName === "function" ? getActiveViewName() : "";
+    if (active === "inventory" && typeof renderInventory === "function") {
+      renderInventory();
+    } else if (typeof renderWastage === "function") {
+      renderWastage();
+    }
+  } catch (err) {
+    if (btn) btn.disabled = false;
+    Utils.showToast(err.message || "Failed to record wastage.", "danger");
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -10269,14 +12389,20 @@ window.reloadTransferDialogData = reloadTransferDialogData;
         break;
 
       case "INVENTORY_UPDATED":
-        cachedInventory = [];
         cachedProfitLossData = null;
         if (activeView === "inventory" && typeof renderInventory === "function") {
+          if (Date.now() < (window._skipInvWsRefreshUntil || 0) || (typeof hasUnsavedInventoryStockInputs === "function" && hasUnsavedInventoryStockInputs())) {
+            break;
+          }
+          cachedInventory = [];
           renderInventory();
-        } else if (activeView === "profit_loss" && typeof renderProfitLoss === "function") {
-          renderProfitLoss();
-        } else if (activeView === "dashboard" && typeof renderDashboard === "function") {
-          renderDashboard();
+        } else {
+          cachedInventory = [];
+          if (activeView === "profit_loss" && typeof renderProfitLoss === "function") {
+            renderProfitLoss();
+          } else if (activeView === "dashboard" && typeof renderDashboard === "function") {
+            renderDashboard();
+          }
         }
         break;
 
@@ -10424,10 +12550,17 @@ window.reloadTransferDialogData = reloadTransferDialogData;
               else if (activeView === "transactions") renderTransactions();
               break;
             case "INVENTORY_UPDATED":
-              cachedInventory = [];
               cachedProfitLossData = null;
-              if (activeView === "inventory") renderInventory();
-              else if (activeView === "profit_loss" && typeof renderProfitLoss === "function") renderProfitLoss();
+              if (activeView === "inventory") {
+                if (Date.now() < (window._skipInvWsRefreshUntil || 0) || (typeof hasUnsavedInventoryStockInputs === "function" && hasUnsavedInventoryStockInputs())) {
+                  break;
+                }
+                cachedInventory = [];
+                renderInventory();
+              } else {
+                cachedInventory = [];
+                if (activeView === "profit_loss" && typeof renderProfitLoss === "function") renderProfitLoss();
+              }
               break;
             case "FINANCIAL_UPDATED":
               cachedProfitLossData = null;
@@ -10583,3 +12716,884 @@ window.previewLastReceipt = async function() {
     Utils.showToast("No recent receipt found in this session.", "info");
   }
 };
+
+// ============================================================================
+// DAILY INVENTORY HISTORY & AUDIT TRAIL MODULE — ADMIN / OWNER ONLY
+// ============================================================================
+
+let currentHistPage = 1;
+let currentHistLimit = 25;
+let currentHistFilters = {
+  search: "",
+  category: "ALL",
+  item_id: "",
+  submitted_by: "",
+  role: "ALL",
+  sort: "newest",
+  date_mode: "today",
+  specific_date: "",
+  start_date: "",
+  end_date: ""
+};
+let cachedAuditHistoryData = null;
+let histSearchDebounceTimer = null;
+
+async function renderInventoryHistory(c) {
+  if (!c) c = document.getElementById("view-container");
+  if (!c) return;
+
+  c.innerHTML = `
+    <div style="display:flex; justify-content:center; align-items:center; min-height:280px; color:var(--text-muted, #71717a);">
+      <div style="text-align:center;">
+        <i class="fas fa-spinner fa-spin" style="font-size:2rem; margin-bottom:0.75rem; color:#c9a227;"></i>
+        <p style="font-size:14px; font-weight:600;">Loading Daily Inventory Audit Trail...</p>
+      </div>
+    </div>
+  `;
+
+  try {
+    await fetchAndRenderInventoryHistory(c);
+  } catch (err) {
+    console.error("Error loading inventory audit history:", err);
+    c.innerHTML = `
+      <div class="section-card" style="padding:28px; border:1px solid rgba(239,68,68,0.35); text-align:center;">
+        <div style="width:54px; height:54px; border-radius:50%; background:rgba(239,68,68,0.1); color:#ef4444; display:inline-flex; align-items:center; justify-content:center; font-size:24px; margin-bottom:12px;">
+          <i class="fas fa-triangle-exclamation"></i>
+        </div>
+        <h3 style="color:var(--danger, #ef4444); font-size:17px; font-weight:700; margin-bottom:6px;">Unable to Load Inventory History</h3>
+        <p style="color:var(--text-muted, #71717a); font-size:13px; max-width:480px; margin:0 auto 16px;">${Utils.escapeHtml(err.message || "An unexpected error occurred while fetching historical records.")}</p>
+        <button class="btn btn-primary btn-sm" onclick="renderInventoryHistory()" style="display:inline-flex; align-items:center; gap:6px;">
+          <i class="fas fa-rotate-right"></i> Try Again
+        </button>
+      </div>
+    `;
+  }
+}
+
+function getActiveHistoryDates() {
+  const manilaNow = new Date();
+  const formatYMD = (d) => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const todayStr = (cachedAuditHistoryData && cachedAuditHistoryData.filters && cachedAuditHistoryData.filters.today_date) || formatYMD(manilaNow);
+
+  if (currentHistFilters.date_mode === "today") {
+    return { specific_date: todayStr, start_date: "", end_date: "" };
+  } else if (currentHistFilters.date_mode === "yesterday") {
+    const yest = new Date(manilaNow);
+    yest.setDate(yest.getDate() - 1);
+    return { specific_date: formatYMD(yest), start_date: "", end_date: "" };
+  } else if (currentHistFilters.date_mode === "last7") {
+    const d7 = new Date(manilaNow);
+    d7.setDate(d7.getDate() - 6);
+    return { specific_date: "", start_date: formatYMD(d7), end_date: todayStr };
+  } else if (currentHistFilters.date_mode === "month") {
+    const mStart = new Date(manilaNow.getFullYear(), manilaNow.getMonth(), 1);
+    return { specific_date: "", start_date: formatYMD(mStart), end_date: todayStr };
+  } else if (currentHistFilters.date_mode === "custom") {
+    return {
+      specific_date: currentHistFilters.specific_date || "",
+      start_date: currentHistFilters.start_date || "",
+      end_date: currentHistFilters.end_date || ""
+    };
+  }
+  return { specific_date: todayStr, start_date: "", end_date: "" };
+}
+
+async function fetchAndRenderInventoryHistory(c) {
+  if (!c) c = document.getElementById("view-container");
+  if (!c) return;
+
+  const dates = getActiveHistoryDates();
+  const params = new URLSearchParams({
+    page: String(currentHistPage),
+    limit: String(currentHistLimit),
+    sort: currentHistFilters.sort || "newest"
+  });
+
+  if (dates.specific_date) params.append("specific_date", dates.specific_date);
+  if (dates.start_date) params.append("start_date", dates.start_date);
+  if (dates.end_date) params.append("end_date", dates.end_date);
+  if (currentHistFilters.category && currentHistFilters.category !== "ALL") params.append("category", currentHistFilters.category);
+  if (currentHistFilters.item_id) params.append("item_id", currentHistFilters.item_id);
+  if (currentHistFilters.submitted_by) params.append("submitted_by", currentHistFilters.submitted_by);
+  if (currentHistFilters.role && currentHistFilters.role !== "ALL") params.append("role", currentHistFilters.role);
+  if (currentHistFilters.search && currentHistFilters.search.trim()) params.append("search", currentHistFilters.search.trim());
+
+  const res = await Auth.fetch(`/api/v1/inventory/audit-history?${params.toString()}`);
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.detail || "Failed to load inventory audit trail.");
+  }
+
+  const data = await res.json();
+  cachedAuditHistoryData = data;
+  const items = data.items || [];
+  const summary = data.summary || { total_recorded_today: 0, total_categories_today: 0, stock_increases_today: 0, stock_decreases_today: 0 };
+  const filterMeta = data.filters || { categories: [], submitters: [], items: [], today_date: "" };
+
+  const startIdx = data.total > 0 ? (data.page - 1) * data.limit + 1 : 0;
+  const endIdx = Math.min(data.page * data.limit, data.total);
+
+  c.innerHTML = `
+    <!-- Top Automated Inventory Audit Summary Cards -->
+    <div class="stats-grid fade-up" style="margin-bottom:22px;">
+      <div class="stat-card" style="border-left:4px solid #c9a227;">
+        <div class="stat-icon gold"><i class="fas fa-clipboard-check"></i></div>
+        <div class="stat-info">
+          <h3>Items Recorded Today</h3>
+          <div class="stat-count" style="color:#c9a227;">${Utils.escapeHtml(summary.total_recorded_today)}</div>
+          <div class="stat-trend" style="color:#c9a227;"><i class="fas fa-calendar-day"></i> Philippine Date: ${Utils.escapeHtml(filterMeta.today_date)}</div>
+        </div>
+      </div>
+      <div class="stat-card" style="border-left:4px solid #6366f1;">
+        <div class="stat-icon purple" style="background:rgba(99,102,241,0.12); color:#6366f1;"><i class="fas fa-layer-group"></i></div>
+        <div class="stat-info">
+          <h3>Active Categories</h3>
+          <div class="stat-count" style="color:#6366f1;">${Utils.escapeHtml(summary.total_categories_today)}</div>
+          <div class="stat-trend" style="color:#6366f1;"><i class="fas fa-boxes-stacked"></i> Tracked Today</div>
+        </div>
+      </div>
+      <div class="stat-card" style="border-left:4px solid #10b981;">
+        <div class="stat-icon green"><i class="fas fa-history"></i></div>
+        <div class="stat-info">
+          <h3>Total Audit Records</h3>
+          <div class="stat-count" style="color:#10b981;">${Utils.escapeHtml(data.total || 0)}</div>
+          <div class="stat-trend" style="color:#10b981;"><i class="fas fa-database"></i> Preserved In History</div>
+        </div>
+      </div>
+      <div class="stat-card" style="border-left:4px solid #f97316;">
+        <div class="stat-icon orange" style="background:rgba(249,115,22,0.12); color:#f97316;"><i class="fas fa-boxes-stacked"></i></div>
+        <div class="stat-info">
+          <h3>Catalog Items</h3>
+          <div class="stat-count" style="color:#f97316;">${Utils.escapeHtml((filterMeta.items || []).length || 0)}</div>
+          <div class="stat-trend" style="color:#f97316;"><i class="fas fa-tags"></i> Monitored Products</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Filter & Search Controls Card -->
+    <div class="section-card fade-up delay-1" style="margin-bottom:20px; padding:20px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div style="width:36px; height:36px; border-radius:10px; background:rgba(201,162,39,0.14); color:#c9a227; display:flex; align-items:center; justify-content:center; font-size:16px;">
+            <i class="fas fa-filter"></i>
+          </div>
+          <div>
+            <h3 style="font-size:15px; font-weight:800; margin:0; color:var(--text-main);">Daily Inventory Filters</h3>
+            <p style="font-size:12px; color:var(--text-muted); margin:2px 0 0 0;">Filter historical stock recordings by date, category, submitter, and role</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Date Presets Bar -->
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px; padding-bottom:12px; border-bottom:1px solid rgba(0,0,0,0.06);">
+        <span style="font-size:12px; font-weight:700; color:var(--text-muted); margin-right:4px;">Date Preset:</span>
+        <button type="button" class="btn ${currentHistFilters.date_mode === 'today' ? 'btn-primary' : 'btn-outline'} btn-sm" style="border-radius:18px; padding:4px 12px; font-size:11.5px;" onclick="setHistDateMode('today')">
+          <i class="fas fa-calendar-check"></i> Today
+        </button>
+        <button type="button" class="btn ${currentHistFilters.date_mode === 'yesterday' ? 'btn-primary' : 'btn-outline'} btn-sm" style="border-radius:18px; padding:4px 12px; font-size:11.5px;" onclick="setHistDateMode('yesterday')">
+          Yesterday
+        </button>
+        <button type="button" class="btn ${currentHistFilters.date_mode === 'last7' ? 'btn-primary' : 'btn-outline'} btn-sm" style="border-radius:18px; padding:4px 12px; font-size:11.5px;" onclick="setHistDateMode('last7')">
+          Last 7 Days
+        </button>
+        <button type="button" class="btn ${currentHistFilters.date_mode === 'month' ? 'btn-primary' : 'btn-outline'} btn-sm" style="border-radius:18px; padding:4px 12px; font-size:11.5px;" onclick="setHistDateMode('month')">
+          This Month
+        </button>
+        <button type="button" class="btn ${currentHistFilters.date_mode === 'custom' ? 'btn-primary' : 'btn-outline'} btn-sm" style="border-radius:18px; padding:4px 12px; font-size:11.5px;" onclick="setHistDateMode('custom')">
+          <i class="fas fa-calendar-days"></i> Custom Date / Range
+        </button>
+      </div>
+
+      <!-- Filters Grid -->
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px; align-items:flex-end;">
+        <div>
+          <label style="display:block; font-size:11.5px; font-weight:700; color:var(--text-muted); margin-bottom:5px;">Search Item / SKU</label>
+          <div style="position:relative;">
+            <i class="fas fa-search" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--text-muted); font-size:12px;"></i>
+            <input type="text" id="hist-filter-search" class="input-field" placeholder="Search product name..." value="${Utils.escapeHtml(currentHistFilters.search)}" style="padding-left:34px; height:36px; font-size:13px; width:100%;" oninput="onHistSearchInput(this.value)">
+          </div>
+        </div>
+
+        ${currentHistFilters.date_mode === 'custom' ? `
+          <div>
+            <label style="display:block; font-size:11.5px; font-weight:700; color:var(--text-muted); margin-bottom:5px;">Start Date</label>
+            <input type="date" id="hist-filter-start" class="input-field" value="${Utils.escapeHtml(currentHistFilters.start_date)}" style="height:36px; font-size:13px; width:100%;" onchange="onHistCustomDateChange()">
+          </div>
+          <div>
+            <label style="display:block; font-size:11.5px; font-weight:700; color:var(--text-muted); margin-bottom:5px;">End Date</label>
+            <input type="date" id="hist-filter-end" class="input-field" value="${Utils.escapeHtml(currentHistFilters.end_date)}" style="height:36px; font-size:13px; width:100%;" onchange="onHistCustomDateChange()">
+          </div>
+        ` : ''}
+
+        <div>
+          <label style="display:block; font-size:11.5px; font-weight:700; color:var(--text-muted); margin-bottom:5px;">Department / Category</label>
+          <select id="hist-filter-cat" class="input-field" style="height:36px; font-size:13px; width:100%;" onchange="onHistFilterChange('category', this.value)">
+            <option value="ALL">All Categories</option>
+            ${filterMeta.categories.map(cat => `
+              <option value="${Utils.escapeHtml(cat)}" ${currentHistFilters.category === cat ? 'selected' : ''}>${Utils.escapeHtml(cat)}</option>
+            `).join('')}
+          </select>
+        </div>
+
+        <div>
+          <label style="display:block; font-size:11.5px; font-weight:700; color:var(--text-muted); margin-bottom:5px;">Specific Item</label>
+          <select id="hist-filter-item" class="input-field" style="height:36px; font-size:13px; width:100%;" onchange="onHistFilterChange('item_id', this.value)">
+            <option value="">All Inventory Items</option>
+            ${(filterMeta.items || []).map(it => `
+              <option value="${Utils.escapeHtml(it.id)}" ${String(currentHistFilters.item_id) === String(it.id) ? 'selected' : ''}>${Utils.escapeHtml(it.name)}</option>
+            `).join('')}
+          </select>
+        </div>
+
+        <div>
+          <label style="display:block; font-size:11.5px; font-weight:700; color:var(--text-muted); margin-bottom:5px;">Submitted By</label>
+          <select id="hist-filter-user" class="input-field" style="height:36px; font-size:13px; width:100%;" onchange="onHistFilterChange('submitted_by', this.value)">
+            <option value="">All Submitters</option>
+            ${(filterMeta.submitters || []).map(sub => `
+              <option value="${Utils.escapeHtml(sub.id)}" ${String(currentHistFilters.submitted_by) === String(sub.id) ? 'selected' : ''}>${Utils.escapeHtml(sub.name)} (${Utils.escapeHtml(sub.role)})</option>
+            `).join('')}
+          </select>
+        </div>
+
+        <div>
+          <label style="display:block; font-size:11.5px; font-weight:700; color:var(--text-muted); margin-bottom:5px;">Role</label>
+          <select id="hist-filter-role" class="input-field" style="height:36px; font-size:13px; width:100%;" onchange="onHistFilterChange('role', this.value)">
+            <option value="ALL" ${currentHistFilters.role === 'ALL' ? 'selected' : ''}>All Roles</option>
+            <option value="Inventory" ${currentHistFilters.role === 'Inventory' ? 'selected' : ''}>Inventory Staff</option>
+            <option value="Manager" ${currentHistFilters.role === 'Manager' ? 'selected' : ''}>Manager</option>
+            <option value="Admin" ${currentHistFilters.role === 'Admin' ? 'selected' : ''}>Admin</option>
+          </select>
+        </div>
+
+        <div>
+          <label style="display:block; font-size:11.5px; font-weight:700; color:var(--text-muted); margin-bottom:5px;">Sort By</label>
+          <select id="hist-filter-sort" class="input-field" style="height:36px; font-size:13px; width:100%;" onchange="onHistFilterChange('sort', this.value)">
+            <option value="newest" ${currentHistFilters.sort === 'newest' ? 'selected' : ''}>Newest First</option>
+            <option value="oldest" ${currentHistFilters.sort === 'oldest' ? 'selected' : ''}>Oldest First</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Inventory History Table Card -->
+    <div class="section-card fade-up delay-2">
+      <div class="section-head" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <h2>Daily Inventory Audit Trail</h2>
+          <span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; font-weight:800; font-size:11.5px;">Immutable Records</span>
+        </div>
+        <span style="font-size:13px; color:var(--text-muted);">
+          ${data.total > 0 ? `Showing <strong>${startIdx}</strong>–<strong>${endIdx}</strong> of <strong>${data.total}</strong> records` : '0 records found'}
+        </span>
+      </div>
+
+      <div class="table-wrap">
+        <table class="inventory-history-table">
+          <thead>
+            <tr>
+              <th style="min-width:110px;">Date</th>
+              <th style="min-width:105px;">Time (PST)</th>
+              <th style="min-width:180px;">Item Name</th>
+              <th>Category</th>
+              <th style="text-align:right;">Current Stock</th>
+              <th style="text-align:right; color:#059669;">New Total Stock</th>
+              <th>Submitted By</th>
+              <th>Role</th>
+              <th style="text-align:right; min-width:110px;">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${renderInventoryHistoryTableRows(items)}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pagination Footer -->
+      ${data.total_pages > 1 ? `
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:16px 20px; border-top:1px solid rgba(0,0,0,0.06); flex-wrap:wrap; gap:10px;">
+          <div style="font-size:13px; color:var(--text-muted);">
+            Page <strong>${data.page}</strong> of <strong>${data.total_pages}</strong>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn btn-outline btn-sm" ${data.page <= 1 ? 'disabled style="opacity:0.4; cursor:not-allowed;"' : ''} onclick="goToHistPage(${data.page - 1})">
+              <i class="fas fa-chevron-left"></i> Previous
+            </button>
+            <button class="btn btn-outline btn-sm" ${data.page >= data.total_pages ? 'disabled style="opacity:0.4; cursor:not-allowed;"' : ''} onclick="goToHistPage(${data.page + 1})">
+              Next <i class="fas fa-chevron-right"></i>
+            </button>
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function renderInventoryHistoryTableRows(items) {
+  if (!items || !items.length) {
+    return `
+      <tr>
+        <td colspan="9" style="text-align:center; padding:50px 20px; color:var(--text-muted);">
+          <div style="width:56px; height:56px; border-radius:50%; background:rgba(0,0,0,0.04); display:inline-flex; align-items:center; justify-content:center; margin-bottom:12px;">
+            <i class="fas fa-clock-rotate-left" style="font-size:26px; color:var(--text-muted); opacity:0.6;"></i>
+          </div>
+          <h4 style="font-size:15px; font-weight:700; color:var(--text-main); margin-bottom:4px;">No Historical Records Found</h4>
+          <p style="font-size:13px; max-width:440px; margin:0 auto 14px;">No inventory records match the current filter criteria for Philippine Standard Time.</p>
+          <button class="btn btn-outline btn-sm" onclick="resetInventoryHistoryFilters()" style="display:inline-flex; align-items:center; gap:6px;">
+            <i class="fas fa-rotate-left"></i> View Today's Records
+          </button>
+        </td>
+      </tr>
+    `;
+  }
+
+  return items.map(item => {
+
+
+    const prevStock = Number(item.previous_stock || 0);
+    const recStock = Number(item.recorded_stock || 0);
+
+    return `
+      <tr>
+        <td style="font-weight:600; color:var(--text-main); font-size:12.5px; white-space:nowrap;">
+          <i class="fas fa-calendar-day" style="color:#c9a227; margin-right:5px; font-size:11px;"></i>${Utils.escapeHtml(item.date_display)}
+        </td>
+        <td style="font-weight:600; color:var(--text-muted); font-size:12.5px; white-space:nowrap;">
+          <i class="fas fa-clock" style="color:var(--text-muted); margin-right:4px; font-size:11px;"></i>${Utils.escapeHtml(item.time_display)}
+        </td>
+        <td>
+          <strong style="color:var(--text-main); font-size:13.5px;">${Utils.escapeHtml(item.item_name)}</strong>
+        </td>
+        <td>
+          <span class="badge" style="background:rgba(201,162,39,0.12); color:#c9a227; font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px;">
+            ${Utils.escapeHtml(item.category || 'Kitchen')}
+          </span>
+        </td>
+        <td style="text-align:right; font-weight:600; color:var(--text-muted); font-size:13px;">
+          ${prevStock % 1 === 0 ? prevStock : prevStock.toFixed(2)}
+        </td>
+        <td style="text-align:right; font-weight:800; color:#059669; font-size:13.5px;">
+          ${recStock % 1 === 0 ? recStock : recStock.toFixed(2)}
+        </td>
+        
+        <td style="font-weight:600; color:var(--text-main); font-size:12.5px;">
+          <i class="fas fa-user-circle" style="color:#c9a227; margin-right:4px;"></i>${Utils.escapeHtml(item.submitted_by_name || 'Staff')}
+        </td>
+        <td>
+          <span class="badge" style="background:#f4f4f5; color:#27272a; font-size:11px; font-weight:700; border:1px solid #e4e4e7;">
+            ${Utils.escapeHtml(item.submitted_by_role || 'Staff')}
+          </span>
+        </td>
+        <td style="text-align:right; white-space:nowrap;">
+          <button class="btn btn-outline btn-sm" onclick="openInventoryItemHistoryModal(${item.inventory_item_id || 0}, ${Utils.jsArg(item.item_name)})" style="padding:4px 9px; font-size:11.5px; font-weight:700; border-radius:8px; display:inline-flex; align-items:center; gap:5px;" title="View Complete Product Timeline & Trend">
+            <i class="fas fa-eye" style="color:#c9a227;"></i> Details
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function setHistDateMode(mode) {
+  currentHistFilters.date_mode = mode;
+  currentHistPage = 1;
+  const c = document.getElementById("view-container");
+  if (c) fetchAndRenderInventoryHistory(c);
+}
+
+function onHistFilterChange(key, value) {
+  currentHistFilters[key] = value;
+  currentHistPage = 1;
+  const c = document.getElementById("view-container");
+  if (c) fetchAndRenderInventoryHistory(c);
+}
+
+function onHistCustomDateChange() {
+  const startEl = document.getElementById("hist-filter-start");
+  const endEl = document.getElementById("hist-filter-end");
+  if (startEl) currentHistFilters.start_date = startEl.value;
+  if (endEl) currentHistFilters.end_date = endEl.value;
+  currentHistPage = 1;
+  const c = document.getElementById("view-container");
+  if (c) fetchAndRenderInventoryHistory(c);
+}
+
+function onHistSearchInput(val) {
+  currentHistFilters.search = val;
+  if (histSearchDebounceTimer) clearTimeout(histSearchDebounceTimer);
+  histSearchDebounceTimer = setTimeout(() => {
+    currentHistPage = 1;
+    const c = document.getElementById("view-container");
+    if (c) fetchAndRenderInventoryHistory(c);
+  }, 350);
+}
+
+function resetInventoryHistoryFilters() {
+  currentHistFilters = {
+    search: "",
+    category: "ALL",
+    item_id: "",
+    submitted_by: "",
+    role: "ALL",
+    sort: "newest",
+    date_mode: "today",
+    specific_date: "",
+    start_date: "",
+    end_date: ""
+  };
+  currentHistPage = 1;
+  const c = document.getElementById("view-container");
+  if (c) fetchAndRenderInventoryHistory(c);
+}
+
+function goToHistPage(p) {
+  if (p < 1) return;
+  currentHistPage = p;
+  const c = document.getElementById("view-container");
+  if (c) fetchAndRenderInventoryHistory(c);
+}
+
+function exportInventoryHistory(format) {
+  const dates = getActiveHistoryDates();
+  const params = new URLSearchParams({ format: format || "csv" });
+  if (dates.specific_date) params.append("specific_date", dates.specific_date);
+  if (dates.start_date) params.append("start_date", dates.start_date);
+  if (dates.end_date) params.append("end_date", dates.end_date);
+  if (currentHistFilters.category && currentHistFilters.category !== "ALL") params.append("category", currentHistFilters.category);
+  if (currentHistFilters.item_id) params.append("item_id", currentHistFilters.item_id);
+  if (currentHistFilters.submitted_by) params.append("submitted_by", currentHistFilters.submitted_by);
+  if (currentHistFilters.role && currentHistFilters.role !== "ALL") params.append("role", currentHistFilters.role);
+  if (currentHistFilters.search && currentHistFilters.search.trim()) params.append("search", currentHistFilters.search.trim());
+
+  window.open(`/api/v1/inventory/audit-history/export?${params.toString()}`, "_blank");
+}
+
+function printInventoryHistoryReport() {
+  const items = (cachedAuditHistoryData && cachedAuditHistoryData.items) || [];
+  const summary = (cachedAuditHistoryData && cachedAuditHistoryData.summary) || {};
+
+  if (!items || items.length === 0) {
+    Utils.showToast("No inventory history records available to print.", "warning");
+    return;
+  }
+
+  const rowsHtml = items.map((r, idx) => `
+    <tr style="border-bottom:1px solid #e4e4e7; background:${idx % 2 === 0 ? '#ffffff' : '#fafafa'};">
+      <td style="padding:6px 8px; font-size:11px;">${Utils.escapeHtml(r.date_display)}</td>
+      <td style="padding:6px 8px; font-size:11px; color:#71717a;">${Utils.escapeHtml(r.time_display)}</td>
+      <td style="padding:6px 8px; font-size:11px; font-weight:700; color:#18181b;">${Utils.escapeHtml(r.item_name)}</td>
+      <td style="padding:6px 8px; font-size:11px; color:#52525b;">${Utils.escapeHtml(r.category)}</td>
+      <td style="padding:6px 8px; font-size:11px; text-align:right; font-family:monospace;">${Number(r.previous_stock).toFixed(2)}</td>
+      <td style="padding:6px 8px; font-size:11px; text-align:right; font-family:monospace; font-weight:700; color:#059669;">${Number(r.recorded_stock).toFixed(2)}</td>
+      <td style="padding:6px 8px; font-size:11px;">${Utils.escapeHtml(r.submitted_by_name)}</td>
+      <td style="padding:6px 8px; font-size:11px; color:#71717a;">${Utils.escapeHtml(r.submitted_by_role)}</td>
+    </tr>
+  `).join('');
+
+  const reportPaperHtml = `
+    <div id="inventory-report-paper" style="background:#ffffff; color:#18181b; padding:24px 28px; border-radius:6px; box-shadow:0 4px 20px rgba(0,0,0,0.08); font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size:12px; line-height:1.4;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; border-bottom:3px solid #c9a227; padding-bottom:12px; margin-bottom:14px;">
+        <div>
+          <h2 style="font-size:18px; font-weight:900; margin:0; color:#18181b;">GBLESS TRADING OPC &bull; BLESSIE FOOD HUB</h2>
+          <div style="font-size:13px; font-weight:700; color:#c9a227; margin-top:2px;">DAILY INVENTORY AUDIT &amp; STOCK HISTORY REPORT</div>
+          <div style="font-size:11px; color:#71717a; margin-top:2px;">Philippine Standard Time (Asia/Manila) | Generated: ${new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}</div>
+        </div>
+        <div style="text-align:right;">
+          <span style="background:#f4f4f5; border:1px solid #e4e4e7; border-radius:4px; padding:4px 10px; font-size:11px; font-weight:700;">AUDIT REPORT</span>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:10px; background:#fafafa; border:1px solid #e4e4e7; border-radius:6px; padding:10px 14px; margin-bottom:16px; font-size:11px;">
+        <div><strong>Total Listed:</strong> <span style="font-weight:700; color:#18181b;">${items.length} records</span></div>
+        <div><strong>Recorded Today:</strong> <span style="font-weight:700; color:#3b82f6;">${summary.total_recorded_today || 0}</span></div>
+        <div><strong>Stock Increases:</strong> <span style="font-weight:700; color:#059669;">+${summary.stock_increases_today || 0}</span></div>
+        <div><strong>Stock Decreases:</strong> <span style="font-weight:700; color:#ef4444;">-${summary.stock_decreases_today || 0}</span></div>
+      </div>
+
+      <div style="max-height:400px; overflow-y:auto; border:1px solid #e4e4e7; border-radius:6px; margin-bottom:16px;">
+        <table style="width:100%; border-collapse:collapse; font-size:11px; text-align:left;">
+          <thead style="background:#f4f4f5; position:sticky; top:0; z-index:2;">
+            <tr style="border-bottom:1px solid #d4d4d8;">
+              <th style="padding:7px 8px; font-weight:700;">Date</th>
+              <th style="padding:7px 8px; font-weight:700;">Time</th>
+              <th style="padding:7px 8px; font-weight:700;">Item Name</th>
+              <th style="padding:7px 8px; font-weight:700;">Category</th>
+              <th style="padding:7px 8px; font-weight:700; text-align:right;">Prev Stock</th>
+              <th style="padding:7px 8px; font-weight:700; text-align:right;">Rec Stock</th>
+              <th style="padding:7px 8px; font-weight:700;">Submitted By</th>
+              <th style="padding:7px 8px; font-weight:700;">Role</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+      </div>
+
+      <div style="border-top:1px solid #e4e4e7; padding-top:12px; display:flex; justify-content:space-between; font-size:11px; color:#71717a;">
+        <span>GBLESS Trading OPC &bull; Official Inventory History</span>
+        <span>Certified Document</span>
+      </div>
+    </div>
+  `;
+
+  const modalTitle = `<i class="fas fa-boxes-stacked" style="color:#059669; margin-right:8px;"></i> Inventory History Audit — Print Preview`;
+  const modalFooter = `
+    <div style="display:flex; justify-content:space-between; align-items:center; width:100%; gap:10px;">
+      <span style="font-size:12px; color:var(--text-muted);"><i class="fas fa-check-circle" style="color:#059669;"></i> Ready to print standard A4 / Letter format</span>
+      <div style="display:flex; gap:8px;">
+        <button type="button" class="btn btn-outline" onclick="Utils.closeModal()"><i class="fas fa-times"></i> Close Preview</button>
+        <button type="button" class="btn btn-primary" onclick="printInventoryReportDocument()" style="background:linear-gradient(135deg, #059669, #047857); border:none; color:#ffffff; font-weight:700;">
+          <i class="fas fa-print"></i> Print Now
+        </button>
+      </div>
+    </div>
+  `;
+
+  Utils.openModal(modalTitle, reportPaperHtml, modalFooter, "modal-xl");
+}
+
+function printInventoryReportDocument() {
+  const paper = document.getElementById("inventory-report-paper");
+  if (!paper) {
+    window.print();
+    return;
+  }
+  let frame = document.getElementById("print-inv-frame");
+  if (frame) {
+    try { document.body.removeChild(frame); } catch (e) {}
+  }
+  frame = document.createElement("iframe");
+  frame.id = "print-inv-frame";
+  frame.style.position = "fixed";
+  frame.style.right = "0";
+  frame.style.bottom = "0";
+  frame.style.width = "0";
+  frame.style.height = "0";
+  frame.style.border = "0";
+  document.body.appendChild(frame);
+
+  const doc = frame.contentWindow.document;
+  doc.open();
+  doc.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Daily Inventory Audit Report</title>
+      <style>
+        @page { size: A4 landscape; margin: 10mm; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 10px; color: #18181b; }
+        table { width: 100%; border-collapse: collapse; font-size: 11px; }
+        th { background: #f4f4f5; text-align: left; padding: 6px 8px; border-bottom: 1px solid #d4d4d8; font-weight: 700; }
+        td { padding: 6px 8px; border-bottom: 1px solid #e4e4e7; }
+        @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+      </style>
+    </head>
+    <body>
+      ${paper.innerHTML}
+    </body>
+    </html>
+  `);
+  doc.close();
+
+  setTimeout(() => {
+    try {
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+    } catch (e) {
+      window.print();
+    }
+  }, 250);
+}
+window.printInventoryReportDocument = printInventoryReportDocument;
+window.printInventoryHistoryReport = printInventoryHistoryReport;
+
+async function openInventoryItemHistoryModal(itemId, itemName) {
+  if (!itemId) {
+    Utils.showToast("Item details not available for this legacy record.", "warning");
+    return;
+  }
+
+  const modalHeaderHtml = `
+    <div style="display:flex; align-items:center; gap:12px; width:100%; text-align:left;">
+      <div style="width:42px; height:42px; border-radius:10px; background:linear-gradient(135deg, rgba(5,150,105,0.14) 0%, rgba(201,162,39,0.18) 100%); color:#059669; display:flex; align-items:center; justify-content:center; font-size:18px; border:1px solid rgba(201,162,39,0.35); flex-shrink:0;">
+        <i class="fas fa-clock-rotate-left" style="color:#c9a227;"></i>
+      </div>
+      <div style="flex:1; min-width:0;">
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <h3 style="font-size:18px; font-weight:800; margin:0; color:#18181b; line-height:1.2;">
+            ${Utils.escapeHtml(itemName || 'Item')}
+          </h3>
+          <span style="font-size:11px; font-weight:700; color:#059669; background:rgba(5,150,105,0.1); border:1px solid rgba(5,150,105,0.25); padding:2px 8px; border-radius:999px; text-transform:uppercase; letter-spacing:0.5px;">
+            Inventory History
+          </span>
+        </div>
+        <p style="font-size:12px; color:#71717a; margin:3px 0 0 0; line-height:1.3; font-weight:400;">
+          Complete chronological stock audit trail and submission records
+        </p>
+      </div>
+    </div>
+  `;
+
+  const modalFooterHtml = `
+    <div style="display:flex; justify-content:flex-end; width:100%;">
+      <button class="btn btn-outline" 
+              style="padding:8px 24px; font-weight:700; font-size:13px; border-radius:8px; border-color:#d4d4d8; background:#ffffff; color:#18181b; box-shadow:0 1px 2px rgba(0,0,0,0.04); cursor:pointer;" 
+              onclick="Utils.closeModal()">
+        Close
+      </button>
+    </div>
+  `;
+
+  Utils.openModal(
+    modalHeaderHtml,
+    `
+    <div id="item-history-modal-body" style="min-height:280px;">
+      <div style="text-align:center; padding:50px 16px; color:#71717a;">
+        <div style="width:48px; height:48px; border-radius:50%; background:rgba(201,162,39,0.12); color:#c9a227; display:inline-flex; align-items:center; justify-content:center; font-size:20px; margin-bottom:12px;">
+          <i class="fas fa-spinner fa-spin"></i>
+        </div>
+        <div style="font-size:14px; font-weight:700; color:#18181b;">Loading Audit Timeline...</div>
+        <div style="font-size:12px; color:#71717a; margin-top:4px;">Retrieving historical records from database</div>
+      </div>
+    </div>
+    `,
+    modalFooterHtml,
+    "modal-responsive modal-xl"
+  );
+
+  try {
+    const res = await Auth.fetch(`/api/v1/inventory/audit-history/item/${itemId}`);
+    if (!res.ok) throw new Error("Failed to load item audit history.");
+    const data = await res.json();
+    const item = data.item || {};
+    const history = data.history || [];
+
+    const host = document.getElementById("item-history-modal-body");
+    if (!host) return;
+
+    const curStock = Number(item.current_stock || 0);
+    const minStock = Number(item.min_stock || 0);
+    const unitPrice = Number(item.unit_price || 0);
+    const isLowStock = curStock <= minStock;
+    const unitSuffix = item.unit ? ` ${Utils.escapeHtml(item.unit)}` : '';
+
+    // Summary Card HTML (Warm cream / ivory, emerald green values, gold accents)
+    const summaryCardHtml = `
+      <div style="background:#fcfaf6; border:1px solid rgba(201,162,39,0.3); border-radius:14px; padding:18px 20px; margin-bottom:22px; box-shadow:0 2px 6px rgba(0,0,0,0.02);">
+        <!-- Main Metrics: Current Stock, Unit Price, Category -->
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:16px; align-items:center;">
+          
+          <!-- Current Stock -->
+          <div style="display:flex; align-items:center; gap:12px;">
+            <div style="width:44px; height:44px; border-radius:10px; background:rgba(5,150,105,0.12); color:#059669; display:flex; align-items:center; justify-content:center; font-size:18px; border:1px solid rgba(5,150,105,0.2); flex-shrink:0;">
+              <i class="fas fa-boxes-stacked"></i>
+            </div>
+            <div>
+              <div style="font-size:11px; font-weight:700; color:#71717a; text-transform:uppercase; letter-spacing:0.5px;">Current Stock</div>
+              <div style="font-size:22px; font-weight:900; color:#059669; line-height:1.2;">
+                ${curStock.toFixed(2)}${unitSuffix}
+              </div>
+            </div>
+          </div>
+
+          <!-- Unit Price -->
+          <div style="display:flex; align-items:center; gap:12px;">
+            <div style="width:44px; height:44px; border-radius:10px; background:rgba(201,162,39,0.12); color:#c9a227; display:flex; align-items:center; justify-content:center; font-size:18px; border:1px solid rgba(201,162,39,0.25); flex-shrink:0;">
+              <i class="fas fa-tag"></i>
+            </div>
+            <div>
+              <div style="font-size:11px; font-weight:700; color:#71717a; text-transform:uppercase; letter-spacing:0.5px;">Unit Price</div>
+              <div style="font-size:19px; font-weight:800; color:#18181b; line-height:1.2;">
+                ₱${unitPrice.toFixed(2)}
+              </div>
+            </div>
+          </div>
+
+          <!-- Category -->
+          <div style="display:flex; align-items:center; gap:12px;">
+            <div style="width:44px; height:44px; border-radius:10px; background:rgba(201,162,39,0.12); color:#c9a227; display:flex; align-items:center; justify-content:center; font-size:18px; border:1px solid rgba(201,162,39,0.25); flex-shrink:0;">
+              <i class="fas fa-layer-group"></i>
+            </div>
+            <div>
+              <div style="font-size:11px; font-weight:700; color:#71717a; text-transform:uppercase; letter-spacing:0.5px;">Category</div>
+              <div style="font-size:15px; font-weight:800; color:#18181b; line-height:1.2;">
+                ${Utils.escapeHtml(item.category || 'Kitchen')}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Minimum Threshold in Separate Highlighted Section Beneath Main Metrics -->
+        <div style="margin-top:14px; border-top:1px dashed rgba(201,162,39,0.3); padding-top:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <i class="fas fa-shield-halved" style="color:#c9a227; font-size:14px;"></i>
+            <span style="font-size:11.5px; font-weight:700; color:#71717a; text-transform:uppercase; letter-spacing:0.4px;">Minimum Threshold:</span>
+            <span style="font-size:13.5px; font-weight:800; color:#18181b;">${minStock.toFixed(2)}${unitSuffix}</span>
+          </div>
+          ${isLowStock ? `
+            <div style="display:inline-flex; align-items:center; gap:6px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.25); color:#dc2626; padding:4px 10px; border-radius:6px; font-size:11.5px; font-weight:700;">
+              <i class="fas fa-triangle-exclamation"></i> Low Stock Warning: Current stock is at or below minimum threshold
+            </div>
+          ` : `
+            <div style="display:inline-flex; align-items:center; gap:6px; background:rgba(5,150,105,0.08); border:1px solid rgba(5,150,105,0.2); color:#059669; padding:4px 10px; border-radius:6px; font-size:11.5px; font-weight:700;">
+              <i class="fas fa-circle-check"></i> Stock Healthy
+            </div>
+          `}
+        </div>
+      </div>
+    `;
+
+    if (!history.length) {
+      host.innerHTML = `
+        ${summaryCardHtml}
+        <div style="padding:48px 20px; text-align:center; background:#fcfaf6; border:1px dashed rgba(201,162,39,0.3); border-radius:14px; margin:10px 0;">
+          <div style="width:54px; height:54px; border-radius:50%; background:rgba(201,162,39,0.12); color:#c9a227; display:inline-flex; align-items:center; justify-content:center; font-size:22px; margin-bottom:12px;">
+            <i class="fas fa-boxes-stacked"></i>
+          </div>
+          <h4 style="font-weight:800; font-size:15px; color:#18181b; margin:0 0 6px 0;">No Historical Entries Yet</h4>
+          <p style="font-size:13px; color:#71717a; max-width:420px; margin:0 auto; line-height:1.5;">This item has not had any daily inventory submissions or stock adjustments recorded yet.</p>
+        </div>
+      `;
+      return;
+    }
+
+    // Chronological Audit Timeline Cards
+    const timelineHtml = history.map((entry, idx) => {
+      const prev = Number(entry.previous_stock || 0);
+      const rec = Number(entry.recorded_stock || 0);
+      const diff = typeof entry.difference === 'number' ? entry.difference : (rec - prev);
+      const entryUnit = entry.unit ? ` ${Utils.escapeHtml(entry.unit)}` : unitSuffix;
+      
+      let badgeHtml = '';
+      if (diff > 0) {
+        badgeHtml = `
+          <span style="display:inline-flex; align-items:center; gap:4px; background:rgba(5,150,105,0.1); border:1px solid rgba(5,150,105,0.25); color:#059669; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:800;">
+            <i class="fas fa-arrow-up" style="font-size:10px;"></i> +${diff.toFixed(2)}${entryUnit}
+          </span>
+        `;
+      } else if (diff < 0) {
+        badgeHtml = `
+          <span style="display:inline-flex; align-items:center; gap:4px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.25); color:#dc2626; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:800;">
+            <i class="fas fa-arrow-down" style="font-size:10px;"></i> ${diff.toFixed(2)}${entryUnit}
+          </span>
+        `;
+      } else {
+        badgeHtml = `
+          <span style="display:inline-flex; align-items:center; gap:4px; background:#f4f4f5; border:1px solid #e4e4e7; color:#71717a; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:700;">
+            0.00${entryUnit}
+          </span>
+        `;
+      }
+
+      const isLast = idx === history.length - 1;
+
+      return `
+        <div style="display:flex; gap:16px; position:relative; padding-bottom:${isLast ? '0' : '20px'};">
+          <!-- Timeline Vertical Node & Line -->
+          <div style="display:flex; flex-direction:column; align-items:center;">
+            <div style="width:28px; height:28px; border-radius:50%; background:#fcfaf6; color:#c9a227; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; border:2px solid #c9a227; flex-shrink:0; box-shadow:0 0 0 3px rgba(201,162,39,0.15);">
+              <i class="fas fa-check"></i>
+            </div>
+            ${!isLast ? '<div style="width:2px; flex:1; background:#e4e4e7; margin:6px 0;"></div>' : ''}
+          </div>
+
+          <!-- Timeline Card -->
+          <div style="flex:1; min-width:0; background:#ffffff; border:1px solid #e4e4e7; border-radius:12px; padding:14px 18px; box-shadow:0 1px 3px rgba(0,0,0,0.03);">
+            
+            <!-- Audit Entry Header -->
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+              <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px; font-size:13px; font-weight:700; color:#18181b;">
+                <span>
+                  <i class="fas fa-calendar-day" style="color:#c9a227; margin-right:6px;"></i>${Utils.escapeHtml(entry.date_display || entry.inventory_date)}
+                </span>
+                <span style="color:#d4d4d8;">|</span>
+                <span style="color:#71717a; font-weight:600; font-size:12px;">
+                  <i class="fas fa-clock" style="color:#71717a; margin-right:4px;"></i>${Utils.escapeHtml(entry.time_display || '')}
+                </span>
+              </div>
+              <div>
+                ${badgeHtml}
+              </div>
+            </div>
+
+            <!-- Audit Entry Details (3 columns with subtle vertical dividers on desktop) -->
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:12px; margin-bottom:12px; background:#fbf8f2; border:1px solid rgba(201,162,39,0.2); border-radius:10px; padding:10px 14px;">
+              <div style="border-right:1px solid rgba(201,162,39,0.2); padding-right:8px;">
+                <div style="font-size:11px; font-weight:700; color:#71717a; text-transform:uppercase; letter-spacing:0.4px;">Current Stock</div>
+                <div style="font-size:16px; font-weight:800; color:#18181b; margin-top:2px;">
+                  ${prev.toFixed(2)}
+                </div>
+              </div>
+              <div style="border-right:1px solid rgba(201,162,39,0.2); padding-right:8px; padding-left:4px;">
+                <div style="font-size:11px; font-weight:700; color:#71717a; text-transform:uppercase; letter-spacing:0.4px;">New Total Stock</div>
+                <div style="font-size:16px; font-weight:900; color:#059669; margin-top:2px;">
+                  ${rec.toFixed(2)}
+                </div>
+              </div>
+              <div style="padding-left:4px;">
+                <div style="font-size:11px; font-weight:700; color:#71717a; text-transform:uppercase; letter-spacing:0.4px;">Action Type</div>
+                <div style="font-size:12.5px; font-weight:800; color:#18181b; margin-top:3px; word-break:break-word;">
+                  ${Utils.escapeHtml(entry.action_type || 'DAILY_SUBMISSION')}
+                </div>
+              </div>
+            </div>
+
+            <!-- Audit Entry Footer -->
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; font-size:12px; color:#71717a; padding-top:8px; border-top:1px solid #f4f4f5;">
+              <div style="display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
+                <span style="display:inline-flex; align-items:center;">
+                  <i class="fas fa-user-circle" style="color:#c9a227; margin-right:5px; font-size:14px;"></i>
+                  <span>Submitted by <strong style="color:#18181b;">${Utils.escapeHtml(entry.submitted_by_name || 'Staff')}</strong></span>
+                </span>
+                <span class="badge" style="background:rgba(5,150,105,0.08); color:#047857; border:1px solid rgba(5,150,105,0.2); font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:6px; text-transform:uppercase;">
+                  ${Utils.escapeHtml(entry.submitted_by_role || 'INVENTORY')}
+                </span>
+              </div>
+              ${entry.notes ? `
+                <div style="font-size:11.5px; color:#52525b; font-style:italic;">
+                  <i class="fas fa-comment-dots" style="color:#c9a227; margin-right:4px;"></i>${Utils.escapeHtml(entry.notes)}
+                </div>
+              ` : `
+                <div style="font-size:11.5px; color:#a1a1aa; font-style:italic;">No remarks</div>
+              `}
+            </div>
+
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    host.innerHTML = `
+      ${summaryCardHtml}
+
+      <!-- Audit Trail Timeline Header & List -->
+      <div style="margin-top:18px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px;">
+          <div>
+            <h4 style="font-size:15px; font-weight:800; margin:0; color:#18181b; display:flex; align-items:center; gap:8px;">
+              <i class="fas fa-list-check" style="color:#c9a227;"></i>Audit Trail Timeline
+            </h4>
+            <p style="font-size:12px; color:#71717a; margin:3px 0 0 0;">Chronological record of all stock submissions for this item.</p>
+          </div>
+          <div>
+            <span style="background:rgba(201,162,39,0.12); color:#92400e; border:1px solid rgba(201,162,39,0.3); font-size:11.5px; font-weight:800; padding:4px 10px; border-radius:999px;">
+              ${history.length} ${history.length === 1 ? 'Entry' : 'Entries'}
+            </span>
+          </div>
+        </div>
+
+        <div style="padding-left:4px;">
+          ${timelineHtml}
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    Utils.showToast(err.message || "Failed to load item history.", "danger");
+  }
+}

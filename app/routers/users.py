@@ -157,6 +157,11 @@ def create_user(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Branch Admins cannot create ADMIN or SUPER_ADMIN accounts. Only Manager, Cashier, Inventory, or Kitchen accounts are allowed."
             )
+        if current_user.role == models.UserRole.MANAGER and user_in.role == models.UserRole.MANAGER:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Managers cannot create other Manager accounts."
+            )
         if not current_user.tenant_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is not assigned to a tenant.")
         assigned_tenant_id = current_user.tenant_id  # never taken from the request body
@@ -212,17 +217,23 @@ def create_user(
     )
     db.add(new_user)
     
-    # Audit log
-    log = models.ActivityLog(
-        tenant_id=new_user.tenant_id,
-        user_id=current_user.id,
-        action="User Created",
-        performed_by=current_user.username,
-        target_user=new_user.username,
-        role=str(new_user.role.value if hasattr(new_user.role, 'value') else new_user.role),
-        details=f"Created account for {new_user.email or new_user.username}"
-    )
-    db.add(log)
+    # Audit log (EXCLUDE SUPERADMIN)
+    if current_user.role != models.UserRole.SUPER_ADMIN:
+        log = models.ActivityLog(
+            tenant_id=new_user.tenant_id,
+            user_id=current_user.id,
+            action="Created Account",
+            performed_by=current_user.username,
+            target_user=new_user.username,
+            role=str(new_user.role.value if hasattr(new_user.role, 'value') else new_user.role),
+            details=f"Created account for {new_user.email or new_user.username}",
+            username=current_user.username,
+            full_name=f"{current_user.first_name or ''} {current_user.last_name or ''}".strip() or current_user.username,
+            activity_type="Created Account",
+            description=f"Created account for {new_user.email or new_user.username}",
+            status="SUCCESS"
+        )
+        db.add(log)
     
     db.commit()
     db.refresh(new_user)
@@ -283,17 +294,23 @@ def update_user(
             user.token_version = (user.token_version or 0) + 1
         user.is_active = user_in.is_active
         
-    # Audit log
-    log = models.ActivityLog(
-        tenant_id=user.tenant_id,
-        user_id=current_user.id,
-        action="User Edited",
-        performed_by=current_user.username,
-        target_user=user.username,
-        role=str(user.role.value if hasattr(user.role, 'value') else user.role),
-        details=f"Updated details for {user.username}"
-    )
-    db.add(log)
+    # Audit log (EXCLUDE SUPERADMIN)
+    if current_user.role != models.UserRole.SUPER_ADMIN:
+        log = models.ActivityLog(
+            tenant_id=user.tenant_id,
+            user_id=current_user.id,
+            action="Updated Account",
+            performed_by=current_user.username,
+            target_user=user.username,
+            role=str(user.role.value if hasattr(user.role, 'value') else user.role),
+            details=f"Updated details for {user.username}",
+            username=current_user.username,
+            full_name=f"{current_user.first_name or ''} {current_user.last_name or ''}".strip() or current_user.username,
+            activity_type="Updated Account",
+            description=f"Updated details for {user.username}",
+            status="SUCCESS"
+        )
+        db.add(log)
     
     db.commit()
     db.refresh(user)
@@ -326,17 +343,23 @@ def reset_user_password(
     user.password_hash = get_password_hash(req.new_password)
     user.token_version = (user.token_version or 0) + 1  # revoke existing sessions
     
-    # Audit log
-    log = models.ActivityLog(
-        tenant_id=user.tenant_id,
-        user_id=current_user.id,
-        action="Password Reset",
-        performed_by=current_user.username,
-        target_user=user.username,
-        role=str(user.role.value if hasattr(user.role, 'value') else user.role),
-        details=f"Reset password for {user.username}"
-    )
-    db.add(log)
+    # Audit log (EXCLUDE SUPERADMIN)
+    if current_user.role != models.UserRole.SUPER_ADMIN:
+        log = models.ActivityLog(
+            tenant_id=user.tenant_id,
+            user_id=current_user.id,
+            action="Reset Password",
+            performed_by=current_user.username,
+            target_user=user.username,
+            role=str(user.role.value if hasattr(user.role, 'value') else user.role),
+            details=f"Reset password for {user.username}",
+            username=current_user.username,
+            full_name=f"{current_user.first_name or ''} {current_user.last_name or ''}".strip() or current_user.username,
+            activity_type="Reset Password",
+            description=f"Reset password for {user.username}",
+            status="SUCCESS"
+        )
+        db.add(log)
     
     db.commit()
     return {"message": f"Password for {user.username} has been reset successfully."}
@@ -367,19 +390,25 @@ def toggle_user_status(
     user.is_active = not user.is_active
     if not user.is_active:
         user.token_version = (user.token_version or 0) + 1
-    action_text = "User Activated" if user.is_active else "User Deactivated"
+    action_text = "Activated Account" if user.is_active else "Deactivated Account"
     
-    # Audit log
-    log = models.ActivityLog(
-        tenant_id=user.tenant_id,
-        user_id=current_user.id,
-        action="Status Changed",
-        performed_by=current_user.username,
-        target_user=user.username,
-        role=str(user.role.value if hasattr(user.role, 'value') else user.role),
-        details=f"Changed status of {user.username} to {'Active' if user.is_active else 'Inactive'}"
-    )
-    db.add(log)
+    # Audit log (EXCLUDE SUPERADMIN)
+    if current_user.role != models.UserRole.SUPER_ADMIN:
+        log = models.ActivityLog(
+            tenant_id=user.tenant_id,
+            user_id=current_user.id,
+            action=action_text,
+            performed_by=current_user.username,
+            target_user=user.username,
+            role=str(user.role.value if hasattr(user.role, 'value') else user.role),
+            details=f"Changed status of {user.username} to {'Active' if user.is_active else 'Inactive'}",
+            username=current_user.username,
+            full_name=f"{current_user.first_name or ''} {current_user.last_name or ''}".strip() or current_user.username,
+            activity_type=action_text,
+            description=f"Changed status of {user.username} to {'Active' if user.is_active else 'Inactive'}",
+            status="SUCCESS"
+        )
+        db.add(log)
     
     db.commit()
     return {"message": f"User status updated to {'Active' if user.is_active else 'Inactive'}.", "is_active": user.is_active}
@@ -407,17 +436,23 @@ def delete_user(
     if user.id == current_user.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete your own account.")
         
-    # Audit log
-    log = models.ActivityLog(
-        tenant_id=user.tenant_id,
-        user_id=current_user.id,
-        action="User Deleted",
-        performed_by=current_user.username,
-        target_user=user.username,
-        role=str(user.role.value if hasattr(user.role, 'value') else user.role),
-        details=f"Deleted user account {user.username}"
-    )
-    db.add(log)
+    # Audit log (EXCLUDE SUPERADMIN)
+    if current_user.role != models.UserRole.SUPER_ADMIN:
+        log = models.ActivityLog(
+            tenant_id=user.tenant_id,
+            user_id=current_user.id,
+            action="Deleted Record",
+            performed_by=current_user.username,
+            target_user=user.username,
+            role=str(user.role.value if hasattr(user.role, 'value') else user.role),
+            details=f"Deleted user account {user.username}",
+            username=current_user.username,
+            full_name=f"{current_user.first_name or ''} {current_user.last_name or ''}".strip() or current_user.username,
+            activity_type="Deleted Record",
+            description=f"Deleted user account {user.username}",
+            status="SUCCESS"
+        )
+        db.add(log)
     
     db.delete(user)
     db.commit()

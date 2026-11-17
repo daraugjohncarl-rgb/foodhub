@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from decimal import Decimal
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from app.db import get_db
 import app.models as models
@@ -84,7 +85,7 @@ def end_shift(
         raise HTTPException(status_code=404, detail="No active shift found.")
 
     shift.end_cash = body.end_cash
-    shift.end_time = datetime.utcnow()
+    shift.end_time = datetime.now(ZoneInfo("Asia/Manila")).replace(tzinfo=None)
     shift.status = "closed"
     db.commit()
     db.refresh(shift)
@@ -259,8 +260,8 @@ def get_drawer_summary(
             "movements": movements
         })
 
-    from datetime import datetime, time
-    today = datetime.now().date()
+    from datetime import time
+    today = datetime.now(ZoneInfo("Asia/Manila")).date()
     start_of_day = datetime.combine(today, time.min)
     end_of_day = datetime.combine(today, time.max)
 
@@ -490,7 +491,7 @@ def cashout_shift(
 
     # 2. Close current shift
     shift.end_cash = max(Decimal("0.0"), current_expected - amount)
-    shift.end_time = datetime.utcnow()
+    shift.end_time = datetime.now(ZoneInfo("Asia/Manila")).replace(tzinfo=None)
     shift.status = "closed"
 
     # 3. Create a brand new active drawer/shift for the cashier reset to 0.00

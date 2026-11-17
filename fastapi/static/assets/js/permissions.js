@@ -4,16 +4,31 @@
  */
 
 const ROLE_NAV_CONFIG = {
-  admin: [
+  super_admin: [
     { id: "dashboard", label: "Dashboard", icon: "fas fa-chart-line" },
     { id: "cash_drawer", label: "Cash Drawer", icon: "fas fa-vault" },
     { id: "users", label: "User Management", icon: "fas fa-users-cog" },
+    { id: "inventory", label: "Inventory", icon: "fas fa-boxes" },
+    { id: "inventory_history", label: "Inventory History", icon: "fas fa-clock-rotate-left" },
     { id: "products", label: "Products & Menu", icon: "fas fa-utensils" },
     { id: "tables", label: "Table QRs", icon: "fas fa-qrcode" },
     { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },
     { id: "profit_loss", label: "Profit Loss and Income", icon: "fas fa-scale-balanced" },
     { id: "reports", label: "Reports & Analytics", icon: "fas fa-chart-bar" },
-    { id: "logs", label: "Audit Logs", icon: "fas fa-history" },
+    { id: "logs", label: "Activity Logs", icon: "fas fa-history" },
+    { id: "settings", label: "Settings", icon: "fas fa-cog" }
+  ],
+  admin: [
+    { id: "dashboard", label: "Dashboard", icon: "fas fa-chart-line" },
+    { id: "cash_drawer", label: "Cash Drawer", icon: "fas fa-vault" },
+    { id: "users", label: "User Management", icon: "fas fa-users-cog" },
+    { id: "inventory", label: "Inventory", icon: "fas fa-boxes" },
+    { id: "inventory_history", label: "Inventory History", icon: "fas fa-clock-rotate-left" },
+    { id: "products", label: "Products & Menu", icon: "fas fa-utensils" },
+    { id: "tables", label: "Table QRs", icon: "fas fa-qrcode" },
+    { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },
+    { id: "profit_loss", label: "Profit Loss and Income", icon: "fas fa-scale-balanced" },
+    { id: "reports", label: "Reports & Analytics", icon: "fas fa-chart-bar" },
     { id: "settings", label: "Settings", icon: "fas fa-cog" }
   ],
   manager: [
@@ -25,11 +40,11 @@ const ROLE_NAV_CONFIG = {
     { id: "tables", label: "Table QRs", icon: "fas fa-qrcode" },
     { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },
     { id: "profit_loss", label: "Profit Loss and Income", icon: "fas fa-scale-balanced" },
-    { id: "reports", label: "Reports & Analytics", icon: "fas fa-chart-bar" },
-    { id: "logs", label: "Audit Logs", icon: "fas fa-history" }
+    { id: "reports", label: "Reports & Analytics", icon: "fas fa-chart-bar" }
   ],
   inventory: [
     { id: "inventory", label: "Stock Overview", icon: "fas fa-boxes" },
+    { id: "inventory_history", label: "Inventory History", icon: "fas fa-clock-rotate-left" },
     { id: "suppliers", label: "Suppliers", icon: "fas fa-truck" },
     { id: "wastage", label: "Wastage Track", icon: "fas fa-trash-alt" }
   ],
@@ -51,7 +66,7 @@ function buildSidebarMenu(role, onNavigate) {
   if (!navEl && !menuEl) return;
 
   const r = (role || "").toLowerCase();
-  const normalizedRole = r === "super_admin" ? "admin" : r;
+  const normalizedRole = (r === "super_admin" || r === "superadmin") ? "super_admin" : r;
   const items = ROLE_NAV_CONFIG[normalizedRole] || ROLE_NAV_CONFIG.admin;
 
   if (navEl) {
@@ -126,7 +141,7 @@ function buildMobileBottomNav(role, onNavigate) {
   }
 
   const r = (role || "").toLowerCase();
-  const normalizedRole = r === "super_admin" ? "admin" : r;
+  const normalizedRole = (r === "super_admin" || r === "superadmin") ? "super_admin" : r;
   const items = ROLE_NAV_CONFIG[normalizedRole] || ROLE_NAV_CONFIG.admin;
   const primaryItems = items.slice(0, 4);
 

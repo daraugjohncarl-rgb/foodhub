@@ -136,6 +136,12 @@ def _role_guard(allowed: set, message: str):
 
 _R = models.UserRole
 
+# Superadmin exclusive access guard
+require_super_admin = _role_guard(
+    {_R.SUPER_ADMIN},
+    "Access denied. Requires SUPER_ADMIN role.",
+)
+
 # Baseline for every staff API: any authenticated, non-customer account.
 require_staff = _role_guard(
     {_R.SUPER_ADMIN, _R.ADMIN, _R.MANAGER, _R.CASHIER, _R.INVENTORY, _R.KITCHEN},
@@ -145,6 +151,11 @@ require_staff = _role_guard(
 require_admin = _role_guard(
     {_R.ADMIN, _R.SUPER_ADMIN},
     "Access denied. Requires ADMIN or SUPER_ADMIN role.",
+)
+
+require_admin_or_inventory = _role_guard(
+    {_R.ADMIN, _R.SUPER_ADMIN, _R.INVENTORY},
+    "Access denied. Requires ADMIN, SUPER_ADMIN, or INVENTORY role.",
 )
 
 require_inventory_access = _role_guard(

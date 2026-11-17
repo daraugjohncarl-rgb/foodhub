@@ -1,5 +1,5 @@
 import enum
-from sqlalchemy import Index, Column, Integer, String, Boolean, DateTime, ForeignKey, Numeric, UniqueConstraint, CheckConstraint, func, BigInteger, Enum, Text, text
+from sqlalchemy import Index, Column, Integer, String, Boolean, DateTime, Date, ForeignKey, Numeric, UniqueConstraint, CheckConstraint, func, BigInteger, Enum, Text, text
 from sqlalchemy.orm import relationship, synonym
 from app.db import Base
 
@@ -98,11 +98,20 @@ class ActivityLog(Base):
     id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
-    action = Column(String(50), nullable=False)  # 'Login', 'Logout', 'User Created', etc.
+    action = Column(String(50), nullable=False)  # Legacy & core compatibility: 'Login', 'Logout', etc.
     performed_by = Column(String(100), nullable=False)
     target_user = Column(String(100), nullable=True)
-    role = Column(String(50), nullable=True)
+    role = Column(String(50), nullable=True, index=True)
     details = Column(String(255), nullable=True)
+    username = Column(String(100), nullable=True, index=True)
+    full_name = Column(String(150), nullable=True)
+    activity_type = Column(String(100), nullable=True, index=True)
+    description = Column(Text, nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(String(255), nullable=True)
+    session_id = Column(String(100), nullable=True, index=True)
+    status = Column(String(50), nullable=True, default="SUCCESS")
+    metadata_json = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False, index=True)
 
 
@@ -161,11 +170,12 @@ class InventoryItem(Base):
     tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(100), nullable=False)
     category = Column(String(100), nullable=True, default="Kitchen")
-    sku = Column(String(50), nullable=True)
+    sku = Column(String(255), nullable=True)
     quantity = Column(Numeric(10, 2), default=0.0, nullable=False)
     unit = Column(String(20), nullable=False)
     min_stock = Column(Numeric(10, 2), default=0.0, nullable=False)
     unit_price = Column(Numeric(10, 2), default=0.0, nullable=False)
+    stock_entry_locked = Column(Boolean, default=False, nullable=False, server_default="0")
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -177,6 +187,54 @@ class InventoryItem(Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "name", name="uix_tenant_inventory_name"),
     )
+
+
+class DailyInventoryRecord(Base):
+    __tablename__ = "daily_inventory_records"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    inventory_item_id = Column(Integer, ForeignKey("inventory_items.id", ondelete="CASCADE"), nullable=False, index=True)
+    unit_price = Column(Numeric(10, 2), nullable=False)
+    current_stock = Column(Numeric(10, 2), nullable=False)
+    submitted_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    submitted_at = Column(DateTime, nullable=False)
+    inventory_date = Column(Date, nullable=False, index=True)
+
+    # Relationships
+    tenant = relationship("Tenant")
+    inventory_item = relationship("InventoryItem")
+    submitter = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "inventory_item_id", "inventory_date", name="uix_daily_inv_item_date"),
+    )
+
+
+class InventoryHistory(Base):
+    __tablename__ = "inventory_history"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True, index=True)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    inventory_item_id = Column(Integer, ForeignKey("inventory_items.id", ondelete="SET NULL"), nullable=True, index=True)
+    item_name = Column(String(255), nullable=False, index=True)
+    category = Column(String(100), nullable=True, index=True)
+    unit = Column(String(50), nullable=False, default="units")
+    previous_stock = Column(Numeric(12, 3), nullable=False, default=0.0)
+    recorded_stock = Column(Numeric(12, 3), nullable=False)
+    difference = Column(Numeric(12, 3), nullable=False)
+    inventory_date = Column(Date, nullable=False, index=True)
+    recorded_at = Column(DateTime, nullable=False, index=True)
+    submitted_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    submitted_by_name = Column(String(150), nullable=False, default="Staff")
+    submitted_by_role = Column(String(50), nullable=False, default="Inventory Staff")
+    action_type = Column(String(50), nullable=False, default="DAILY_SUBMISSION")
+    notes = Column(String(500), nullable=True)
+
+    # Relationships
+    tenant = relationship("Tenant")
+    inventory_item = relationship("InventoryItem")
+    submitter = relationship("User")
 
 
 class ProductRecipe(Base):
@@ -559,11 +617,15 @@ class Expense(Base):
     id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     category = Column(String(50), nullable=False, index=True)  # Rent, Utilities, Salaries, Supplies, Maintenance, Transport, Other
+    title = Column(String(150), nullable=True)
     description = Column(String(255), nullable=False)
+    vendor = Column(String(150), nullable=True)
     amount = Column(Numeric(10, 2), nullable=False)
     payment_method = Column(String(50), default="Cash", nullable=False)
-    status = Column(String(20), default="paid", nullable=False, index=True)  # paid, pending, voided
+    payment_source = Column(String(50), default="manager_safe", nullable=True)  # manager_safe, admin_safe, drawer, bank
+    status = Column(String(20), default="paid", nullable=False, index=True)  # paid, pending, approved, rejected, voided
     reference_no = Column(String(50), nullable=True, index=True)
+    receipt_url = Column(String(255), nullable=True)
     expense_date = Column(DateTime, server_default=func.now(), nullable=False, index=True)
     recorded_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)

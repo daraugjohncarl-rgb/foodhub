@@ -1,5 +1,5 @@
 import enum
-from sqlalchemy import Index, Column, Integer, String, Boolean, DateTime, ForeignKey, Numeric, UniqueConstraint, CheckConstraint, func, BigInteger, Enum, Text
+from sqlalchemy import Index, Column, Integer, String, Boolean, DateTime, Date, ForeignKey, Numeric, UniqueConstraint, CheckConstraint, func, BigInteger, Enum, Text, text
 from sqlalchemy.orm import relationship, synonym
 from app.db import Base
 
@@ -86,7 +86,7 @@ class User(Base):
     # Relationships
     tenant = relationship("Tenant", back_populates="users")
     shifts = relationship("Shift", back_populates="user", cascade="all, delete-orphan")
-    transactions = relationship("Transaction", back_populates="user", cascade="all, delete-orphan")
+    transactions = relationship("Transaction", back_populates="user", cascade="all, delete-orphan", foreign_keys="Transaction.user_id")
     shift_cash_movements = relationship("ShiftCashMovement", back_populates="user", cascade="all, delete-orphan")
     incident_reports = relationship("IncidentReport", back_populates="user", cascade="all, delete-orphan")
     purchase_orders = relationship("PurchaseOrder", back_populates="created_by_user")
@@ -98,11 +98,20 @@ class ActivityLog(Base):
     id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
-    action = Column(String(50), nullable=False)  # 'Login', 'Logout', 'User Created', etc.
+    action = Column(String(50), nullable=False)  # Legacy & core compatibility: 'Login', 'Logout', etc.
     performed_by = Column(String(100), nullable=False)
     target_user = Column(String(100), nullable=True)
-    role = Column(String(50), nullable=True)
+    role = Column(String(50), nullable=True, index=True)
     details = Column(String(255), nullable=True)
+    username = Column(String(100), nullable=True, index=True)
+    full_name = Column(String(150), nullable=True)
+    activity_type = Column(String(100), nullable=True, index=True)
+    description = Column(Text, nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(String(255), nullable=True)
+    session_id = Column(String(100), nullable=True, index=True)
+    status = Column(String(50), nullable=True, default="SUCCESS")
+    metadata_json = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False, index=True)
 
 
@@ -161,11 +170,12 @@ class InventoryItem(Base):
     tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(100), nullable=False)
     category = Column(String(100), nullable=True, default="Kitchen")
-    sku = Column(String(50), nullable=True)
+    sku = Column(String(255), nullable=True)
     quantity = Column(Numeric(10, 2), default=0.0, nullable=False)
     unit = Column(String(20), nullable=False)
     min_stock = Column(Numeric(10, 2), default=0.0, nullable=False)
     unit_price = Column(Numeric(10, 2), default=0.0, nullable=False)
+    stock_entry_locked = Column(Boolean, default=False, nullable=False, server_default="0")
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -177,6 +187,54 @@ class InventoryItem(Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "name", name="uix_tenant_inventory_name"),
     )
+
+
+class DailyInventoryRecord(Base):
+    __tablename__ = "daily_inventory_records"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    inventory_item_id = Column(Integer, ForeignKey("inventory_items.id", ondelete="CASCADE"), nullable=False, index=True)
+    unit_price = Column(Numeric(10, 2), nullable=False)
+    current_stock = Column(Numeric(10, 2), nullable=False)
+    submitted_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    submitted_at = Column(DateTime, nullable=False)
+    inventory_date = Column(Date, nullable=False, index=True)
+
+    # Relationships
+    tenant = relationship("Tenant")
+    inventory_item = relationship("InventoryItem")
+    submitter = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "inventory_item_id", "inventory_date", name="uix_daily_inv_item_date"),
+    )
+
+
+class InventoryHistory(Base):
+    __tablename__ = "inventory_history"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True, index=True)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    inventory_item_id = Column(Integer, ForeignKey("inventory_items.id", ondelete="SET NULL"), nullable=True, index=True)
+    item_name = Column(String(255), nullable=False, index=True)
+    category = Column(String(100), nullable=True, index=True)
+    unit = Column(String(50), nullable=False, default="units")
+    previous_stock = Column(Numeric(12, 3), nullable=False, default=0.0)
+    recorded_stock = Column(Numeric(12, 3), nullable=False)
+    difference = Column(Numeric(12, 3), nullable=False)
+    inventory_date = Column(Date, nullable=False, index=True)
+    recorded_at = Column(DateTime, nullable=False, index=True)
+    submitted_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    submitted_by_name = Column(String(150), nullable=False, default="Staff")
+    submitted_by_role = Column(String(50), nullable=False, default="Inventory Staff")
+    action_type = Column(String(50), nullable=False, default="DAILY_SUBMISSION")
+    notes = Column(String(500), nullable=True)
+
+    # Relationships
+    tenant = relationship("Tenant")
+    inventory_item = relationship("InventoryItem")
+    submitter = relationship("User")
 
 
 class ProductRecipe(Base):
@@ -236,11 +294,17 @@ class Transaction(Base):
     # SHA-256 of the normalised checkout payload; lets a retry with the same client_tx_id prove it is the same checkout.
     request_fingerprint = Column(String(64), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False, index=True)
+    # Void audit (written once when the sale is cancelled/rejected; the sale and its payment rows are kept).
+    voided_at = Column(DateTime, nullable=True)
+    voided_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    void_reason = Column(String(255), nullable=True)
+    # NULL = nothing to return | pending | refunded | not_required   (see app/services/payments.py)
+    refund_status = Column(String(20), nullable=True, index=True)
 
     # Relationships
     tenant = relationship("Tenant", back_populates="transactions")
     shift = relationship("Shift", back_populates="transactions")
-    user = relationship("User", back_populates="transactions")
+    user = relationship("User", back_populates="transactions", foreign_keys=[user_id])
     items = relationship("TransactionItem", back_populates="transaction", cascade="all, delete-orphan")
     payments = relationship("Payment", back_populates="transaction", cascade="all, delete-orphan")
 
@@ -283,6 +347,62 @@ class Payment(Base):
 
     # Relationships
     transaction = relationship("Transaction", back_populates="payments")
+
+
+class SaleRefund(Base):
+    """
+    Manual record that the money of a VOIDED sale was returned (or that nothing had been collected).
+    The POS never moves money: a GCash refund is sent from the store's GCash app and only recorded here.
+    One record per sale; full refunds only (partial refunds are an open business decision).
+    """
+    __tablename__ = "sale_refunds"
+
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    transaction_id = Column(Integer, ForeignKey("transactions.id", ondelete="CASCADE"), nullable=False, index=True)
+    outcome = Column(String(20), nullable=False)          # refunded | not_required
+    amount = Column(Numeric(10, 2), nullable=False)       # 0 for not_required
+    refund_method = Column(String(20), nullable=True)     # CASH | GCASH | CARD (NULL for not_required)
+    reference_no = Column(String(50), nullable=True)      # e.g. GCash reference of the refund transfer, as typed
+    note = Column(String(255), nullable=False)
+    recorded_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    recorded_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "transaction_id", name="uix_sale_refunds_tenant_transaction"),
+    )
+
+
+class StockMovement(Base):
+    """
+    Inventory ledger. The table already exists in the live schema (supabase_setup.sql); the app now writes
+    SALE / REVERSAL rows for sales when INVENTORY_DEDUCTION=on_sale. The partial unique index makes a
+    sale's deduction and its restoration happen at most once per inventory item.
+    """
+    __tablename__ = "stock_movements"
+
+    id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
+    tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    inventory_item_id = Column(Integer, ForeignKey("inventory_items.id", ondelete="CASCADE"), nullable=False, index=True)
+    movement_type = Column(String(20), nullable=False)    # OPENING RECEIPT SALE ADJUSTMENT WASTAGE REVERSAL
+    quantity_delta = Column(Numeric(12, 3), nullable=False)
+    quantity_after = Column(Numeric(12, 3), nullable=False)
+    unit_cost = Column(Numeric(10, 2), nullable=True)
+    reason = Column(String(255), nullable=True)
+    reference_type = Column(String(30), nullable=True)    # pos_sale | pos_sale_void for app-written rows
+    reference_id = Column(BigInteger, nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "uix_stock_movements_sale_reference",
+            "tenant_id", "reference_type", "reference_id", "inventory_item_id",
+            unique=True,
+            postgresql_where=text("reference_type IN ('pos_sale', 'pos_sale_void')"),
+            sqlite_where=text("reference_type IN ('pos_sale', 'pos_sale_void')"),
+        ),
+    )
 
 
 class ShiftCashMovement(Base):
@@ -497,11 +617,15 @@ class Expense(Base):
     id = Column(BigInteger, primary_key=True, index=True, autoincrement=True)
     tenant_id = Column(BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     category = Column(String(50), nullable=False, index=True)  # Rent, Utilities, Salaries, Supplies, Maintenance, Transport, Other
+    title = Column(String(150), nullable=True)
     description = Column(String(255), nullable=False)
+    vendor = Column(String(150), nullable=True)
     amount = Column(Numeric(10, 2), nullable=False)
     payment_method = Column(String(50), default="Cash", nullable=False)
-    status = Column(String(20), default="paid", nullable=False, index=True)  # paid, pending, voided
+    payment_source = Column(String(50), default="manager_safe", nullable=True)  # manager_safe, admin_safe, drawer, bank
+    status = Column(String(20), default="paid", nullable=False, index=True)  # paid, pending, approved, rejected, voided
     reference_no = Column(String(50), nullable=True, index=True)
+    receipt_url = Column(String(255), nullable=True)
     expense_date = Column(DateTime, server_default=func.now(), nullable=False, index=True)
     recorded_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)

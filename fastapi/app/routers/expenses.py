@@ -19,6 +19,21 @@ from app.core.dependencies import require_manager_or_admin, resolve_tenant_id
 
 router = APIRouter(prefix="/expenses", tags=["Operating Expenses"])
 
+EXPENSE_CATEGORIES = [
+    "Utilities",
+    "Salaries and Wages",
+    "Rent",
+    "Kitchen Supplies",
+    "Office Supplies",
+    "Maintenance and Repairs",
+    "Marketing and Advertising",
+    "Transportation and Fuel",
+    "Internet and Communication",
+    "Equipment and Assets",
+    "Taxes and Government Fees",
+    "Other Expenses"
+]
+
 
 def _require_admin_or_manager(current_user: models.User) -> None:
     role_str = str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role).upper()
@@ -31,6 +46,35 @@ def _require_admin_or_manager(current_user: models.User) -> None:
 
 def _get_tenant_id(db: Session, current_user: models.User) -> int:
     return resolve_tenant_id(current_user, db)
+
+
+def _to_expense_response(exp: models.Expense, username: Optional[str] = None) -> schemas.ExpenseResponse:
+    return schemas.ExpenseResponse(
+        id=exp.id,
+        tenant_id=exp.tenant_id,
+        category=exp.category,
+        title=getattr(exp, 'title', None),
+        description=exp.description,
+        vendor=getattr(exp, 'vendor', None),
+        amount=float(exp.amount),
+        payment_method=exp.payment_method,
+        payment_source=getattr(exp, 'payment_source', 'manager_safe') or 'manager_safe',
+        status=exp.status,
+        reference_no=exp.reference_no,
+        receipt_url=getattr(exp, 'receipt_url', None),
+        expense_date=exp.expense_date,
+        recorded_by=exp.recorded_by,
+        recorded_by_username=username or (exp.user.username if exp.user else None),
+        created_at=exp.created_at
+    )
+
+
+@router.get("/categories", response_model=List[str], summary="List standard expense categories")
+def get_expense_categories(
+    current_user: models.User = Depends(require_manager_or_admin)
+):
+    _require_admin_or_manager(current_user)
+    return EXPENSE_CATEGORIES
 
 
 @router.get("", response_model=List[schemas.ExpenseResponse], summary="List operational business expenses")
@@ -55,7 +99,7 @@ def list_expenses(
     if category:
         q = q.filter(models.Expense.category.ilike(f"%{category.strip()}%"))
 
-    if status_filter:
+    if status_filter and status_filter.lower() != "all":
         q = q.filter(models.Expense.status == status_filter.strip().lower())
 
     # Date range filters using half-open intervals
@@ -90,7 +134,6 @@ def list_expenses(
             s_dt = datetime.fromisoformat(start_date.strip().replace("Z", "+00:00")).replace(tzinfo=None)
             if end_date:
                 e_dt = datetime.fromisoformat(end_date.strip().replace("Z", "+00:00")).replace(tzinfo=None)
-                # If only date provided, include through end of day
                 if e_dt.time() == time.min:
                     e_dt = e_dt + timedelta(days=1)
             else:
@@ -101,23 +144,7 @@ def list_expenses(
 
     expenses = q.order_by(models.Expense.expense_date.desc(), models.Expense.id.desc()).offset(offset).limit(limit).all()
 
-    result = []
-    for exp in expenses:
-        result.append(schemas.ExpenseResponse(
-            id=exp.id,
-            tenant_id=exp.tenant_id,
-            category=exp.category,
-            description=exp.description,
-            amount=float(exp.amount),
-            payment_method=exp.payment_method,
-            status=exp.status,
-            reference_no=exp.reference_no,
-            expense_date=exp.expense_date,
-            recorded_by=exp.recorded_by,
-            recorded_by_username=exp.user.username if exp.user else None,
-            created_at=exp.created_at
-        ))
-    return result
+    return [_to_expense_response(exp) for exp in expenses]
 
 
 @router.post("", response_model=schemas.ExpenseResponse, status_code=status.HTTP_201_CREATED, summary="Record a business expense")
@@ -134,11 +161,15 @@ def create_expense(
     exp = models.Expense(
         tenant_id=tenant_id,
         category=body.category.strip(),
+        title=body.title.strip() if body.title else None,
         description=body.description.strip(),
+        vendor=body.vendor.strip() if body.vendor else None,
         amount=body.amount,
         payment_method=body.payment_method.strip(),
+        payment_source=body.payment_source.strip() if body.payment_source else "manager_safe",
         status=body.status,
         reference_no=body.reference_no.strip() if body.reference_no else None,
+        receipt_url=body.receipt_url.strip() if body.receipt_url else None,
         expense_date=expense_date,
         recorded_by=current_user.id
     )
@@ -161,20 +192,29 @@ def create_expense(
     except Exception:
         pass
 
-    return schemas.ExpenseResponse(
-        id=exp.id,
-        tenant_id=exp.tenant_id,
-        category=exp.category,
-        description=exp.description,
-        amount=float(exp.amount),
-        payment_method=exp.payment_method,
-        status=exp.status,
-        reference_no=exp.reference_no,
-        expense_date=exp.expense_date,
-        recorded_by=exp.recorded_by,
-        recorded_by_username=current_user.username,
-        created_at=exp.created_at
-    )
+    return _to_expense_response(exp, current_user.username)
+
+
+@router.get("/{expense_id}", response_model=schemas.ExpenseResponse, summary="Get expense by ID")
+def get_expense(
+    expense_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_manager_or_admin),
+):
+    _require_admin_or_manager(current_user)
+    tenant_id = _get_tenant_id(db, current_user)
+
+    exp = db.query(models.Expense).options(
+        joinedload(models.Expense.user)
+    ).filter(
+        models.Expense.id == expense_id,
+        models.Expense.tenant_id == tenant_id
+    ).first()
+
+    if not exp:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expense not found.")
+
+    return _to_expense_response(exp)
 
 
 @router.put("/{expense_id}", response_model=schemas.ExpenseResponse, summary="Update expense record")
@@ -197,39 +237,189 @@ def update_expense(
 
     if body.category is not None:
         exp.category = body.category.strip()
+    if body.title is not None:
+        exp.title = body.title.strip() or None
     if body.description is not None:
         exp.description = body.description.strip()
+    if body.vendor is not None:
+        exp.vendor = body.vendor.strip() or None
     if body.amount is not None:
         exp.amount = body.amount
     if body.payment_method is not None:
         exp.payment_method = body.payment_method.strip()
+    if body.payment_source is not None:
+        exp.payment_source = body.payment_source.strip() or "manager_safe"
     if body.status is not None:
         exp.status = body.status
     if body.reference_no is not None:
         exp.reference_no = body.reference_no.strip() or None
+    if body.receipt_url is not None:
+        exp.receipt_url = body.receipt_url.strip() or None
     if body.expense_date is not None:
         exp.expense_date = body.expense_date
 
     db.commit()
     db.refresh(exp)
 
-    return schemas.ExpenseResponse(
-        id=exp.id,
-        tenant_id=exp.tenant_id,
-        category=exp.category,
-        description=exp.description,
-        amount=float(exp.amount),
-        payment_method=exp.payment_method,
-        status=exp.status,
-        reference_no=exp.reference_no,
-        expense_date=exp.expense_date,
-        recorded_by=exp.recorded_by,
-        recorded_by_username=exp.user.username if exp.user else None,
-        created_at=exp.created_at
-    )
+    return _to_expense_response(exp)
 
 
-@router.delete("/{expense_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete or void expense")
+@router.post("/{expense_id}/approve", response_model=schemas.ExpenseResponse, summary="Approve expense")
+def approve_expense(
+    expense_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_manager_or_admin),
+):
+    _require_admin_or_manager(current_user)
+    tenant_id = _get_tenant_id(db, current_user)
+
+    exp = db.query(models.Expense).filter(
+        models.Expense.id == expense_id,
+        models.Expense.tenant_id == tenant_id
+    ).first()
+
+    if not exp:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expense not found.")
+
+    exp.status = "approved"
+    db.commit()
+    db.refresh(exp)
+
+    try:
+        log = models.ActivityLog(
+            tenant_id=tenant_id,
+            user_id=current_user.id,
+            action="Expense Approved",
+            performed_by=current_user.username,
+            role=str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role),
+            details=f"Expense #{exp.id} [{exp.category}] approved for ₱{float(exp.amount):,.2f}"
+        )
+        db.add(log)
+        db.commit()
+    except Exception:
+        pass
+
+    return _to_expense_response(exp)
+
+
+@router.post("/{expense_id}/reject", response_model=schemas.ExpenseResponse, summary="Reject expense")
+def reject_expense(
+    expense_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_manager_or_admin),
+):
+    _require_admin_or_manager(current_user)
+    tenant_id = _get_tenant_id(db, current_user)
+
+    exp = db.query(models.Expense).filter(
+        models.Expense.id == expense_id,
+        models.Expense.tenant_id == tenant_id
+    ).first()
+
+    if not exp:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expense not found.")
+
+    exp.status = "rejected"
+    db.commit()
+    db.refresh(exp)
+
+    try:
+        log = models.ActivityLog(
+            tenant_id=tenant_id,
+            user_id=current_user.id,
+            action="Expense Rejected",
+            performed_by=current_user.username,
+            role=str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role),
+            details=f"Expense #{exp.id} [{exp.category}] rejected"
+        )
+        db.add(log)
+        db.commit()
+    except Exception:
+        pass
+
+    return _to_expense_response(exp)
+
+
+@router.post("/{expense_id}/mark-paid", response_model=schemas.ExpenseResponse, summary="Mark expense as paid")
+def mark_expense_paid(
+    expense_id: int,
+    payment_source: Optional[str] = Query("manager_safe"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_manager_or_admin),
+):
+    _require_admin_or_manager(current_user)
+    tenant_id = _get_tenant_id(db, current_user)
+
+    exp = db.query(models.Expense).filter(
+        models.Expense.id == expense_id,
+        models.Expense.tenant_id == tenant_id
+    ).first()
+
+    if not exp:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expense not found.")
+
+    exp.status = "paid"
+    if payment_source:
+        exp.payment_source = payment_source.strip()
+    db.commit()
+    db.refresh(exp)
+
+    try:
+        log = models.ActivityLog(
+            tenant_id=tenant_id,
+            user_id=current_user.id,
+            action="Expense Paid",
+            performed_by=current_user.username,
+            role=str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role),
+            details=f"Expense #{exp.id} [{exp.category}] marked paid for ₱{float(exp.amount):,.2f} via {exp.payment_source}"
+        )
+        db.add(log)
+        db.commit()
+    except Exception:
+        pass
+
+    return _to_expense_response(exp)
+
+
+@router.post("/{expense_id}/void", response_model=schemas.ExpenseResponse, summary="Void expense")
+def void_expense(
+    expense_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_manager_or_admin),
+):
+    _require_admin_or_manager(current_user)
+    tenant_id = _get_tenant_id(db, current_user)
+
+    exp = db.query(models.Expense).filter(
+        models.Expense.id == expense_id,
+        models.Expense.tenant_id == tenant_id
+    ).first()
+
+    if not exp:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Expense not found.")
+
+    exp.status = "voided"
+    db.commit()
+    db.refresh(exp)
+
+    try:
+        log = models.ActivityLog(
+            tenant_id=tenant_id,
+            user_id=current_user.id,
+            action="Expense Voided",
+            performed_by=current_user.username,
+            role=str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role),
+            details=f"Expense #{exp.id} [{exp.category}] voided"
+        )
+        db.add(log)
+        db.commit()
+    except Exception:
+        pass
+
+    return _to_expense_response(exp)
+
+
+@router.delete("/{expense_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete expense record")
 def delete_expense(
     expense_id: int,
     db: Session = Depends(get_db),

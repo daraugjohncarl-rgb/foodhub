@@ -10,6 +10,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
 from typing import List, Optional, Dict, Any
 from decimal import Decimal
+from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 import time
 import io
 import zipfile
@@ -19,7 +21,7 @@ import xml.etree.ElementTree as ET
 from app.db import get_db
 import app.models as models
 import app.schemas as schemas
-from app.core.dependencies import require_inventory_access, get_inventory_tenant_id, get_current_user
+from app.core.dependencies import require_inventory_access, get_inventory_tenant_id, get_current_user, require_admin, require_admin_or_inventory
 
 
 def parse_masterlist_file(file_bytes: bytes, filename: str) -> Dict[str, List[Dict[str, Any]]]:
@@ -29,6 +31,9 @@ def parse_masterlist_file(file_bytes: bytes, filename: str) -> Dict[str, List[Di
     if fn.endswith('.docx'):
         try:
             with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+                # Checked before reading so a small "zip bomb" cannot expand into a huge document in memory.
+                if z.getinfo('word/document.xml').file_size > MAX_DOCX_XML_BYTES:
+                    raise ValueError("the document text is too large")
                 xml_content = z.read('word/document.xml')
             root = ET.fromstring(xml_content)
             w = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
@@ -140,6 +145,29 @@ def parse_masterlist_file(file_bytes: bytes, filename: str) -> Dict[str, List[Di
         raise HTTPException(status_code=400, detail="Unsupported file format. Please upload a .docx, .csv, or .txt file.")
 
     return departments
+
+
+MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024      # masterlist upload (.docx / .csv / .txt)
+MAX_DOCX_XML_BYTES = 10 * 1024 * 1024        # uncompressed word/document.xml inside a .docx
+IMPORT_FILE_EXTENSIONS = ('.docx', '.csv', '.txt')
+
+
+async def read_masterlist_upload(file: UploadFile) -> bytes:
+    """Read a masterlist upload in chunks, refusing a missing/unsupported name (400), more than 5 MB (413) or an empty file (400)."""
+    if not file.filename or not file.filename.lower().endswith(IMPORT_FILE_EXTENSIONS):
+        raise HTTPException(status_code=400, detail="Unsupported file format. Please upload a .docx, .csv, or .txt file.")
+    chunks, total = [], 0
+    while True:
+        chunk = await file.read(64 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_IMPORT_FILE_BYTES:
+            raise HTTPException(status_code=413, detail="The file is too large (max 5 MB).")
+        chunks.append(chunk)
+    if not chunks:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+    return b"".join(chunks)
 
 
 router = APIRouter(tags=["Admin — Inventory"])
@@ -470,7 +498,67 @@ def list_inventory(
     if low_stock_only:
         q = q.filter(models.InventoryItem.quantity <= models.InventoryItem.min_stock)
 
-    return q.order_by(models.InventoryItem.category, models.InventoryItem.name).limit(limit).all()
+    items = q.order_by(models.InventoryItem.category, models.InventoryItem.name).limit(limit).all()
+
+    # Determine current calendar date in Asia/Manila for Daily Inventory Input System
+    manila_tz = ZoneInfo("Asia/Manila")
+    today_manila = datetime.now(manila_tz).date()
+    next_date_str = (today_manila + timedelta(days=1)).strftime("%B %d, %Y 12:00 AM")
+
+    # Fetch all daily inventory submissions for today within caller's tenant
+    daily_q = db.query(models.DailyInventoryRecord).filter(
+        models.DailyInventoryRecord.inventory_date == today_manila
+    )
+    if current_user.tenant_id:
+        daily_q = daily_q.filter(models.DailyInventoryRecord.tenant_id == current_user.tenant_id)
+    daily_records = daily_q.all()
+    daily_map = {r.inventory_item_id: r for r in daily_records}
+
+    # Fetch previous records (prior to today) to provide previous stock history
+    prev_q = db.query(models.DailyInventoryRecord).filter(
+        models.DailyInventoryRecord.inventory_date < today_manila
+    )
+    if current_user.tenant_id:
+        prev_q = prev_q.filter(models.DailyInventoryRecord.tenant_id == current_user.tenant_id)
+    prev_records = prev_q.order_by(models.DailyInventoryRecord.inventory_date.desc(), models.DailyInventoryRecord.submitted_at.desc()).all()
+    prev_map = {}
+    for r in prev_records:
+        if r.inventory_item_id not in prev_map:
+            prev_map[r.inventory_item_id] = r
+
+    for it in items:
+        rec = daily_map.get(it.id)
+        prev_rec = prev_map.get(it.id)
+
+        if prev_rec:
+            it.previous_stock = Decimal(str(prev_rec.current_stock))
+            it.previous_stock_date = str(prev_rec.inventory_date)
+            it.has_previous_stock = True
+        else:
+            it.previous_stock = None
+            it.previous_stock_date = None
+            it.has_previous_stock = False
+
+        is_locked = bool(getattr(it, "stock_entry_locked", False))
+        if rec:
+            it.daily_input_submitted_at = rec.submitted_at
+            it.daily_input_submitted_by = rec.submitter.username if rec.submitter else "Staff"
+            it.daily_input_date = str(rec.inventory_date)
+        else:
+            it.daily_input_submitted_at = None
+            it.daily_input_submitted_by = None
+            it.daily_input_date = str(today_manila)
+
+        if is_locked:
+            it.daily_input_status = "Stock Entry Locked"
+            it.daily_input_submitted = True
+            it.next_available_input_date = None
+        else:
+            it.daily_input_status = "Pending Stock Entry"
+            it.daily_input_submitted = False
+            it.next_available_input_date = None
+
+    return items
 
 
 @router.post(
@@ -491,7 +579,7 @@ def create_inventory_item(
         category=body.category.strip() if body.category else "Kitchen",
         sku=body.sku.strip() if (body.sku and body.sku.strip()) else None,
         quantity=body.quantity,
-        unit=body.unit.strip(),
+        unit=(body.unit.strip() if body.unit and body.unit.strip() else "pcs"),
         min_stock=body.min_stock,
         unit_price=Decimal(str(body.unit_price or 0.0)),
     )
@@ -680,9 +768,7 @@ async def parse_inventory_file(
     file: UploadFile = File(...),
     current_user: models.User = Depends(require_inventory_access),
 ):
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+    content = await read_masterlist_upload(file)
     
     depts = parse_masterlist_file(content, file.filename)
     total_items = sum(len(items) for items in depts.values())
@@ -705,9 +791,7 @@ async def import_inventory_file(
     current_user: models.User = Depends(require_inventory_access),
     tenant_id: int = Depends(get_inventory_tenant_id),
 ):
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+    content = await read_masterlist_upload(file)
     
     depts = parse_masterlist_file(content, file.filename)
     if not depts:
@@ -1008,6 +1092,163 @@ def get_inventory_analytics(
     }
 
 
+@router.get(
+    "/inventory/overall-history",
+    summary="Get overall previous stock history for all items (excludes current new update, only shows previous stock)"
+)
+def get_overall_inventory_history(
+    limit_per_item: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_inventory_access),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    """
+    Returns overall list of items with their previous stock updates.
+    Strictly excludes the latest/current new update stock.
+    Items that have never had a stock update are excluded.
+    """
+    import re
+
+    items = db.query(models.InventoryItem).filter(models.InventoryItem.tenant_id == tenant_id).all()
+    item_map = {it.id: it for it in items}
+    item_name_map = {it.name.strip().lower(): it for it in items}
+
+    # 1. Fetch DailyInventoryRecord
+    records = db.query(models.DailyInventoryRecord).filter(
+        models.DailyInventoryRecord.tenant_id == tenant_id
+    ).order_by(models.DailyInventoryRecord.inventory_date.desc(), models.DailyInventoryRecord.submitted_at.desc()).all()
+
+    daily_by_item: Dict[int, list] = {}
+    for r in records:
+        daily_by_item.setdefault(r.inventory_item_id, []).append(r)
+
+    # 2. Fetch ActivityLog stock adjustments
+    stock_logs = db.query(models.ActivityLog).filter(
+        models.ActivityLog.tenant_id == tenant_id,
+        models.ActivityLog.action.like("%Stock%")
+    ).order_by(models.ActivityLog.created_at.desc()).all()
+
+    log_pattern = re.compile(r"Item '(.*?)' stock adjusted from ([\d\.]+) to ([\d\.]+)")
+    logs_by_item: Dict[int, list] = {}
+    for l in stock_logs:
+        m = log_pattern.search(l.details or "")
+        if m:
+            name, old_q, new_q = m.groups()
+            matched_it = item_name_map.get(name.strip().lower())
+            if matched_it:
+                logs_by_item.setdefault(matched_it.id, []).append({
+                    "old_stock": float(old_q),
+                    "new_stock": float(new_q),
+                    "timestamp": l.created_at,
+                    "submitted_by": l.performed_by or "Staff",
+                    "details": l.details
+                })
+
+    # 3. Fetch StockMovement rows
+    movements = db.query(models.StockMovement).filter(
+        models.StockMovement.tenant_id == tenant_id
+    ).order_by(models.StockMovement.created_at.desc()).all()
+
+    movements_by_item: Dict[int, list] = {}
+    for m in movements:
+        movements_by_item.setdefault(m.inventory_item_id, []).append(m)
+
+    results = []
+    for item_id, it in item_map.items():
+        daily_list = daily_by_item.get(item_id, [])
+        log_list = logs_by_item.get(item_id, [])
+        mov_list = movements_by_item.get(item_id, [])
+
+        # If item has NEVER had any stock update/adjustment, it must NOT appear in history
+        # "if not update the stock of inventory not see in the history of inventory"
+        if not daily_list and not log_list and not mov_list:
+            continue
+
+        # If it only has 1 daily record and no logs/movements, check if that daily record is just initial/new without updates
+        if len(daily_list) <= 1 and not log_list and not mov_list:
+            continue
+
+        previous_stock_val = None
+        previous_unit_price = float(it.unit_price or 0.0)
+        previous_date = None
+        previous_submitted_at = None
+        previous_submitted_by = "Staff"
+        all_previous_records = []
+
+        # Case A: Activity logs or Stock movements are present (captures exact inline/modal stock adjustments)
+        if log_list:
+            # log_list[0] is the most recent update. Its old_stock is the PREVIOUS stock before this new update!
+            # The new update stock (new_stock) is EXCLUDED.
+            previous_stock_val = log_list[0]["old_stock"]
+            previous_submitted_at = log_list[0]["timestamp"].isoformat() if log_list[0]["timestamp"] else None
+            previous_date = str(log_list[0]["timestamp"].date()) if log_list[0]["timestamp"] else None
+            previous_submitted_by = log_list[0]["submitted_by"]
+
+            # Subsequent logs show older previous stock levels
+            for entry in log_list[:limit_per_item]:
+                all_previous_records.append({
+                    "id": f"log-{entry['timestamp']}",
+                    "previous_stock": entry["old_stock"],
+                    "unit_price": previous_unit_price,
+                    "inventory_date": str(entry["timestamp"].date()) if entry["timestamp"] else None,
+                    "submitted_at": entry["timestamp"].isoformat() if entry["timestamp"] else None,
+                    "submitted_by_username": entry["submitted_by"]
+                })
+        elif mov_list:
+            # mov_list[0] is the newest movement. Its previous stock is quantity_after - quantity_delta
+            newest_mov = mov_list[0]
+            previous_stock_val = float(newest_mov.quantity_after) - float(newest_mov.quantity_delta)
+            previous_submitted_at = newest_mov.created_at.isoformat() if newest_mov.created_at else None
+            previous_date = str(newest_mov.created_at.date()) if newest_mov.created_at else None
+            previous_submitted_by = "Staff"
+            for mov in mov_list[:limit_per_item]:
+                all_previous_records.append({
+                    "id": mov.id,
+                    "previous_stock": float(mov.quantity_after) - float(mov.quantity_delta),
+                    "unit_price": float(mov.unit_cost or previous_unit_price),
+                    "inventory_date": str(mov.created_at.date()) if mov.created_at else None,
+                    "submitted_at": mov.created_at.isoformat() if mov.created_at else None,
+                    "submitted_by_username": "Staff"
+                })
+        elif len(daily_list) > 1:
+            # daily_list[0] is the current / new update stock -> EXCLUDED
+            # daily_list[1] is the last updated previous stock
+            prev_latest = daily_list[1]
+            previous_stock_val = float(prev_latest.current_stock)
+            previous_unit_price = float(prev_latest.unit_price)
+            previous_date = str(prev_latest.inventory_date)
+            previous_submitted_at = prev_latest.submitted_at.isoformat() if prev_latest.submitted_at else None
+            previous_submitted_by = prev_latest.submitter.username if prev_latest.submitter else "Staff"
+            for r in daily_list[1:1 + limit_per_item]:
+                all_previous_records.append({
+                    "id": r.id,
+                    "previous_stock": float(r.current_stock),
+                    "unit_price": float(r.unit_price),
+                    "inventory_date": str(r.inventory_date),
+                    "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
+                    "submitted_by_username": r.submitter.username if r.submitter else "Staff"
+                })
+
+        if previous_stock_val is not None:
+            results.append({
+                "item_id": it.id,
+                "item_name": it.name,
+                "category": it.category or "Kitchen",
+                "sku": it.sku,
+                "unit": it.unit or "units",
+                "previous_stock": previous_stock_val,
+                "previous_unit_price": previous_unit_price,
+                "previous_date": previous_date,
+                "previous_submitted_at": previous_submitted_at,
+                "previous_submitted_by": previous_submitted_by,
+                "total_previous_updates": len(all_previous_records),
+                "all_previous_records": all_previous_records
+            })
+
+    results.sort(key=lambda x: x["item_name"].lower())
+    return results
+
+
 @router.put(
     "/inventory/{item_id}/stock",
     response_model=schemas.InventoryItemResponse,
@@ -1027,6 +1268,43 @@ def adjust_stock(
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found.")
 
+    # Role permissions for stock vs price updates:
+    # Inventory account can adjust stock quantity and update Price per Unit.
+    # Manager account is not permitted to adjust stock quantity directly here.
+    if current_user.role == models.UserRole.MANAGER:
+        if float(body.quantity_delta) != 0:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the Inventory account can adjust stock quantity."
+            )
+
+    manila_tz = ZoneInfo("Asia/Manila")
+    now_manila = datetime.now(manila_tz)
+    today_manila = now_manila.date()
+
+    # Rule: Once Inventory saves stock for an item, it stays locked until Admin grants permission to add stock again.
+    if float(body.quantity_delta) != 0 and current_user.role == models.UserRole.INVENTORY:
+        if getattr(item, "stock_entry_locked", False):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Stock for '{item.name}' has already been saved. Please ask an Admin for permission to add stock again."
+            )
+
+    if body.unit_price is not None and float(body.unit_price) >= 0:
+        item.unit_price = Decimal(str(body.unit_price))
+        daily_rec = db.query(models.DailyInventoryRecord).filter(
+            models.DailyInventoryRecord.tenant_id == tenant_id,
+            models.DailyInventoryRecord.inventory_item_id == item_id,
+            models.DailyInventoryRecord.inventory_date == today_manila
+        ).first()
+        if daily_rec:
+            daily_rec.unit_price = Decimal(str(body.unit_price))
+
+    if float(body.quantity_delta) == 0:
+        db.commit()
+        db.refresh(item)
+        return item
+
     new_qty = float(item.quantity) + float(body.quantity_delta)
     if new_qty < 0:
         raise HTTPException(
@@ -1036,10 +1314,79 @@ def adjust_stock(
         )
 
     old_qty = float(item.quantity)
-    item.quantity = new_qty
-    if body.unit_price is not None and float(body.unit_price) >= 0:
-        item.unit_price = Decimal(str(body.unit_price))
+    item.quantity = Decimal(str(new_qty))
+    # Price per unit is NOT updated by Manager or Admin (only Inventory account can update price)
+    if current_user.role not in (models.UserRole.MANAGER, models.UserRole.ADMIN):
+        if body.unit_price is not None and float(body.unit_price) >= 0:
+            item.unit_price = Decimal(str(body.unit_price))
+
+    # Lock stock entry for Inventory account until Admin grants permission again
+    if current_user.role == models.UserRole.INVENTORY:
+        item.stock_entry_locked = True
+
+    # Sync daily inventory record for today's active stock (upsert to allow re-entry when Admin unlocks)
+    daily_rec = db.query(models.DailyInventoryRecord).filter(
+        models.DailyInventoryRecord.tenant_id == tenant_id,
+        models.DailyInventoryRecord.inventory_item_id == item_id,
+        models.DailyInventoryRecord.inventory_date == today_manila
+    ).first()
+    if daily_rec:
+        daily_rec.unit_price = item.unit_price
+        daily_rec.current_stock = item.quantity
+        daily_rec.submitted_by = current_user.id
+        daily_rec.submitted_at = now_manila
+    else:
+        daily_rec = models.DailyInventoryRecord(
+            tenant_id=tenant_id,
+            inventory_item_id=item_id,
+            unit_price=item.unit_price,
+            current_stock=item.quantity,
+            submitted_by=current_user.id,
+            submitted_at=now_manila,
+            inventory_date=today_manila
+        )
+        db.add(daily_rec)
+
+    # Record in immutable InventoryHistory audit trail so it appears in Daily Inventory History & Audit Trail
+    try:
+        hist_entry = models.InventoryHistory(
+            tenant_id=tenant_id,
+            inventory_item_id=item.id,
+            item_name=item.name,
+            category=item.category or "Kitchen",
+            unit=item.unit or "",
+            previous_stock=Decimal(str(old_qty)),
+            recorded_stock=item.quantity,
+            difference=Decimal(str(new_qty - old_qty)),
+            inventory_date=today_manila,
+            recorded_at=now_manila,
+            submitted_by=current_user.id,
+            submitted_by_name=current_user.username,
+            submitted_by_role=str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role),
+            action_type="DAILY_SUBMISSION",
+            notes=body.reason or "Daily Total Stock Update"
+        )
+        db.add(hist_entry)
+    except Exception:
+        pass
+
     db.flush()
+
+    # Record StockMovement ledger entry
+    try:
+        movement = models.StockMovement(
+            tenant_id=tenant_id,
+            inventory_item_id=item_id,
+            movement_type="ADJUSTMENT",
+            quantity_delta=Decimal(str(body.quantity_delta)),
+            quantity_after=item.quantity,
+            unit_cost=item.unit_price,
+            reason=body.reason or "Stock Adjustment",
+            user_id=current_user.id
+        )
+        db.add(movement)
+    except Exception:
+        pass
 
     # Log the stock movement
     log = models.ActivityLog(
@@ -1070,6 +1417,407 @@ def adjust_stock(
     return item
 
 
+# ============================================================================
+# DAILY INVENTORY HISTORY & AUDIT TRAIL — ADMIN / OWNER ONLY
+# ============================================================================
+
+def _seed_initial_history_if_empty(db: Session, tenant_id: int):
+    """
+    Automatic backfill: If inventory_history is empty, populate from existing
+    daily_inventory_records and inventory items so the audit trail is immediately populated.
+    """
+    hist_count = db.query(models.InventoryHistory).filter(models.InventoryHistory.tenant_id == tenant_id).count()
+    if hist_count > 0:
+        return
+
+    manila_tz = ZoneInfo("Asia/Manila")
+    now_manila = datetime.now(manila_tz)
+    today_manila = now_manila.date()
+
+    # 1. Backfill from daily inventory records
+    daily_recs = db.query(models.DailyInventoryRecord).filter(
+        models.DailyInventoryRecord.tenant_id == tenant_id
+    ).all()
+
+    for dr in daily_recs:
+        item = db.query(models.InventoryItem).filter(models.InventoryItem.id == dr.inventory_item_id).first()
+        sub_user = db.query(models.User).filter(models.User.id == dr.submitted_by).first() if dr.submitted_by else None
+        sub_name = f"{sub_user.first_name or ''} {sub_user.last_name or ''}".strip() or (sub_user.username if sub_user else "System")
+        sub_role = str(sub_user.role.value if hasattr(sub_user.role, 'value') else sub_user.role).replace("_", " ").title() if sub_user else "Inventory Staff"
+        
+        rec_time = dr.submitted_at if dr.submitted_at else now_manila
+
+        h = models.InventoryHistory(
+            tenant_id=tenant_id,
+            inventory_item_id=dr.inventory_item_id,
+            item_name=item.name if item else f"Item #{dr.inventory_item_id}",
+            category=(item.category if item else "Kitchen") or "Kitchen",
+            unit=(item.unit if item else "units") or "units",
+            previous_stock=Decimal("0.000"),
+            recorded_stock=Decimal(str(dr.current_stock or 0)),
+            difference=Decimal(str(dr.current_stock or 0)),
+            inventory_date=dr.inventory_date or today_manila,
+            recorded_at=rec_time,
+            submitted_by=dr.submitted_by,
+            submitted_by_name=sub_name,
+            submitted_by_role=sub_role,
+            action_type="DAILY_SUBMISSION",
+            notes=f"Daily record backfill (₱{float(dr.unit_price or 0):.2f}/unit)"
+        )
+        db.add(h)
+
+    # 2. If no daily records, populate current stock as initial baseline
+    if not daily_recs:
+        items = db.query(models.InventoryItem).filter(models.InventoryItem.tenant_id == tenant_id).all()
+        for item in items:
+            h = models.InventoryHistory(
+                tenant_id=tenant_id,
+                inventory_item_id=item.id,
+                item_name=item.name,
+                category=item.category or "Kitchen",
+                unit=item.unit or "units",
+                previous_stock=Decimal("0.000"),
+                recorded_stock=Decimal(str(item.quantity or 0)),
+                difference=Decimal(str(item.quantity or 0)),
+                inventory_date=today_manila,
+                recorded_at=now_manila,
+                submitted_by=None,
+                submitted_by_name="System Initializer",
+                submitted_by_role="System Admin",
+                action_type="INITIAL_RECORD",
+                notes="Initial inventory catalog baseline"
+            )
+            db.add(h)
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
+def _format_history_item(h: models.InventoryHistory) -> Dict[str, Any]:
+    manila_tz = ZoneInfo("Asia/Manila")
+    dt = h.recorded_at
+    if dt and dt.tzinfo is None:
+        # naive dt from DB represents Manila time
+        dt = dt.replace(tzinfo=manila_tz)
+    elif dt:
+        dt = dt.astimezone(manila_tz)
+
+    time_str = dt.strftime("%I:%M:%S %p") if dt else "12:00:00 AM"
+    date_str = dt.strftime("%B %d, %Y") if dt else str(h.inventory_date)
+
+    diff_val = float(h.difference or 0)
+    diff_prefix = "+" if diff_val > 0 else ""
+    diff_formatted = f"{diff_prefix}{diff_val:.2f}"
+
+    return {
+        "id": h.id,
+        "tenant_id": h.tenant_id,
+        "inventory_item_id": h.inventory_item_id,
+        "item_name": h.item_name,
+        "category": h.category or "Kitchen",
+        "unit": "",
+        "previous_stock": float(h.previous_stock or 0),
+        "recorded_stock": float(h.recorded_stock or 0),
+        "difference": diff_val,
+        "difference_display": diff_formatted,
+        "inventory_date": str(h.inventory_date),
+        "recorded_at": h.recorded_at.isoformat() if h.recorded_at else None,
+        "submitted_by": h.submitted_by,
+        "submitted_by_name": h.submitted_by_name or "Staff",
+        "submitted_by_role": h.submitted_by_role or "Inventory Staff",
+        "action_type": h.action_type or "DAILY_SUBMISSION",
+        "notes": h.notes,
+        "time_display": time_str,
+        "date_display": date_str
+    }
+
+
+@router.get(
+    "/inventory/audit-history",
+    summary="Daily Inventory History & Audit Trail (Admin / Owner Only)"
+)
+def get_inventory_audit_history(
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    specific_date: Optional[date] = None,
+    category: Optional[str] = None,
+    item_id: Optional[int] = None,
+    submitted_by: Optional[int] = None,
+    role: Optional[str] = None,
+    search: Optional[str] = None,
+    sort: Optional[str] = Query("newest", pattern="^(newest|oldest|highest_diff|lowest_diff)$"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin_or_inventory),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    """
+    Comprehensive Daily Inventory History & Audit Trail.
+    Strictly restricted to Admin and Super Admin accounts.
+    Allows filtering by date range, specific date, category, item, submitter, role, and search.
+    Provides automated daily summary metrics.
+    """
+    _seed_initial_history_if_empty(db, tenant_id)
+
+    query = db.query(models.InventoryHistory).filter(
+        models.InventoryHistory.tenant_id == tenant_id
+    )
+
+    manila_tz = ZoneInfo("Asia/Manila")
+    today_manila = datetime.now(manila_tz).date()
+
+    # Filter by specific date or date range
+    if specific_date:
+        query = query.filter(models.InventoryHistory.inventory_date == specific_date)
+    else:
+        if start_date:
+            query = query.filter(models.InventoryHistory.inventory_date >= start_date)
+        if end_date:
+            query = query.filter(models.InventoryHistory.inventory_date <= end_date)
+
+    if category and category.strip().upper() != "ALL":
+        query = query.filter(models.InventoryHistory.category == category.strip())
+
+    if item_id:
+        query = query.filter(models.InventoryHistory.inventory_item_id == item_id)
+
+    if submitted_by:
+        query = query.filter(models.InventoryHistory.submitted_by == submitted_by)
+
+    if role and role.strip().upper() != "ALL":
+        query = query.filter(models.InventoryHistory.submitted_by_role.ilike(f"%{role.strip()}%"))
+
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        query = query.filter(models.InventoryHistory.item_name.ilike(term))
+
+    # Apply sorting
+    if sort == "oldest":
+        query = query.order_by(models.InventoryHistory.recorded_at.asc(), models.InventoryHistory.id.asc())
+    elif sort == "highest_diff":
+        query = query.order_by(models.InventoryHistory.difference.desc(), models.InventoryHistory.recorded_at.desc())
+    elif sort == "lowest_diff":
+        query = query.order_by(models.InventoryHistory.difference.asc(), models.InventoryHistory.recorded_at.desc())
+    else:  # newest
+        query = query.order_by(models.InventoryHistory.recorded_at.desc(), models.InventoryHistory.id.desc())
+
+    total = query.count()
+    total_pages = max(1, (total + limit - 1) // limit)
+    offset = (page - 1) * limit
+    records = query.offset(offset).limit(limit).all()
+
+    # Calculate summary KPIs for today
+    today_records = db.query(models.InventoryHistory).filter(
+        models.InventoryHistory.tenant_id == tenant_id,
+        models.InventoryHistory.inventory_date == today_manila
+    ).all()
+
+    total_recorded_today = len(today_records)
+    today_cats = set(r.category for r in today_records if r.category)
+    total_categories_today = len(today_cats)
+    stock_increases_today = sum(1 for r in today_records if (r.difference or 0) > 0)
+    stock_decreases_today = sum(1 for r in today_records if (r.difference or 0) < 0)
+
+    # Available categories and submitters for frontend filter dropdowns
+    all_categories = [c[0] for c in db.query(models.InventoryHistory.category).filter(
+        models.InventoryHistory.tenant_id == tenant_id
+    ).distinct().all() if c[0]]
+
+    submitters_raw = db.query(
+        models.InventoryHistory.submitted_by,
+        models.InventoryHistory.submitted_by_name,
+        models.InventoryHistory.submitted_by_role
+    ).filter(
+        models.InventoryHistory.tenant_id == tenant_id,
+        models.InventoryHistory.submitted_by.isnot(None)
+    ).distinct().all()
+
+    submitters_list = [
+        {"id": s[0], "name": s[1], "role": s[2]} for s in submitters_raw
+    ]
+
+    items_list = [
+        {"id": it.id, "name": it.name, "category": it.category}
+        for it in db.query(models.InventoryItem).filter(models.InventoryItem.tenant_id == tenant_id).order_by(models.InventoryItem.name).all()
+    ]
+
+    return {
+        "items": [_format_history_item(r) for r in records],
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": total_pages,
+        "summary": {
+            "total_recorded_today": total_recorded_today,
+            "total_categories_today": total_categories_today,
+            "stock_increases_today": stock_increases_today,
+            "stock_decreases_today": stock_decreases_today
+        },
+        "filters": {
+            "categories": sorted(all_categories),
+            "submitters": submitters_list,
+            "items": items_list,
+            "today_date": str(today_manila)
+        }
+    }
+
+
+@router.get(
+    "/inventory/audit-history/item/{item_id}",
+    summary="Item-specific History Details & Trend Analysis (Admin / Owner Only)"
+)
+def get_item_inventory_history(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin_or_inventory),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    """
+    Returns full chronological audit timeline and historical trend data for an individual inventory item.
+    """
+    _seed_initial_history_if_empty(db, tenant_id)
+
+    item = db.query(models.InventoryItem).filter(
+        models.InventoryItem.id == item_id,
+        models.InventoryItem.tenant_id == tenant_id
+    ).first()
+
+    records = db.query(models.InventoryHistory).filter(
+        models.InventoryHistory.tenant_id == tenant_id,
+        models.InventoryHistory.inventory_item_id == item_id
+    ).order_by(models.InventoryHistory.recorded_at.desc()).all()
+
+    history_formatted = [_format_history_item(r) for r in records]
+
+    # Trend line data points in chronological order
+    trend_points = [
+        {
+            "date": r["date_display"],
+            "short_date": r["inventory_date"],
+            "time": r["time_display"],
+            "stock": r["recorded_stock"],
+            "diff": r["difference"],
+            "submitter": r["submitted_by_name"]
+        }
+        for r in reversed(history_formatted)
+    ]
+
+    return {
+        "item": {
+            "id": item.id if item else item_id,
+            "name": item.name if item else (history_formatted[0]["item_name"] if history_formatted else "Item"),
+            "category": item.category if item else (history_formatted[0]["category"] if history_formatted else "Kitchen"),
+            "unit": "",
+            "current_stock": float(item.quantity) if item else (history_formatted[0]["recorded_stock"] if history_formatted else 0.0),
+            "min_stock": float(item.min_stock) if item else 0.0,
+            "unit_price": float(item.unit_price) if item else 0.0,
+            "sku": item.sku if item else None
+        },
+        "history": history_formatted,
+        "trend": trend_points,
+        "total_records": len(history_formatted)
+    }
+
+
+@router.get(
+    "/inventory/audit-history/export",
+    summary="Export Daily Inventory History Report (CSV / Excel)"
+)
+def export_inventory_audit_history(
+    format: str = Query("csv", pattern="^(csv|excel)$"),
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    specific_date: Optional[date] = None,
+    category: Optional[str] = None,
+    item_id: Optional[int] = None,
+    submitted_by: Optional[int] = None,
+    role: Optional[str] = None,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin_or_inventory),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    """
+    Exports filtered inventory history as CSV/Excel compatible file with UTF-8 BOM.
+    """
+    from fastapi.responses import StreamingResponse
+
+    _seed_initial_history_if_empty(db, tenant_id)
+
+    query = db.query(models.InventoryHistory).filter(
+        models.InventoryHistory.tenant_id == tenant_id
+    )
+
+    if specific_date:
+        query = query.filter(models.InventoryHistory.inventory_date == specific_date)
+    else:
+        if start_date:
+            query = query.filter(models.InventoryHistory.inventory_date >= start_date)
+        if end_date:
+            query = query.filter(models.InventoryHistory.inventory_date <= end_date)
+
+    if category and category.strip().upper() != "ALL":
+        query = query.filter(models.InventoryHistory.category == category.strip())
+
+    if item_id:
+        query = query.filter(models.InventoryHistory.inventory_item_id == item_id)
+
+    if submitted_by:
+        query = query.filter(models.InventoryHistory.submitted_by == submitted_by)
+
+    if role and role.strip().upper() != "ALL":
+        query = query.filter(models.InventoryHistory.submitted_by_role.ilike(f"%{role.strip()}%"))
+
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        query = query.filter(models.InventoryHistory.item_name.ilike(term))
+
+    records = query.order_by(models.InventoryHistory.recorded_at.desc()).all()
+
+    output = io.StringIO()
+    # Write UTF-8 BOM for Microsoft Excel compatibility
+    output.write("\\ufeff")
+    writer = csv.writer(output)
+    writer.writerow([
+        "Date",
+        "Time (PST)",
+        "Item Name",
+        "Category",
+        "Current Stock",
+        "New Total Stock",
+        "Submitted By",
+        "Role",
+        "Action Type",
+        "Notes"
+    ])
+
+    for r in records:
+        item_data = _format_history_item(r)
+        writer.writerow([
+            item_data["date_display"],
+            item_data["time_display"],
+            item_data["item_name"],
+            item_data["category"],
+            f"{item_data['previous_stock']:.2f}",
+            f"{item_data['recorded_stock']:.2f}",
+            item_data["submitted_by_name"],
+            item_data["submitted_by_role"],
+            item_data["action_type"],
+            item_data["notes"] or ""
+        ])
+
+    output.seek(0)
+    filename = f"inventory_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
 @router.get(
     "/inventory/{item_id}",
     response_model=schemas.InventoryItemResponse,
@@ -1087,6 +1835,50 @@ def get_inventory_item(
     ).first()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found.")
+
+    manila_tz = ZoneInfo("Asia/Manila")
+    today_manila = datetime.now(manila_tz).date()
+    rec = db.query(models.DailyInventoryRecord).filter(
+        models.DailyInventoryRecord.tenant_id == tenant_id,
+        models.DailyInventoryRecord.inventory_item_id == item_id,
+        models.DailyInventoryRecord.inventory_date == today_manila
+    ).first()
+
+    # Check for previous daily stock record prior to today
+    prev_rec = db.query(models.DailyInventoryRecord).filter(
+        models.DailyInventoryRecord.tenant_id == tenant_id,
+        models.DailyInventoryRecord.inventory_item_id == item_id,
+        models.DailyInventoryRecord.inventory_date < today_manila
+    ).order_by(models.DailyInventoryRecord.inventory_date.desc(), models.DailyInventoryRecord.submitted_at.desc()).first()
+
+    if prev_rec:
+        item.previous_stock = Decimal(str(prev_rec.current_stock))
+        item.previous_stock_date = str(prev_rec.inventory_date)
+        item.has_previous_stock = True
+    else:
+        item.previous_stock = None
+        item.previous_stock_date = None
+        item.has_previous_stock = False
+
+    is_locked = bool(getattr(item, "stock_entry_locked", False))
+    if rec:
+        item.daily_input_submitted_at = rec.submitted_at
+        item.daily_input_submitted_by = rec.submitter.username if rec.submitter else "Staff"
+        item.daily_input_date = str(rec.inventory_date)
+    else:
+        item.daily_input_submitted_at = None
+        item.daily_input_submitted_by = None
+        item.daily_input_date = str(today_manila)
+
+    if is_locked:
+        item.daily_input_status = "Stock Entry Locked"
+        item.daily_input_submitted = True
+        item.next_available_input_date = None
+    else:
+        item.daily_input_status = "Pending Stock Entry"
+        item.daily_input_submitted = False
+        item.next_available_input_date = None
+
     return item
 
 
@@ -1108,6 +1900,14 @@ def update_inventory_item(
     ).first()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found.")
+
+    # In Edit Item Modal, Current Stock, Min Stock, and Unit Price are hidden.
+    # Inventory, Manager, and Admin accounts can edit item metadata (Name, Category, Product Codes / SKU).
+    if current_user.role in (models.UserRole.ADMIN, models.UserRole.MANAGER, models.UserRole.INVENTORY):
+        body.unit_price = None
+        # Inventory staff stock adjustments are done through New Total Stock (Save Stock)
+        if current_user.role == models.UserRole.INVENTORY:
+            body.quantity = None
 
     if body.name is not None:
         name_clean = body.name.strip()
@@ -1137,11 +1937,8 @@ def update_inventory_item(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Stock quantity cannot be negative.")
         item.quantity = body.quantity
 
-    if body.unit is not None:
-        unit_clean = body.unit.strip()
-        if not unit_clean:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit of measure cannot be empty.")
-        item.unit = unit_clean
+    if body.unit is not None and body.unit.strip():
+        item.unit = body.unit.strip()
 
     if body.min_stock is not None:
         if body.min_stock < 0:
@@ -1175,3 +1972,543 @@ def update_inventory_item(
 
     return item
 
+
+@router.post(
+    "/inventory/{item_id}/daily-input",
+    summary="Submit one-time daily inventory input (Unit Price and Current Stock)"
+)
+def submit_daily_inventory_input(
+    item_id: int,
+    body: schemas.DailyInventoryInputCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_inventory_access),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    """
+    One-Time Daily Inventory Input System.
+    Inventory officers and managers can submit Unit Price and Current Stock once per item per calendar day (Asia/Manila).
+    Once submitted, the values become locked for the remainder of the Philippine calendar day until 12:00 AM midnight.
+    Admins are not restricted by this rule.
+    """
+    item = db.query(models.InventoryItem).filter(
+        models.InventoryItem.id == item_id,
+        models.InventoryItem.tenant_id == tenant_id
+    ).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found.")
+
+    if body.unit_price < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit price cannot be negative.")
+    if body.current_stock < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current stock cannot be negative.")
+
+    manila_tz = ZoneInfo("Asia/Manila")
+    now_manila = datetime.now(manila_tz)
+    today_manila = now_manila.date()
+
+    # Role-based restriction: Once INVENTORY submits stock for an item, it stays locked until Admin grants permission again
+    if current_user.role == models.UserRole.INVENTORY and getattr(item, "stock_entry_locked", False):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Stock for this item has already been saved. Please ask an Admin for permission to add stock again."
+        )
+
+    old_qty = float(item.quantity)
+    if current_user.role == models.UserRole.INVENTORY:
+        new_qty = float(item.quantity)
+        new_price = Decimal(str(body.unit_price))
+    elif current_user.role in (models.UserRole.MANAGER, models.UserRole.ADMIN):
+        new_qty = float(body.current_stock)
+        new_price = item.unit_price
+    else:
+        new_qty = float(body.current_stock)
+        new_price = Decimal(str(body.unit_price))
+
+    item.quantity = Decimal(str(new_qty))
+    item.unit_price = new_price
+    if current_user.role == models.UserRole.INVENTORY:
+        item.stock_entry_locked = True
+    db.flush()
+
+    daily_record = db.query(models.DailyInventoryRecord).filter(
+        models.DailyInventoryRecord.tenant_id == tenant_id,
+        models.DailyInventoryRecord.inventory_item_id == item.id,
+        models.DailyInventoryRecord.inventory_date == today_manila
+    ).first()
+    if daily_record:
+        daily_record.unit_price = new_price
+        daily_record.current_stock = Decimal(str(new_qty))
+        daily_record.submitted_by = current_user.id
+        daily_record.submitted_at = now_manila
+    else:
+        daily_record = models.DailyInventoryRecord(
+            tenant_id=tenant_id,
+            inventory_item_id=item.id,
+            unit_price=new_price,
+            current_stock=Decimal(str(new_qty)),
+            submitted_by=current_user.id,
+            submitted_at=now_manila,
+            inventory_date=today_manila,
+        )
+        db.add(daily_record)
+
+    # Automatically record immutable Daily Inventory Audit History
+    try:
+        submitter_display = f"{current_user.first_name or ''} {current_user.last_name or ''}".strip() or current_user.username
+        role_display = str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role).replace("_", " ").title()
+        stock_difference = Decimal(str(new_qty)) - Decimal(str(old_qty))
+
+        audit_entry = models.InventoryHistory(
+            tenant_id=tenant_id,
+            inventory_item_id=item.id,
+            item_name=item.name,
+            category=item.category or "Kitchen",
+            unit=item.unit or "units",
+            previous_stock=Decimal(str(old_qty)),
+            recorded_stock=Decimal(str(new_qty)),
+            difference=stock_difference,
+            inventory_date=today_manila,
+            recorded_at=now_manila,
+            submitted_by=current_user.id,
+            submitted_by_name=submitter_display,
+            submitted_by_role=role_display,
+            action_type="DAILY_SUBMISSION",
+            notes=f"One-Time Daily Input (Unit Price: ₱{float(new_price):.2f})"
+        )
+        db.add(audit_entry)
+    except Exception as e:
+        pass
+
+    log = models.ActivityLog(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        action="Daily Inventory Submitted",
+        performed_by=current_user.username,
+        target_user=None,
+        role=str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role),
+        details=f"One-Time Daily Input for '{item.name}': stock={new_qty:.2f} {item.unit}, price=₱{float(new_price):.2f}"
+    )
+    db.add(log)
+
+    try:
+        db.commit()
+        db.refresh(daily_record)
+        db.refresh(item)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Daily inventory input has already been completed for this item today. You can submit a new entry starting at 12:00 AM tomorrow."
+        )
+
+    try:
+        from app.core.websocket import notify_realtime_event
+        notify_realtime_event(tenant_id, "INVENTORY_UPDATED", {
+            "action": "daily_input_submitted",
+            "item_id": item.id,
+            "name": item.name,
+            "quantity": float(item.quantity),
+            "unit_price": float(item.unit_price),
+            "inventory_date": str(today_manila)
+        })
+    except Exception:
+        pass
+
+    next_date_str = (today_manila + timedelta(days=1)).strftime("%B %d, %Y 12:00 AM")
+
+    return {
+        "message": "Daily inventory input successfully submitted. Unit Price and Current Stock are now locked until 12:00 AM tomorrow.",
+        "item_id": item.id,
+        "name": item.name,
+        "unit_price": float(item.unit_price),
+        "current_stock": float(item.quantity),
+        "submitted_at": daily_record.submitted_at.isoformat(),
+        "submitted_by": current_user.username,
+        "inventory_date": str(today_manila),
+        "next_available_input_date": next_date_str,
+        "status": "Daily Input Completed"
+    }
+
+
+@router.get(
+    "/inventory/{item_id}/daily-history",
+    summary="Get daily inventory input history for an item (shows previous updates, not current active stock)"
+)
+def get_daily_inventory_history(
+    item_id: int,
+    limit: int = Query(30, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_inventory_access),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    records = db.query(models.DailyInventoryRecord).filter(
+        models.DailyInventoryRecord.tenant_id == tenant_id,
+        models.DailyInventoryRecord.inventory_item_id == item_id
+    ).order_by(models.DailyInventoryRecord.inventory_date.desc(), models.DailyInventoryRecord.submitted_at.desc()).limit(limit).all()
+
+    # The user requested:
+    # "can you add the history of previous history stock not the current but the history of inventory can only see the previous update not the new update but the previous updated if not update the stock of inventory not see in the history of inventory like this"
+    # History must show previous updates (records prior to current active stock).
+    # If the item only has the current entry or no updates, previous history is empty!
+    previous_records = records[1:] if len(records) > 1 else []
+
+    return [
+        {
+            "id": r.id,
+            "tenant_id": r.tenant_id,
+            "inventory_item_id": r.inventory_item_id,
+            "unit_price": float(r.unit_price),
+            "current_stock": float(r.current_stock),
+            "previous_stock": float(r.current_stock),
+            "submitted_by": r.submitted_by,
+            "submitted_by_username": r.submitter.username if r.submitter else "Staff",
+            "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
+            "inventory_date": str(r.inventory_date)
+        }
+        for r in previous_records
+    ]
+
+
+@router.put(
+    "/inventory/{item_id}/price",
+    summary="Update unit price of inventory item (Inventory account only)"
+)
+def update_inventory_price(
+    item_id: int,
+    body: schemas.InventoryPriceUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_inventory_access),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    # Rule: Manager and Admin accounts can only update inventory stock.
+    # ONLY the Inventory account can update Price per Unit.
+    if current_user.role in (models.UserRole.MANAGER, models.UserRole.ADMIN):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Manager and Admin accounts can only update inventory stock. Only the Inventory account can update Price per Unit."
+        )
+
+    item = db.query(models.InventoryItem).filter(
+        models.InventoryItem.id == item_id,
+        models.InventoryItem.tenant_id == tenant_id
+    ).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found.")
+
+    if body.unit_price < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unit price cannot be negative.")
+
+    old_price = float(item.unit_price)
+    new_price = float(body.unit_price)
+    item.unit_price = body.unit_price
+
+    # If daily record exists for today, update its unit price as well
+    manila_tz = ZoneInfo("Asia/Manila")
+    today_manila = datetime.now(manila_tz).date()
+    daily_rec = db.query(models.DailyInventoryRecord).filter(
+        models.DailyInventoryRecord.tenant_id == tenant_id,
+        models.DailyInventoryRecord.inventory_item_id == item_id,
+        models.DailyInventoryRecord.inventory_date == today_manila
+    ).first()
+    if daily_rec:
+        daily_rec.unit_price = body.unit_price
+
+    # Log the price update activity
+    log = models.ActivityLog(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        action="Unit Price Updated",
+        performed_by=current_user.username,
+        target_user=None,
+        role=str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role),
+        details=f"Item '{item.name}' unit price updated from ₱{old_price:.2f} to ₱{new_price:.2f}"
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(item)
+
+    try:
+        from app.core.websocket import notify_realtime_event
+        notify_realtime_event(tenant_id, "INVENTORY_UPDATED", {
+            "action": "price_updated",
+            "item_id": item.id,
+            "name": item.name,
+            "unit_price": float(item.unit_price)
+        })
+    except Exception:
+        pass
+
+    return {
+        "message": f"Unit price for '{item.name}' updated successfully to ₱{new_price:.2f}",
+        "item_id": item.id,
+        "name": item.name,
+        "unit_price": float(item.unit_price),
+        "current_stock": float(item.quantity)
+    }
+
+
+@router.post(
+    "/inventory/{item_id}/allow-stock",
+    summary="Admin permission to allow Inventory to add stock again for an item"
+)
+def allow_inventory_stock_entry(
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    """Unlocks stock entry for an inventory item so Inventory staff can save stock again."""
+    item = db.query(models.InventoryItem).filter(
+        models.InventoryItem.id == item_id,
+        models.InventoryItem.tenant_id == tenant_id
+    ).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found.")
+
+    item.stock_entry_locked = False
+    log = models.ActivityLog(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        action="Inventory Stock Unlocked",
+        performed_by=current_user.username,
+        target_user=None,
+        role=str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role),
+        details=f"Admin '{current_user.username}' granted permission to add stock again for '{item.name}'."
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(item)
+
+    try:
+        from app.core.websocket import notify_realtime_event
+        notify_realtime_event(tenant_id, "INVENTORY_UPDATED", {
+            "action": "stock_unlocked",
+            "item_id": item.id,
+            "name": item.name
+        })
+    except Exception:
+        pass
+
+    return {
+        "id": item.id,
+        "name": item.name,
+        "stock_entry_locked": False,
+        "message": f"Permission granted: Inventory can now add stock again for '{item.name}'."
+    }
+
+
+@router.post(
+    "/inventory/allow-stock-all",
+    summary="Admin permission to allow Inventory to add stock again for all locked items"
+)
+def allow_all_inventory_stock_entry(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    """Unlocks stock entry for all locked inventory items in the tenant so Inventory staff can save stock again."""
+    locked_items = db.query(models.InventoryItem).filter(
+        models.InventoryItem.tenant_id == tenant_id,
+        models.InventoryItem.stock_entry_locked == True
+    ).all()
+
+    count = len(locked_items)
+    for item in locked_items:
+        item.stock_entry_locked = False
+
+    log = models.ActivityLog(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        action="Inventory All Stock Unlocked",
+        performed_by=current_user.username,
+        target_user=None,
+        role=str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role),
+        details=f"Admin '{current_user.username}' granted permission to add stock again for all locked items ({count} unlocked)."
+    )
+    db.add(log)
+    db.commit()
+
+    try:
+        from app.core.websocket import notify_realtime_event
+        notify_realtime_event(tenant_id, "INVENTORY_UPDATED", {
+            "action": "stock_unlocked_all",
+            "unlocked_count": count
+        })
+    except Exception:
+        pass
+
+    return {
+        "unlocked_count": count,
+        "message": f"Permission granted: {count} item(s) unlocked for Inventory stock entry."
+    }
+
+
+from pydantic import BaseModel
+
+
+class WastageCreateRequest(BaseModel):
+    quantity: float
+    reason: str
+    cost: Optional[float] = None
+
+
+@router.get(
+    "/inventory/wastage/list",
+    summary="List wastage & spoilage records from stock movements"
+)
+def list_wastage_records(
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_inventory_access),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    rows = (
+        db.query(models.StockMovement, models.InventoryItem, models.User)
+        .join(models.InventoryItem, models.StockMovement.inventory_item_id == models.InventoryItem.id)
+        .outerjoin(models.User, models.StockMovement.user_id == models.User.id)
+        .filter(
+            models.StockMovement.tenant_id == tenant_id,
+            models.StockMovement.movement_type == "WASTAGE",
+        )
+        .order_by(models.StockMovement.created_at.desc(), models.StockMovement.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+    manila_tz = ZoneInfo("Asia/Manila")
+    results = []
+    for mv, item, usr in rows:
+        qty_lost = abs(float(mv.quantity_delta))
+        unit_cost = float(mv.unit_cost if mv.unit_cost is not None else (item.unit_price or 0))
+        dt = mv.created_at
+        if dt is not None:
+            dt_ph = dt.replace(tzinfo=manila_tz) if dt.tzinfo is None else dt.astimezone(manila_tz)
+            ts_str = dt_ph.strftime("%b %d, %Y %I:%M %p")
+        else:
+            ts_str = "—"
+        results.append({
+            "id": mv.id,
+            "inventory_item_id": item.id,
+            "item": item.name,
+            "unit": item.unit or "pcs",
+            "qty_num": qty_lost,
+            "qty": f"{qty_lost:g} {item.unit or 'pcs'}",
+            "reason": mv.reason or "Wastage",
+            "cost": round(qty_lost * unit_cost, 2),
+            "logged_by": usr.username if usr else "Staff",
+            "date": ts_str,
+        })
+    return results
+
+
+@router.post(
+    "/inventory/{item_id}/wastage",
+    summary="Record wastage/spoilage and deduct directly from inventory stock"
+)
+def record_inventory_wastage(
+    item_id: int,
+    body: WastageCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_inventory_access),
+    tenant_id: int = Depends(get_inventory_tenant_id),
+):
+    item = db.query(models.InventoryItem).filter(
+        models.InventoryItem.id == item_id,
+        models.InventoryItem.tenant_id == tenant_id
+    ).first()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found.")
+
+    qty_lost = float(body.quantity or 0)
+    if qty_lost <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Wastage quantity must be greater than 0.")
+
+    old_qty = float(item.quantity or 0)
+    if qty_lost > old_qty:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot record {qty_lost:g} {item.unit or 'pcs'} wastage: only {old_qty:g} {item.unit or 'pcs'} currently in stock."
+        )
+
+    new_qty = round(old_qty - qty_lost, 3)
+    item.quantity = Decimal(str(new_qty))
+
+    unit_price = float(item.unit_price or 0)
+    unit_cost = round(float(body.cost) / qty_lost, 2) if (body.cost is not None and float(body.cost) >= 0) else unit_price
+    total_cost = round(float(body.cost), 2) if (body.cost is not None and float(body.cost) >= 0) else round(qty_lost * unit_price, 2)
+    reason_clean = (body.reason or "Wastage / Spoilage").strip()[:255]
+
+    manila_tz = ZoneInfo("Asia/Manila")
+    now_manila = datetime.now(manila_tz)
+
+    movement = models.StockMovement(
+        tenant_id=tenant_id,
+        inventory_item_id=item.id,
+        movement_type="WASTAGE",
+        quantity_delta=Decimal(str(-qty_lost)),
+        quantity_after=item.quantity,
+        unit_cost=Decimal(str(unit_cost)),
+        reason=reason_clean,
+        user_id=current_user.id,
+    )
+    db.add(movement)
+
+    try:
+        hist_entry = models.InventoryHistory(
+            tenant_id=tenant_id,
+            inventory_item_id=item.id,
+            item_name=item.name,
+            category=item.category or "Kitchen",
+            unit=item.unit or "pcs",
+            previous_stock=Decimal(str(old_qty)),
+            recorded_stock=item.quantity,
+            difference=Decimal(str(-qty_lost)),
+            inventory_date=now_manila.date(),
+            recorded_at=now_manila.replace(tzinfo=None),
+            submitted_by=current_user.id,
+            submitted_by_name=current_user.username,
+            submitted_by_role=str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role),
+            action_type="WASTAGE",
+            notes=f"Wastage ({reason_clean}): -{qty_lost:g} {item.unit or 'pcs'}",
+        )
+        db.add(hist_entry)
+    except Exception:
+        pass
+
+    log = models.ActivityLog(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        action="Wastage Recorded",
+        performed_by=current_user.username,
+        target_user=None,
+        role=str(current_user.role.value if hasattr(current_user.role, 'value') else current_user.role),
+        details=f"Recorded wastage for '{item.name}': -{qty_lost:g} {item.unit or 'pcs'} ({reason_clean}). Stock: {old_qty:g} -> {new_qty:g}",
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(item)
+    db.refresh(movement)
+
+    try:
+        from app.core.websocket import notify_realtime_event
+        notify_realtime_event(tenant_id, "INVENTORY_UPDATED", {
+            "action": "wastage_recorded",
+            "item_id": item.id,
+            "name": item.name,
+            "quantity": float(item.quantity),
+        })
+    except Exception:
+        pass
+
+    return {
+        "id": movement.id,
+        "inventory_item_id": item.id,
+        "item": item.name,
+        "unit": item.unit or "pcs",
+        "qty": f"{qty_lost:g} {item.unit or 'pcs'}",
+        "reason": reason_clean,
+        "cost": total_cost,
+        "new_quantity": float(item.quantity),
+        "logged_by": current_user.username,
+        "date": now_manila.strftime("%b %d, %Y %I:%M %p"),
+    }

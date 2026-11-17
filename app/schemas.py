@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field, model_validator, ConfigDict, field_validator
 from typing import List, Optional, Any, Literal
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, date
 from app.models import UserRole, ReportCategory, ReportPriority, ReportStatus, PurchaseOrderStatus
 
 # Tenant Schemas
@@ -96,6 +96,18 @@ class ActivityLogResponse(BaseModel):
     target_user: Optional[str] = None
     role: Optional[str] = None
     details: Optional[str] = None
+    username: Optional[str] = None
+    full_name: Optional[str] = None
+    activity_type: Optional[str] = None
+    description: Optional[str] = None
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    session_id: Optional[str] = None
+    status: Optional[str] = "SUCCESS"
+    metadata_json: Optional[str] = None
+    ph_date: Optional[str] = None
+    ph_time: Optional[str] = None
+    formatted_timestamp: Optional[str] = None
     created_at: datetime
 
     model_config = {
@@ -136,13 +148,30 @@ class ProductResponse(BaseModel):
 
 
 # Shift Cash Movement Schemas
+# Drawer amounts are stored in Numeric(10, 2) columns: finite, at most 10 digits, 2 decimal places.
 class ShiftCashMovementCreate(BaseModel):
     shift_id: int
-    type: str = Field(..., description="Must be 'PAID_IN' or 'PAID_OUT'")
-    amount: Decimal = Field(..., gt=0.0)
+    type: Literal["PAID_IN", "PAID_OUT"] = Field(..., description="Must be 'PAID_IN' or 'PAID_OUT'")
+    amount: Decimal = Field(..., gt=0.0, max_digits=10, decimal_places=2, allow_inf_nan=False)
     reason: Optional[str] = Field(None, max_length=255)
     tenant_id: Optional[int] = None
     user_id: Optional[int] = None
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _upper(cls, v):
+        return v.strip().upper() if isinstance(v, str) else v
+
+class ShiftCashoutRequest(BaseModel):
+    """POST /shifts/cashout and /shifts/withdraw. shift_id is checked by the route (400 on a bad value)."""
+    shift_id: Any = None
+    amount: Optional[Decimal] = Field(None, ge=0, max_digits=10, decimal_places=2, allow_inf_nan=False)
+    reason: Optional[str] = Field(None, max_length=255)
+
+class ShiftDrawerCashRequest(BaseModel):
+    """PUT/POST /shifts/{shift_id}/drawer-cash: the counted drawer amount the expected cash is set to."""
+    amount: Decimal = Field(Decimal("0"), ge=0, max_digits=10, decimal_places=2, allow_inf_nan=False)
+    reason: Optional[str] = Field(None, max_length=255)
 
 class ShiftCashMovementResponse(BaseModel):
     id: int
@@ -427,9 +456,9 @@ class InventoryItemCreate(BaseModel):
     """Request body to add a new raw ingredient or stock item."""
     name: str = Field(..., max_length=100, description="Item name (unique per tenant)")
     category: Optional[str] = Field("Kitchen", max_length=100, description="Department category")
-    sku: Optional[str] = Field(None, max_length=50)
+    sku: Optional[str] = Field(None, max_length=255)
     quantity: Decimal = Field(0.0, ge=0, description="Opening stock quantity")
-    unit: str = Field(..., max_length=20, description="Unit of measure, e.g. kg, pcs, L")
+    unit: Optional[str] = Field("pcs", max_length=20, description="Unit of measure (default pcs)")
     min_stock: Decimal = Field(0.0, ge=0, description="Low-stock threshold")
     unit_price: Optional[Decimal] = Field(0.0, ge=0, description="Price or cost per unit")
 
@@ -438,7 +467,7 @@ class InventoryItemUpdate(BaseModel):
     """Request body to edit an existing inventory item."""
     name: Optional[str] = Field(None, max_length=100, description="Item name")
     category: Optional[str] = Field(None, max_length=100, description="Department category")
-    sku: Optional[str] = Field(None, max_length=50)
+    sku: Optional[str] = Field(None, max_length=255)
     quantity: Optional[Decimal] = Field(None, ge=0, description="Stock quantity")
     unit: Optional[str] = Field(None, max_length=20, description="Unit of measure")
     min_stock: Optional[Decimal] = Field(None, ge=0, description="Low-stock threshold")
@@ -456,6 +485,29 @@ class InventoryStockAdjust(BaseModel):
     unit_price: Optional[Decimal] = Field(None, ge=0, description="Optional updated price per unit")
 
 
+class DailyInventoryInputCreate(BaseModel):
+    unit_price: Decimal = Field(..., ge=0, description="Unit price per item")
+    current_stock: Decimal = Field(..., ge=0, description="Current stock quantity")
+
+
+class DailyInventoryRecordResponse(BaseModel):
+    id: int
+    tenant_id: int
+    inventory_item_id: int
+    unit_price: Decimal
+    current_stock: Decimal
+    submitted_by: Optional[int] = None
+    submitted_by_username: Optional[str] = None
+    submitted_at: datetime
+    inventory_date: date
+
+    model_config = {"from_attributes": True}
+
+
+class InventoryPriceUpdate(BaseModel):
+    unit_price: Decimal = Field(..., ge=0, description="Updated unit price")
+
+
 class InventoryItemResponse(BaseModel):
     id: int
     tenant_id: int
@@ -468,6 +520,15 @@ class InventoryItemResponse(BaseModel):
     unit_price: Decimal = Decimal("0.0")
     total_value: Optional[Decimal] = None
     is_low_stock: bool = False   # Computed field: quantity <= min_stock
+    daily_input_status: Optional[str] = "Pending Daily Input"
+    daily_input_submitted: Optional[bool] = False
+    daily_input_submitted_at: Optional[datetime] = None
+    daily_input_submitted_by: Optional[str] = None
+    daily_input_date: Optional[str] = None
+    next_available_input_date: Optional[str] = None
+    previous_stock: Optional[Decimal] = None
+    previous_stock_date: Optional[str] = None
+    has_previous_stock: Optional[bool] = False
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -482,6 +543,9 @@ class InventoryItemResponse(BaseModel):
             unit_p = float(getattr(data, "unit_price", 0) or 0)
             obj["unit_price"] = Decimal(str(unit_p))
             obj["total_value"] = Decimal(str(round(float(data.quantity) * unit_p, 2)))
+            for f in ["daily_input_status", "daily_input_submitted", "daily_input_submitted_at", "daily_input_submitted_by", "daily_input_date", "next_available_input_date"]:
+                if hasattr(data, f):
+                    obj[f] = getattr(data, f)
             return obj
         return data
 
@@ -697,31 +761,43 @@ class TableUpdate(BaseModel):
 # ─────────────────────────────────────────────
 class ExpenseCreate(BaseModel):
     category: str = Field(..., max_length=50)
+    title: Optional[str] = Field(None, max_length=150)
     description: str = Field(..., max_length=255)
+    vendor: Optional[str] = Field(None, max_length=150)
     amount: Decimal = Field(..., gt=0)
     payment_method: str = Field("Cash", max_length=50)
-    status: Literal["paid", "pending", "voided"] = "paid"
+    payment_source: Optional[str] = Field("manager_safe", max_length=50)
+    status: Literal["paid", "pending", "approved", "rejected", "voided"] = "paid"
     reference_no: Optional[str] = Field(None, max_length=50)
+    receipt_url: Optional[str] = Field(None, max_length=255)
     expense_date: Optional[datetime] = None
 
 class ExpenseUpdate(BaseModel):
     category: Optional[str] = Field(None, max_length=50)
+    title: Optional[str] = Field(None, max_length=150)
     description: Optional[str] = Field(None, max_length=255)
+    vendor: Optional[str] = Field(None, max_length=150)
     amount: Optional[Decimal] = Field(None, gt=0)
     payment_method: Optional[str] = Field(None, max_length=50)
-    status: Optional[Literal["paid", "pending", "voided"]] = None
+    payment_source: Optional[str] = Field(None, max_length=50)
+    status: Optional[Literal["paid", "pending", "approved", "rejected", "voided"]] = None
     reference_no: Optional[str] = Field(None, max_length=50)
+    receipt_url: Optional[str] = Field(None, max_length=255)
     expense_date: Optional[datetime] = None
 
 class ExpenseResponse(BaseModel):
     id: int
     tenant_id: int
     category: str
+    title: Optional[str] = None
     description: str
+    vendor: Optional[str] = None
     amount: float
     payment_method: str
+    payment_source: Optional[str] = "manager_safe"
     status: str
     reference_no: Optional[str] = None
+    receipt_url: Optional[str] = None
     expense_date: Optional[datetime] = None
     recorded_by: Optional[int] = None
     recorded_by_username: Optional[str] = None
@@ -733,3 +809,42 @@ class ExpenseResponse(BaseModel):
 
 
 
+
+
+class InventoryHistoryResponse(BaseModel):
+    id: int
+    tenant_id: int
+    inventory_item_id: Optional[int] = None
+    item_name: str
+    category: Optional[str] = None
+    unit: str
+    previous_stock: Decimal
+    recorded_stock: Decimal
+    difference: Decimal
+    inventory_date: date
+    recorded_at: datetime
+    submitted_by: Optional[int] = None
+    submitted_by_name: str
+    submitted_by_role: str
+    action_type: str
+    notes: Optional[str] = None
+    time_display: Optional[str] = None
+    date_display: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class InventoryHistorySummaryResponse(BaseModel):
+    total_recorded_today: int
+    total_categories_today: int
+    stock_increases_today: int
+    stock_decreases_today: int
+
+
+class InventoryAuditHistoryPaginatedResponse(BaseModel):
+    items: List[InventoryHistoryResponse]
+    total: int
+    page: int
+    limit: int
+    total_pages: int
+    summary: InventoryHistorySummaryResponse

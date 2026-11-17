@@ -11,6 +11,7 @@ updates the order, all in ONE database transaction.
 import logging
 import os
 import uuid
+from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Optional
 
@@ -21,8 +22,9 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.db import get_db
 import app.models as models
-from app.core.dependencies import require_pos_access, resolve_tenant_id
+from app.core.dependencies import require_pos_access, require_kitchen_access, require_manager_or_admin, resolve_tenant_id
 from app.services import payments as pay
+from app.services import stock
 
 logger = logging.getLogger("pos_transactions")
 
@@ -41,18 +43,18 @@ AUDIT_ROLES = {models.UserRole.MANAGER, models.UserRole.ADMIN, models.UserRole.S
 # UI forces a drawer count first; sales will then be rejected until /shifts/start is called.
 AUTO_OPEN_SHIFT = os.getenv("AUTO_OPEN_SHIFT", "true").strip().lower() not in ("0", "false", "no", "off")
 
+# BUSINESS DECISION PENDING (who may void a sale): every POS role may void, as before. Set
+# VOID_REQUIRES_MANAGER=true to restrict voids to MANAGER/ADMIN/SUPER_ADMIN once the owner decides.
+VOID_REQUIRES_MANAGER = os.getenv("VOID_REQUIRES_MANAGER", "false").strip().lower() in ("1", "true", "yes", "on")
+
+# Preparation progress that a sale-status request may record: fulfilment only, never the financial status.
+FULFILMENT_ONLY_STATUSES = {"preparing", "ready"}
+MIN_VOID_REASON = 3
+
 
 def _money(value, field: str, *, allow_zero: bool = True) -> Decimal:
-    """Parse a client-supplied money value into a validated 2dp Decimal (never via float arithmetic)."""
-    if isinstance(value, bool) or value is None:
-        raise HTTPException(status_code=400, detail=f"Invalid {field}.")
-    try:
-        amount = Decimal(str(value)).quantize(CENT, rounding=ROUND_HALF_UP)
-    except (InvalidOperation, ValueError):
-        raise HTTPException(status_code=400, detail=f"Invalid {field}.")
-    if not amount.is_finite() or amount < 0 or amount > MAX_MONEY or (amount == 0 and not allow_zero):
-        raise HTTPException(status_code=400, detail=f"Invalid {field}.")
-    return amount
+    """Client-supplied money: 2dp Decimal, never via float arithmetic; more decimals are rejected, not rounded."""
+    return pay.parse_money(value, field, allow_zero=allow_zero)
 
 
 def _quantity(value) -> int:
@@ -70,8 +72,8 @@ def _quantity(value) -> int:
 
 
 def _is_cash(method: str) -> bool:
-    # startswith, not "in": "GCASH" contains "cash" but is not cash in the drawer.
-    return (method or "").strip().lower().startswith("cash")
+    # Exact method match, never a substring: "GCASH" contains "cash" but is not cash in the drawer.
+    return pay.is_cash_method(method)
 
 
 def _serialize_tx(tx: models.Transaction, *, detail: bool, audit: bool = False) -> dict:
@@ -108,6 +110,9 @@ def _serialize_tx(tx: models.Transaction, *, detail: bool, audit: bool = False) 
         "net_amount": float(tx.net_amount),
         "status": tx.status,
         "created_at": tx.created_at.isoformat() if tx.created_at else None,
+        "voided_at": tx.voided_at.isoformat() if tx.voided_at else None,
+        "void_reason": tx.void_reason,
+        "refund_status": tx.refund_status,
         "items": [
             {
                 "id": it.id,
@@ -122,8 +127,24 @@ def _serialize_tx(tx: models.Transaction, *, detail: bool, audit: bool = False) 
         "payments": payments,
     }
     data["fulfillment_status"] = tx.fulfillment_status
-    if detail:
+    if audit:
+        data["voided_by"] = tx.voided_by
     return data
+
+
+def _sale_lines(tx: models.Transaction) -> dict:
+    """Committed lines and payments, so receipts are printed from what was saved, not from the browser cart."""
+    return {
+        "items": [{
+            "product_id": it.product_id,
+            "name": it.product.name if it.product else f"Item #{it.product_id}",
+            "quantity": it.quantity,
+            "unit_price": float(it.unit_price),
+            "total_price": float(it.total_price),
+        } for it in tx.items],
+        "payments": [{"payment_method": p.payment_method, "amount": float(p.amount), "status": p.status}
+                     for p in tx.payments],
+    }
 
 
 @router.get("", summary="List transactions for the user's tenant")
@@ -182,6 +203,7 @@ def _existing_tx_response(existing_tx: models.Transaction, message: str = "Trans
         "net_amount": float(existing_tx.net_amount),
         "status": existing_tx.status,
         "created_at": existing_tx.created_at.isoformat() if existing_tx.created_at else None,
+        **_sale_lines(existing_tx),
         "idempotent_replay": True,
         "message": message
     }
@@ -201,15 +223,50 @@ def _requested_methods(body: dict) -> list:
     """Payment method names the request asks for (used only for the idempotency fingerprint)."""
     rows = body.get("payments")
     if isinstance(rows, list) and rows:
-        return [str((r or {}).get("payment_method") or "Cash") if isinstance(r, dict) else "Cash" for r in rows]
-    return [str(body.get("payment_method") or "Cash")]
+        return [str((r or {}).get("payment_method") or "CASH") if isinstance(r, dict) else "CASH" for r in rows]
+    return [str(body.get("payment_method") or "CASH")]
+
+
+def _fingerprint_payment_lines(body: dict):
+    """(method, amount) pairs of an explicit payments list, normalised for the idempotency fingerprint."""
+    rows = body.get("payments")
+    if not isinstance(rows, list) or not rows:
+        return None
+    lines = []
+    for r in rows:
+        if not isinstance(r, dict):
+            return None
+        try:
+            amount = str(Decimal(str(r["amount"])).quantize(CENT)) if r.get("amount") is not None else "due"
+        except (InvalidOperation, ValueError, TypeError):
+            amount = "invalid"
+        lines.append((str(r.get("payment_method") or "CASH"), amount))
+    return lines
 
 
 def _check_payment_method(method) -> str:
-    method = str(method or "Cash").strip()
-    if not method or len(method) > MAX_PAYMENT_METHOD_LENGTH:
+    """CASH / GCASH / CARD (case-insensitive input, stored upper-case). Anything else is a 400."""
+    if method is not None and not isinstance(method, str):
         raise HTTPException(status_code=400, detail="Invalid payment method.")
-    return method
+    return pay.canonical_pos_method(method if method and method.strip() else None)
+
+
+def _payment_list(payments_data, net_amount: Decimal) -> list:
+    """
+    An explicit payments list records APPLIED amounts (change is never recorded), so the lines must add up
+    to exactly the amount due: more would inflate drawer and income figures, less would under-collect.
+    """
+    if not isinstance(payments_data, list) or len(payments_data) > 10:
+        raise HTTPException(status_code=400, detail="Invalid payments.")
+    rows = []
+    for p in payments_data:
+        if not isinstance(p, dict):
+            raise HTTPException(status_code=400, detail="Invalid payment.")
+        rows.append((_check_payment_method(p.get("payment_method")),
+                     _money(p.get("amount", net_amount), "payment amount", allow_zero=False)))
+    if sum(a for _, a in rows) != net_amount:
+        raise HTTPException(status_code=400, detail="Payment lines must add up to exactly the amount due.")
+    return rows
 
 
 def _load_customer_order_for_sale(db: Session, tenant_id: int, order_id: int) -> models.CustomerOrder:
@@ -284,6 +341,7 @@ def create_transaction(
     fingerprint = pay.checkout_fingerprint(
         lines=parsed_lines, tax=tax_amount, discount=discount_amount, status=tx_status,
         methods=[] if order_id is not None else _requested_methods(body), customer_order_id=order_id,
+        payment_lines=None if order_id is not None else _fingerprint_payment_lines(body),
     )
 
     # --- Idempotency: a repeated submission returns the original transaction -------------------
@@ -309,7 +367,7 @@ def create_transaction(
             models.Transaction.customer_order_id == order.id
         ).first()
         if linked:
-            return _resume_linked_order(db, order, linked, tenant_id)
+            return _resume_linked_order(db, order, linked, tenant_id, current_user)
         if order.status == "rejected":
             raise HTTPException(status_code=409, detail="This order was rejected and cannot be paid.")
         parsed_lines = []
@@ -375,15 +433,7 @@ def create_transaction(
             raise HTTPException(status_code=409, detail="This order's total is inconsistent. Ask a manager to review it.")
         payment_rows, verified_attempt = _order_payment_rows(db, order, body, payments_data, net_amount)
     elif payments_data:
-        if not isinstance(payments_data, list) or len(payments_data) > 10:
-            raise HTTPException(status_code=400, detail="Invalid payments.")
-        for p in payments_data:
-            if not isinstance(p, dict):
-                raise HTTPException(status_code=400, detail="Invalid payment.")
-            method = _check_payment_method(p.get("payment_method"))
-            payment_rows.append((method, _money(p.get("amount", net_amount), "payment amount", allow_zero=False)))
-        if tx_status == "completed" and sum(a for _, a in payment_rows) < net_amount:
-            raise HTTPException(status_code=400, detail="Payments do not cover the amount due.")
+        payment_rows = _payment_list(payments_data, net_amount)
     else:
         method = _check_payment_method(body.get("payment_method"))
         # The amount recorded is the amount due; the tendered amount only affects change at the till.
@@ -450,6 +500,9 @@ def create_transaction(
         db.add(tx)
         db.flush()
 
+        # Recipe stock (only when INVENTORY_DEDUCTION=on_sale); 409 on insufficient stock rolls back the sale.
+        stock.deduct_for_sale(db, tx, [(it.product_id, it.quantity) for it in validated_items], current_user.id)
+
         has_inv_deduction = False
         # Decrement linked inventory item stock based on Cashier POS Product Code
         sku_quantities = {}
@@ -462,15 +515,21 @@ def create_transaction(
                     sku_quantities[norm_sku] = sku_quantities.get(norm_sku, Decimal("0.00")) + Decimal(str(it.quantity))
 
         if sku_quantities:
-            for norm_sku, total_sold_qty in sku_quantities.items():
-                inv_items = db.query(models.InventoryItem).filter(
-                    models.InventoryItem.tenant_id == tenant_id,
-                    func.upper(func.trim(models.InventoryItem.sku)) == norm_sku
-                ).all()
-                for inv in inv_items:
-                    current_qty = Decimal(str(inv.quantity or 0))
-                    inv.quantity = max(Decimal("0.00"), current_qty - total_sold_qty)
-                    has_inv_deduction = True
+            # Query all inventory items for this tenant that have a SKU assigned
+            inv_items = db.query(models.InventoryItem).filter(
+                models.InventoryItem.tenant_id == tenant_id,
+                models.InventoryItem.sku.isnot(None)
+            ).all()
+            for inv in inv_items:
+                if not inv.sku:
+                    continue
+                # Split comma-separated SKUs to support multiple linked product codes
+                linked_skus = [s.strip().upper() for s in inv.sku.split(",") if s.strip()]
+                for norm_sku, total_sold_qty in sku_quantities.items():
+                    if norm_sku in linked_skus:
+                        current_qty = Decimal(str(inv.quantity or 0))
+                        inv.quantity = max(Decimal("0.00"), current_qty - total_sold_qty)
+                        has_inv_deduction = True
 
         if order is not None:
             _settle_customer_order(db, order, verified_attempt, order_status_before)
@@ -581,6 +640,7 @@ def create_transaction(
         "net_amount": float(tx.net_amount),
         "status": tx.status,
         "created_at": tx.created_at.isoformat() if tx.created_at else None,
+        **_sale_lines(tx),
         "message": "Transaction created successfully."
     }
     if order is not None:
@@ -591,20 +651,41 @@ def create_transaction(
 # ------------------------------------------------------------------------------------------------
 # Online-order helpers
 # ------------------------------------------------------------------------------------------------
-def _resume_linked_order(db: Session, order: models.CustomerOrder, linked: models.Transaction, tenant_id: int) -> dict:
+def reconcile_order_with_sale(order: models.CustomerOrder, sale: models.Transaction) -> list:
+    """
+    Repair an order left behind by the old two-step flow (sale saved, order update lost). Only finishes
+    what the sale already proves; never creates a sale and never touches a voided sale's order.
+    Returns a list of the changes made (empty = nothing to do). The caller commits and audits.
+    """
+    if sale.status in pay.VOID_STATUSES or order.status == "rejected":
+        return []
+    changes = []
+    if order.status == "pending":
+        order.status = "completed"
+        changes.append("status pending->completed")
+    # A GCash order is paid only through verification; a sale cannot certify it after the fact.
+    if order.payment_status == pay.PS_UNPAID and order.payment_method != pay.PAYMENT_GCASH:
+        order.payment_status = pay.PS_COUNTER_PAID
+        changes.append("payment unpaid->counter_paid")
+    return changes
+
+
+def _resume_linked_order(db: Session, order: models.CustomerOrder, linked: models.Transaction, tenant_id: int,
+                         user: models.User) -> dict:
     """
     The order already has its sale. Never create a second one. If an earlier attempt was cut short
     before the order was updated (legacy two-step flow), finish that update now so the order does not
     stay pending, then return the original sale.
     """
-    changed = False
-    if order.status == "pending":
-        order.status = "completed"
-        changed = True
-    if order.payment_status == pay.PS_UNPAID:
-        order.payment_status = pay.PS_COUNTER_PAID
-        changed = True
-    if changed:
+    if linked.status in pay.VOID_STATUSES:
+        raise HTTPException(status_code=409, detail="This order's sale was voided. It cannot be sold again; ask a manager.")
+    changes = reconcile_order_with_sale(order, linked)
+    if changes:
+        db.add(models.ActivityLog(
+            tenant_id=tenant_id, user_id=user.id, action="Order Reconciled", performed_by=user.username,
+            role=user.role.value if hasattr(user.role, "value") else str(user.role),
+            details=f"Order {order.order_number} matched to existing sale #{linked.id}: {', '.join(changes)}."[:255]
+        ))
         db.commit()
         try:
             from app.core.websocket import notify_realtime_event
@@ -646,14 +727,7 @@ def _order_payment_rows(db: Session, order: models.CustomerOrder, body: dict, pa
 
     rows = []
     if payments_data:
-        if not isinstance(payments_data, list) or len(payments_data) > 10:
-            raise HTTPException(status_code=400, detail="Invalid payments.")
-        for p in payments_data:
-            if not isinstance(p, dict):
-                raise HTTPException(status_code=400, detail="Invalid payment.")
-            rows.append((_check_payment_method(p.get("payment_method")), _money(p.get("amount", net_amount), "payment amount", allow_zero=False)))
-        if sum(a for _, a in rows) < net_amount:
-            raise HTTPException(status_code=400, detail="Payments do not cover the amount due.")
+        rows = _payment_list(payments_data, net_amount)
     else:
         method = _check_payment_method(body.get("payment_method"))
         tendered = body.get("amount_paid")
@@ -701,7 +775,7 @@ def _settle_customer_order(db: Session, order: models.CustomerOrder, verified_at
         order.payment_status = pay.PS_COUNTER_PAID
 
 
-@router.put("/{tx_id}/status", summary="Update transaction status (e.g. reject/cancel or complete)")
+@router.put("/{tx_id}/status", summary="Void a sale, complete a pending sale, or record preparation progress")
 def update_transaction_status(
     tx_id: int,
     body: dict,
@@ -710,62 +784,108 @@ def update_transaction_status(
     current_user: models.User = Depends(require_kitchen_access),
 ):
     """
-    Allows cashier and management to change order status.
-    If the customer cancels the order, the cashier can reject the order,
-    marking transaction as 'rejected' / 'cancelled' and voiding associated payments.
+    * `cancelled` / `rejected` VOIDS the sale: a reason is required, the sale and its payment rows are kept
+      (payments marked cancelled), who/when/why is stored on the sale, recipe stock taken by the sale is
+      restored, and if money had been collected the sale is flagged `refund_status = pending` until a
+      manager/admin records the manual refund (POST /transactions/{id}/refund). Voiding never claims that
+      money was returned.
+    * `completed` completes a PENDING sale (its payments must equal the total). A completed sale is never
+      moved back to pending.
+    * `preparing` / `ready` record preparation progress (fulfilment status only).
 
-    BUSINESS DECISION PENDING: who may void a completed sale (currently every POS role, as before)
-    and whether voids need manager approval is not specified; see PRODUCTION_READINESS.md.
+    BUSINESS DECISION PENDING: who may void a completed sale. Every POS role may (previous behaviour)
+    unless VOID_REQUIRES_MANAGER=true.
     """
-    tenant_id = resolve_tenant_id(current_user, db, request)
-    tx = db.query(models.Transaction).filter(
-        models.Transaction.id == tx_id,
-        models.Transaction.tenant_id == tenant_id
-    ).first()
-    if not tx:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found.")
-
-    # IMMUTABILITY RULE: Once an order is rejected (or cancelled), its status is final and cannot be changed!
-    if tx.status in ["rejected", "cancelled"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Order #{tx.id} has already been {tx.status.upper()}. Once an order is rejected, its status is locked and cannot be changed."
-        )
-
     raw_status = str(body.get("status") or "").strip().lower()
-    reason = str(body.get("reason") or "").strip()[:150] or "Customer cancelled order"
-
     allowed = ["pending", "preparing", "ready", "completed", "cancelled", "rejected"]
     if raw_status not in allowed:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid status '{raw_status}'. Allowed values: {', '.join(allowed)}"
         )
+    reason = str(body.get("reason") or "").strip()[:150]
+    voiding = raw_status in pay.VOID_STATUSES
+
+    tenant_id = resolve_tenant_id(current_user, db, request)
+    # Row lock: a void, a completion and a refund on the same sale are applied one at a time.
+    tx = db.query(models.Transaction).options(selectinload(models.Transaction.payments)).filter(
+        models.Transaction.id == tx_id,
+        models.Transaction.tenant_id == tenant_id
+    ).with_for_update().first()
+    if not tx:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found.")
+    if voiding:
+        # Checked after the tenant-scoped lookup, so another tenant's sale is always a plain 404.
+        if len(reason) < MIN_VOID_REASON:
+            db.rollback()
+            raise HTTPException(status_code=400, detail="A reason is required to void a sale.")
+        if VOID_REQUIRES_MANAGER and current_user.role not in AUDIT_ROLES:
+            db.rollback()
+            raise HTTPException(status_code=403, detail="Only a manager or admin can void a sale.")
+
+    # IMMUTABILITY RULE: Once an order is rejected (or cancelled), its status is final and cannot be changed!
+    if tx.status in pay.VOID_STATUSES:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Order #{tx.id} has already been {tx.status.upper()}. Once an order is rejected, its status is locked and cannot be changed."
+        )
 
     old_status = tx.status
-    tx.status = raw_status
+    role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    try:
+        if voiding:
+            collected = any(p.status == "completed" for p in tx.payments)
+            tx.status = raw_status
+            tx.voided_at = datetime.now()
+            tx.voided_by = current_user.id
+            tx.void_reason = reason
+            tx.refund_status = pay.REFUND_PENDING if collected else None
+            for p in tx.payments:
+                p.status = "cancelled"
+            restored = stock.restore_for_void(db, tx, current_user.id)
+            action = "Order Cancelled/Rejected"
+            details = (f"Sale #{tx.id} ({old_status.upper()} -> {raw_status.upper()}, ₱{float(tx.net_amount):,.2f}) voided. "
+                       f"Reason: {reason}. " + ("Payment was collected: refund pending (manual)." if collected else "No payment collected.")
+                       + (f" Stock restored for {restored} item(s)." if restored else ""))
+        elif raw_status in FULFILMENT_ONLY_STATUSES:
+            if tx.fulfillment_status == "completed":
+                raise HTTPException(status_code=409, detail=f"Order #{tx.id} was already served and cannot move back to {raw_status}.")
+            tx.fulfillment_status = raw_status
+            action = "Order Status Update"
+            details = f"Order #{tx.id} preparation status set to {raw_status.upper()}."
+        elif raw_status == "completed":
+            tx.fulfillment_status = "completed"
+            if tx.status == "pending":
+                paid = sum((Decimal(str(p.amount)) for p in tx.payments), Decimal("0.00"))
+                if paid != Decimal(str(tx.net_amount)):
+                    raise HTTPException(status_code=409, detail="The payments recorded for this sale do not match its total.")
+                tx.status = "completed"
+                for p in tx.payments:
+                    p.status = "completed"
+            action = "Order Status Update"
+            details = f"Order #{tx.id} status changed from {old_status.upper()} to COMPLETED." + (f" Reason: {reason}" if reason else "")
+        else:   # "pending"
+            if tx.status != "pending":
+                raise HTTPException(status_code=409, detail="A completed sale cannot be moved back to pending. Void it instead.")
+            action = "Order Status Update"
+            details = f"Order #{tx.id} left PENDING."
 
-    # Void or update payments
-    if raw_status in ["cancelled", "rejected"]:
-        for p in tx.payments:
-            p.status = "cancelled"
-    elif raw_status == "completed":
-        for p in tx.payments:
-            p.status = "completed"
-
-    db.add(models.ActivityLog(
-        tenant_id=tx.tenant_id,
-        user_id=current_user.id,
-        action="Order Cancelled/Rejected" if raw_status in ["cancelled", "rejected"] else "Order Status Update",
-        performed_by=current_user.username,
-        role=current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role),
-        details=f"Order #{tx.id} status changed from {old_status.upper()} to {raw_status.upper()}. Reason: {reason}"[:255]
-    ))
-
-    db.commit()
+        db.add(models.ActivityLog(
+            tenant_id=tx.tenant_id,
+            user_id=current_user.id,
+            action=action,
+            performed_by=current_user.username,
+            role=role,
+            details=details[:255]
+        ))
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
     db.refresh(tx)
 
-    # Real-time WebSocket event broadcast
+    # Real-time WebSocket event broadcast (after the commit)
     try:
         from app.core.websocket import notify_realtime_event
         notify_realtime_event(tx.tenant_id, "ORDER_UPDATED", {
@@ -781,5 +901,108 @@ def update_transaction_status(
     return {
         "id": tx.id,
         "status": tx.status,
-        "message": f"Order #{tx.id} marked as {tx.status.upper()} successfully."
+        "fulfillment_status": tx.fulfillment_status,
+        "refund_status": tx.refund_status,
+        "message": f"Order #{tx.id} marked as {raw_status.upper()} successfully."
+    }
+
+
+@router.post("/{tx_id}/refund", summary="Record the manual refund of a voided sale (manager/admin)")
+def record_refund(
+    tx_id: int,
+    body: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_manager_or_admin),
+):
+    """
+    The POS does not move money. After the money of a voided sale was handed back (cash from the drawer,
+    a GCash transfer from the store's GCash app, a card reversal on the terminal), a manager/admin records
+    it here. `outcome`:
+      * `refunded` (default): `amount` must be the full amount collected and `refund_method` one of the
+        sale's payment methods (partial refunds are an open business decision); optional `reference_no`.
+      * `not_required`: nothing had actually been collected (e.g. a sale keyed in by mistake).
+    `note` (5-200 characters) is required. One record per sale; a second one is 409.
+    Reports are unaffected: the voided sale was already excluded from income and drawer cash.
+    """
+    outcome = str(body.get("outcome") or pay.REFUND_DONE).strip().lower()
+    if outcome not in (pay.REFUND_DONE, pay.REFUND_NOT_REQUIRED):
+        raise HTTPException(status_code=400, detail="Invalid outcome. Use 'refunded' or 'not_required'.")
+    note = str(body.get("note") or "").strip()
+    if not 5 <= len(note) <= 200:
+        raise HTTPException(status_code=400, detail="A note of 5 to 200 characters is required.")
+
+    tenant_id = resolve_tenant_id(current_user, db, request)
+    tx = db.query(models.Transaction).options(selectinload(models.Transaction.payments)).filter(
+        models.Transaction.id == tx_id,
+        models.Transaction.tenant_id == tenant_id
+    ).with_for_update().first()
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found.")
+    if tx.status not in pay.VOID_STATUSES:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Only a voided sale can be refunded. Void the sale first.")
+    if tx.refund_status != pay.REFUND_PENDING:
+        db.rollback()
+        if tx.refund_status in (pay.REFUND_DONE, pay.REFUND_NOT_REQUIRED):
+            raise HTTPException(status_code=409, detail="A refund outcome was already recorded for this sale.")
+        raise HTTPException(status_code=409, detail="No payment was collected for this sale, so there is nothing to refund.")
+
+    collected = sum((Decimal(str(p.amount)) for p in tx.payments), Decimal("0.00"))
+    amount, method, reference = Decimal("0.00"), None, None
+    if outcome == pay.REFUND_DONE:
+        amount = _money(body.get("amount"), "refund amount", allow_zero=False)
+        if amount != collected:
+            db.rollback()
+            raise HTTPException(status_code=400, detail=f"A refund must be the full amount collected (₱{collected:,.2f}). Partial refunds are not supported.")
+        method = _check_payment_method(body.get("refund_method"))
+        if method not in {(p.payment_method or "").strip().upper() for p in tx.payments}:
+            db.rollback()
+            raise HTTPException(status_code=400, detail="The refund method must match how the sale was paid.")
+        reference = pay.normalize_reference(body.get("reference_no"))
+
+    try:
+        # Compare-and-swap: only one refund outcome can ever be recorded for a sale.
+        updated = db.query(models.Transaction).filter(
+            models.Transaction.id == tx.id,
+            models.Transaction.refund_status == pay.REFUND_PENDING
+        ).update({"refund_status": outcome}, synchronize_session=False)
+        if updated != 1:
+            raise HTTPException(status_code=409, detail="A refund outcome was already recorded for this sale.")
+        refund = models.SaleRefund(
+            tenant_id=tenant_id, transaction_id=tx.id, outcome=outcome, amount=amount,
+            refund_method=method, reference_no=reference, note=note, recorded_by=current_user.id,
+        )
+        db.add(refund)
+        db.add(models.ActivityLog(
+            tenant_id=tenant_id, user_id=current_user.id,
+            action="Refund Recorded" if outcome == pay.REFUND_DONE else "Refund Not Required",
+            performed_by=current_user.username,
+            role=current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role),
+            details=(f"Sale #{tx.id}: ₱{amount:,.2f} returned by {method} (recorded manually). Note: {note}"
+                     if outcome == pay.REFUND_DONE else f"Sale #{tx.id}: no refund needed. Note: {note}")[:255]
+        ))
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A refund outcome was already recorded for this sale.")
+    db.refresh(refund)
+
+    try:
+        from app.core.websocket import notify_realtime_event
+        notify_realtime_event(tenant_id, "FINANCIAL_UPDATED", {"reason": "refund_recorded", "order_id": tx.id})
+    except Exception:
+        logger.warning("Failed to broadcast refund event", exc_info=True)
+
+    return {
+        "transaction_id": tx.id,
+        "refund_status": outcome,
+        "amount": float(amount),
+        "refund_method": method,
+        "reference_no": reference,
+        "recorded_at": refund.recorded_at.isoformat() if refund.recorded_at else None,
+        "basis": "Recorded by staff; the POS did not send or verify the refund.",
     }
